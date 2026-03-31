@@ -1,0 +1,13 @@
+
+{
+    
+    "tasks": [
+        {
+            "label": "Run tests",
+            "type": "shell",
+            "group": "test",
+            "command": "Invoke-Pester",
+            "problemMatcher": [ "$pester" ]
+        }
+    ]
+}
