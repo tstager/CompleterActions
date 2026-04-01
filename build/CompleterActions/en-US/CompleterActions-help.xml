@@ -370,11 +370,7 @@ through this module, and returns the removed record.</maml:para>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
-</helpItems>a>
-          </maml:description>
-          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-        </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+</helpItems> <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>ScriptBlock</maml:name>
           <maml:description>
             <maml:para>Provides the completer script block to register.</maml:para>

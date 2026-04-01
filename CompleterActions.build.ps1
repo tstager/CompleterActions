@@ -37,6 +37,8 @@ task build clean, external_help, {
     $public = Get-childitem -Path "$PSScriptRoot\src\Public" -Filter *.ps1 -File
     $files = Get-ChildItem -Path "$PSScriptRoot\src\Public", "$PSScriptRoot\src\Private", "$PSScriptRoot\src\Classes" -Filter *.ps1 -File
     $moduleFilePath = "$modulepath\$modulename.psm1"
+    $formatFiles = @($sourceManifestData.FormatsToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $typeFiles = @($sourceManifestData.TypesToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $usingStatements = [System.Collections.Generic.List[string]]::new()
     $sourceDotSourcingPattern = '^\s*\.\s+[''\"]?(?:\.\\|\.\/)?src[\\/].+\.ps1[''\"]?\s*$'
 
@@ -113,6 +115,11 @@ task build clean, external_help, {
     }
 
     Copy-Item -Path "$PSScriptRoot\$modulename.psd1" -Destination $modulepath
+
+    foreach ($supportFile in @($formatFiles + $typeFiles)) {
+
+        Copy-Item -Path (Join-Path -Path $PSScriptRoot -ChildPath $supportFile) -Destination (Join-Path -Path $modulepath -ChildPath $supportFile) -Force
+    }
 
     if(-not(Test-Path -Path $buildpath\"en-US")) {
 

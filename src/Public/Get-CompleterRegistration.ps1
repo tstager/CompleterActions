@@ -46,7 +46,7 @@ Lists only completer registrations that were registered through this module.
 #>
 function Get-CompleterRegistration
 {
-    [CmdletBinding(DefaultParameterSetName = 'All')]
+    [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ParameterSetName = 'ByKey')]
@@ -127,5 +127,42 @@ function Get-CompleterRegistration
         }
     }
 
-    return $registrationsByKey.Values
+    $registrations = @($registrationsByKey.Values)
+    $totalCount = $registrations.Count
+
+    if ($PSCmdlet.PagingParameters.IncludeTotalCount)
+    {
+        $null = $PSCmdlet.WriteObject($PSCmdlet.PagingParameters.NewTotalCount($totalCount, 1.0))
+    }
+
+    $skip = $PSCmdlet.PagingParameters.Skip
+    $first = $PSCmdlet.PagingParameters.First
+
+    if ($skip -ge [uint64] $totalCount)
+    {
+        return
+    }
+
+    $startIndex = [int] $skip
+    $itemsAvailable = $totalCount - $startIndex
+    $itemsToEmit = if ($first -eq [uint64]::MaxValue)
+    {
+        $itemsAvailable
+    }
+    elseif ($first -gt [uint64] $itemsAvailable)
+    {
+        $itemsAvailable
+    }
+    else
+    {
+        [int] $first
+    }
+
+    if ($itemsToEmit -le 0)
+    {
+        return
+    }
+
+    $endIndex = $startIndex + $itemsToEmit - 1
+    $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
 }

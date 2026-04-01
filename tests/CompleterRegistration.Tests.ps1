@@ -1,256 +1,256 @@
-BeforeAll {
-    function Invoke-TestRuntimeCompleterCleanup
-    {
-        param(
-            [Parameter(Mandatory)]
-            [string] $CommandName,
+Describe 'Module Manifest Tests' {
+    It 'Passes Test-ModuleManifest' {
+        $moduleName = 'CompleterActions'
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $moduleManifest = Test-ModuleManifest -Path $moduleManifestPath
+        Test-Path -Path $moduleManifestPath | Should -Be $true
+        $moduleManifest | Should -Not -BeNullOrEmpty
+        $moduleManifest.Name | Should -Be $moduleName
+        $moduleManifest.Version.ToString() | Should -Be '1.0.0'
+        $moduleManifest.RootModule | Should -Be 'CompleterActions.psm1'
+        $moduleManifest.CompatiblePSEditions | Should -Be @('Core')
+        $moduleManifest.PowerShellVersion | Should -Be '7.0'
+        @($moduleManifest.ExportedFormatFiles | ForEach-Object { Split-Path -Path $_ -Leaf }) | Should -Be @('CompleterActions.Format.ps1xml')
+    }
 
-            [Parameter()]
-            [string] $ParameterName,
+    It 'exports the same public functions defined in the manifest and src\Public' {
+        $moduleName = 'CompleterActions'
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $manifestData = Import-PowerShellDataFile -Path $moduleManifestPath
+        $expectedPublicFunctions = Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '..\src\Public') -Filter '*.ps1' |
+            Sort-Object -Property BaseName |
+            Select-Object -ExpandProperty BaseName
 
-            [Parameter(Mandatory)]
-            [ValidateSet('Parameter', 'Native')]
-            [string] $CompleterType
-        )
+        Remove-Module -Name $moduleName -Force -ErrorAction SilentlyContinue
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
 
-        $engineField = $ExecutionContext.GetType().GetField(
-            '_context',
-            [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
-        )
+        @($manifestData.FunctionsToExport | Sort-Object) | Should -Be $expectedPublicFunctions
+        @($module.ExportedFunctions.Keys | Sort-Object) | Should -Be $expectedPublicFunctions
+    }
 
-        if ($null -eq $engineField)
-        {
-            return
-        }
+    It 'declares the completer registration format file in the manifest' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $manifestData = Import-PowerShellDataFile -Path $moduleManifestPath
 
-        $engineExecutionContext = $engineField.GetValue($ExecutionContext)
-        if ($null -eq $engineExecutionContext)
-        {
-            return
-        }
-
-        $bindingFlags = [System.Reflection.BindingFlags]::Instance -bor
-            [System.Reflection.BindingFlags]::NonPublic -bor
-            [System.Reflection.BindingFlags]::Public
-
-        $propertyName = if ($CompleterType -eq 'Native') { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
-        $property = $engineExecutionContext.GetType().GetProperty($propertyName, $bindingFlags)
-        if ($null -eq $property)
-        {
-            return
-        }
-
-        $registrations = $property.GetValue($engineExecutionContext)
-        $targetKey = if ($CompleterType -eq 'Native') { $CommandName } else { '{0}:{1}' -f $CommandName, $ParameterName }
-
-        foreach ($candidateKey in @($registrations.Keys))
-        {
-            if ($candidateKey -ieq $targetKey)
-            {
-                $null = $registrations.Remove($candidateKey)
-                break
-            }
-        }
+        @($manifestData.FormatsToProcess) | Should -Be @('CompleterActions.Format.ps1xml')
     }
 }
 
-Describe 'Completer registration public API' {
+Describe 'Module state bootstrap' {
     BeforeEach {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
-
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'testnative-managed' -CompleterType 'Native'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -CompleterType 'Parameter'
-
-        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
     }
 
-    AfterEach {
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'testnative-managed' -CompleterType 'Native'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
-        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -CompleterType 'Parameter'
+    It 'initializes module-owned state on import' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
 
+        $state = & $module {
+            Get-CompleterActionState
+        }
+
+        $state | Should -Not -BeNullOrEmpty
+        $state.GetType().FullName | Should -Be 'System.Collections.Specialized.OrderedDictionary'
+        $state['SchemaVersion'] | Should -Be 1
+        $state['Registrations'].GetType().FullName | Should -Be 'System.Collections.Specialized.OrderedDictionary'
+        $state['Registrations'].Count | Should -Be 0
+    }
+
+    It 'returns the existing state instead of rebuilding it during the same import' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $firstState = Get-CompleterActionState
+            $firstState['Registrations']['git:checkout'] = [ordered]@{
+                Name = 'git:checkout'
+            }
+
+            $secondState = Get-CompleterActionState
+
+            [pscustomobject]@{
+                SameInstance      = [object]::ReferenceEquals($firstState, $secondState)
+                RegistrationCount = $secondState['Registrations'].Count
+            }
+        }
+
+        $result.SameInstance | Should -BeTrue
+        $result.RegistrationCount | Should -Be 1
+    }
+
+    It 'reinitializes cleanly on a forced re-import' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        & $module {
+            $state = Get-CompleterActionState
+            $state['Registrations']['git:commit'] = [ordered]@{
+                Name = 'git:commit'
+            }
+        }
+
+        Remove-Module -Name 'CompleterActions' -Force
+        $reimportedModule = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $stateAfterReimport = & $reimportedModule {
+            Get-CompleterActionState
+        }
+
+        $stateAfterReimport['SchemaVersion'] | Should -Be 1
+        $stateAfterReimport['Registrations'].Count | Should -Be 0
+    }
+}
+
+Describe 'Private completer registration helpers' {
+    BeforeEach {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
-    It 'registers a managed parameter completer and supports tab expansion' {
-        function Test-ManagedTool
-        {
-            [CmdletBinding()]
-            param(
-                [string] $Name
-            )
+    It 'resolves native and command-parameter targets into normalized contracts' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            [pscustomobject]@{
+                NativeTarget = Resolve-CompleterTarget -CommandName 'Git' -Native
+                ParameterTarget = Resolve-CompleterTarget -CommandName 'Git' -ParameterName 'Branch'
+                ParsedParameterTarget = Resolve-CompleterTarget -RuntimeKey 'Git:Branch'
+            }
         }
 
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-
-            [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
-        }
-
-        $registration = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
-
-        $registration.CommandName | Should -Be 'Test-ManagedTool'
-        $registration.ParameterName | Should -Be 'Name'
-        $registration.CompleterType | Should -Be 'Parameter'
-        $registration.Source | Should -Be 'Managed'
-        $registration.IsManaged | Should -BeTrue
-        $registration.IsRuntimeRegistered | Should -BeTrue
-
-        $state = InModuleScope CompleterActions {
-            Get-CompleterActionState
-        }
-
-        $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['test-managedtool:name'] | Should -Not -BeNullOrEmpty
-
-        $inputScript = 'Test-ManagedTool -Name a'
-        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
-
-        $completion.CompletionMatches.CompletionText | Should -Contain 'alpha'
-
-        $discoveredRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
-        $discoveredRegistration.Source | Should -Be 'Managed'
-        $discoveredRegistration.IsRuntimeRegistered | Should -BeTrue
+        $result.NativeTarget.TargetType | Should -Be 'Native'
+        $result.NativeTarget.RuntimeKey | Should -Be 'Git'
+        $result.NativeTarget.Key | Should -Be 'git'
+        $result.NativeTarget.ParameterName | Should -BeNullOrEmpty
+        $result.ParameterTarget.TargetType | Should -Be 'CommandParameter'
+        $result.ParameterTarget.RuntimeKey | Should -Be 'Git:Branch'
+        $result.ParameterTarget.Key | Should -Be 'git:branch'
+        $result.ParsedParameterTarget.CommandName | Should -Be 'Git'
+        $result.ParsedParameterTarget.ParameterName | Should -Be 'Branch'
     }
 
-    It 'treats repeated registration with the same script block as idempotent' {
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+    It 'stores and finds managed registrations using normalized keys' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
 
-            [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+        $result = & $module {
+            $target = Resolve-CompleterTarget -CommandName 'Git' -ParameterName 'Checkout'
+            $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+            }
+
+            Add-ManagedCompleterRegistration -Registration $registration | Out-Null
+
+            $byKey = Find-ManagedCompleterRegistration -Key 'git:checkout'
+            $byParts = Find-ManagedCompleterRegistration -CommandName 'GIT' -ParameterName 'CHECKOUT'
+            $allManaged = @(Find-ManagedCompleterRegistration)
+
+            [pscustomobject]@{
+                RegistrationCount = (Get-ManagedCompleterRegistrationTable).Count
+                RuntimeKey = $byKey.RuntimeKey
+                Source = $byKey.Source
+                IsManaged = $byKey.IsManaged
+                MatchingKey = $byParts.Key
+                EnumeratedCount = $allManaged.Count
+            }
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
-        $secondRegistration = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
-
-        $secondRegistration.CommandName | Should -Be 'Test-ManagedTool'
-
-        $state = InModuleScope CompleterActions {
-            Get-CompleterActionState
-        }
-
-        $state['Registrations'].Count | Should -Be 1
+        $result.RegistrationCount | Should -Be 1
+        $result.RuntimeKey | Should -Be 'Git:Checkout'
+        $result.Source | Should -Be 'Managed'
+        $result.IsManaged | Should -BeTrue
+        $result.MatchingKey | Should -Be 'git:checkout'
+        $result.EnumeratedCount | Should -Be 1
     }
 
-    It 'registers a managed native completer' {
-        $scriptBlock = {
-            param($wordToComplete, $commandAst, $cursorPosition)
+    It 'removes managed registrations and returns the removed record' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
 
-            [System.Management.Automation.CompletionResult]::new('beta', 'beta', 'ParameterValue', 'beta')
+        $result = & $module {
+            $target = Resolve-CompleterTarget -CommandName 'Git' -Native
+            $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                $null = $wordToComplete, $commandAst, $cursorPosition
+            }
+
+            Add-ManagedCompleterRegistration -Registration $registration | Out-Null
+            $removed = Remove-ManagedCompleterRegistration -CommandName 'git' -Native
+            $afterRemoval = Find-ManagedCompleterRegistration -CommandName 'git' -Native
+
+            [pscustomobject]@{
+                RemovedKey = $removed.Key
+                RemovedSource = $removed.Source
+                WasRemoved = $null -eq $afterRemoval
+                RemainingCount = (Get-ManagedCompleterRegistrationTable).Count
+            }
         }
 
-        $registration = Register-CompleterRegistration -Native -CommandName 'testnative-managed' -ScriptBlock $scriptBlock -PassThru
-
-        $registration.CommandName | Should -Be 'testnative-managed'
-        $registration.ParameterName | Should -BeNullOrEmpty
-        $registration.CompleterType | Should -Be 'Native'
-        $registration.Source | Should -Be 'Managed'
-        $registration.IsManaged | Should -BeTrue
-        $registration.IsRuntimeRegistered | Should -BeTrue
-
-        $resolvedRegistration = Get-CompleterRegistration -Native -CommandName 'testnative-managed'
-        $resolvedRegistration.RegistrationKey | Should -Be 'testnative-managed'
-        $resolvedRegistration.Source | Should -Be 'Managed'
+        $result.RemovedKey | Should -Be 'git'
+        $result.RemovedSource | Should -Be 'Managed'
+        $result.WasRemoved | Should -BeTrue
+        $result.RemainingCount | Should -Be 0
     }
 
-    It 'discovers unmanaged runtime registrations' {
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+    It 'discovers runtime completers from PowerShell internals and removes them on demand' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
 
-            [System.Management.Automation.CompletionResult]::new('gamma', 'gamma', 'ParameterValue', 'gamma')
+        $result = & $module {
+            $nativeScriptBlock = {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                $null = $wordToComplete, $commandAst, $cursorPosition
+                [System.Management.Automation.CompletionResult]::new('native', 'native', 'ParameterValue', 'native')
+            }
+
+            $parameterScriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+                [System.Management.Automation.CompletionResult]::new('parameter', 'parameter', 'ParameterValue', 'parameter')
+            }
+
+            Register-ArgumentCompleter -Native -CommandName 'CompleterActionsNativeRuntimeTest' -ScriptBlock $nativeScriptBlock
+            Register-ArgumentCompleter -CommandName 'CompleterActionsParameterRuntimeTest' -ParameterName 'Name' -ScriptBlock $parameterScriptBlock
+
+            try
+            {
+                $allRuntime = @(Find-RuntimeCompleterRegistration)
+                $native = Find-RuntimeCompleterRegistration -CommandName 'CompleterActionsNativeRuntimeTest' -Native
+                $parameter = Find-RuntimeCompleterRegistration -CommandName 'CompleterActionsParameterRuntimeTest' -ParameterName 'Name'
+                $removed = Remove-RuntimeCompleterRegistration -CommandName 'CompleterActionsNativeRuntimeTest' -Native
+                $afterRemoval = Find-RuntimeCompleterRegistration -CommandName 'CompleterActionsNativeRuntimeTest' -Native
+
+                [pscustomobject]@{
+                    NativeFound = $null -ne $native
+                    NativeSource = $native.Source
+                    ParameterFound = $null -ne $parameter
+                    ParameterSource = $parameter.Source
+                    EnumeratedNative = $allRuntime.Key -contains 'completeractionsnativeruntimetest'
+                    EnumeratedParameter = $allRuntime.Key -contains 'completeractionsparameterruntimetest:name'
+                    RemovedKey = $removed.Key
+                    WasRemoved = $null -eq $afterRemoval
+                }
+            }
+            finally
+            {
+                $runtime = Get-CompleterRuntime
+                $runtime.NativeArgumentCompleters.Remove('CompleterActionsNativeRuntimeTest') | Out-Null
+                $runtime.CustomArgumentCompleters.Remove('CompleterActionsParameterRuntimeTest:Name') | Out-Null
+            }
         }
 
-        Register-ArgumentCompleter -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
-
-        $registration = Get-CompleterRegistration -CommandName 'Test-UnmanagedTool' -ParameterName 'Name'
-
-        $registration.CommandName | Should -Be 'Test-UnmanagedTool'
-        $registration.Source | Should -Be 'Discovered'
-        $registration.IsManaged | Should -BeFalse
-        $registration.IsRuntimeRegistered | Should -BeTrue
-        $registration.ScriptText | Should -Match 'gamma'
-    }
-
-    It 'unregisters managed registrations from module state and runtime' {
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-
-            [System.Management.Automation.CompletionResult]::new('delta', 'delta', 'ParameterValue', 'delta')
-        }
-
-        $null = Register-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
-
-        $removedRegistration = Unregister-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru
-
-        $removedRegistration.CommandName | Should -Be 'Test-RemoveManagedTool'
-        $removedRegistration.IsManaged | Should -BeTrue
-
-        $state = InModuleScope CompleterActions {
-            Get-CompleterActionState
-        }
-
-        $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
-
-        {
-            Unregister-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -Confirm:$false
-        } | Should -Throw '*No completer registration was found*'
-    }
-
-    It 'does not remove unmanaged runtime registrations without explicit confirmation' {
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-
-            [System.Management.Automation.CompletionResult]::new('epsilon', 'epsilon', 'ParameterValue', 'epsilon')
-        }
-
-        Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
-
-        {
-            Unregister-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -Confirm:$false
-        } | Should -Throw '*-AllowUnmanaged*'
-
-        $registration = Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name'
-        $registration.Source | Should -Be 'Discovered'
-    }
-
-    It 'can remove unmanaged runtime registrations when explicitly requested' {
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-
-            [System.Management.Automation.CompletionResult]::new('epsilon', 'epsilon', 'ParameterValue', 'epsilon')
-        }
-
-        Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
-
-        $removedRegistration = Unregister-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
-
-        $removedRegistration.Source | Should -Be 'Discovered'
-        $removedRegistration.IsManaged | Should -BeFalse
-        Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
-    }
-
-    It 'supports WhatIf for registration without mutating state' {
-        $scriptBlock = {
-            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-
-            [System.Management.Automation.CompletionResult]::new('zeta', 'zeta', 'ParameterValue', 'zeta')
-        }
-
-        Register-CompleterRegistration -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -WhatIf
-
-        $state = InModuleScope CompleterActions {
-            Get-CompleterActionState
-        }
-
-        $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-WhatIfTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        $result.NativeFound | Should -BeTrue
+        $result.NativeSource | Should -Be 'Discovered'
+        $result.ParameterFound | Should -BeTrue
+        $result.ParameterSource | Should -Be 'Discovered'
+        $result.EnumeratedNative | Should -BeTrue
+        $result.EnumeratedParameter | Should -BeTrue
+        $result.RemovedKey | Should -Be 'completeractionsnativeruntimetest'
+        $result.WasRemoved | Should -BeTrue
     }
 }
