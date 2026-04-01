@@ -1,11 +1,13 @@
-$ModuleName = 'CompleterActions'
-$ModuleManifestName = "$ModuleName.psd1"
-$ModuleManifestPath = "$PSScriptRoot\..\$ModuleManifestName"
-
 Describe 'Module Manifest Tests' {
     It 'Passes Test-ModuleManifest' {
-        Test-ModuleManifest -Path $ModuleManifestPath | Should Not BeNullOrEmpty
-        $? | Should Be $true
+        $moduleName = 'CompleterActions'
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "..\$moduleName.psd1"
+        $moduleManifest = Test-ModuleManifest -Path $moduleManifestPath
+        Test-Path -Path $moduleManifestPath | Should -Be $true
+        $moduleManifest | Should -Not -BeNullOrEmpty
+        $moduleManifest.Name | Should -Be $moduleName
+        $moduleManifest.Version.ToString() | Should -Be '1.0.0'
+        $moduleManifest.RootModule | Should -Be 'CompleterActions.psm1'
     }
 }
 
