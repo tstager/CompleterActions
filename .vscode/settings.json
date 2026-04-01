@@ -2,5 +2,11 @@
     // When enabled, will trim trailing whitespace when you save a file.
     "files.trimTrailingWhitespace": true,
     // Setting the path for psscriptanalyzer settings.
-    "powershell.scriptAnalysis.settingsPath": "./PSScriptAnalyzerSettings.psd1"
+    "powershell.scriptAnalysis.settingsPath": "./PSScriptAnalyzerSettings.psd1",
+
+    "markdownlint.config": {
+        "MD025": false,
+        "MD040": true
+     }
 }
+

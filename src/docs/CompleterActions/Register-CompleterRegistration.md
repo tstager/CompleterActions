@@ -8,7 +8,7 @@ ms.date: 04/01/2026
 PlatyPS schema version: 2024-05-01
 title: Register-CompleterRegistration
 ---
-<!-- markdownlint-disable-next-line MD025 -->
+
 # Register-CompleterRegistration
 
 ## SYNOPSIS
@@ -18,16 +18,23 @@ Registers a managed PowerShell argument completer.
 ## SYNTAX
 
 ### CommandParameter (Default)
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Register-CompleterRegistration -CommandName <string> -ParameterName <string>
+
+```PowerShell
+Register-CompleterRegistration -CommandName <string[]> -ParameterName <string[]>
  -ScriptBlock <scriptblock> [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
-### Native
-<!-- markdownlint-disable-next-line MD040 -->
+### InputObject
+
+```PowerShell
+Register-CompleterRegistration -InputObject <psobject[]> [-Force] [-PassThru] [-WhatIf] [-Confirm]
+ [<CommonParameters>]
 ```
-Register-CompleterRegistration -CommandName <string> -Native -ScriptBlock <scriptblock> [-Force]
+
+### Native
+
+```PowerShell
+Register-CompleterRegistration -CommandName <string[]> -Native -ScriptBlock <scriptblock> [-Force]
  [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
@@ -38,40 +45,25 @@ This cmdlet has the following aliases,
 
 ## DESCRIPTION
 
-Registers a native or command-parameter argument completer with
-Register-ArgumentCompleter and records the registration in the module's managed
+Registers native or command-parameter argument completers with
+Register-ArgumentCompleter and records the registrations in the module's managed
 state.
 Existing managed or runtime registrations are preserved unless you use
 -Force to replace them.
+The command supports array inputs for command and
+parameter targets, and it can also accept pipeline InputObject values that
+describe the target and expose a ScriptBlock property.
 
 ## EXAMPLES
-
-### EXAMPLE 1
-
-```powershell
-Register-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -ScriptBlock {
-    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
-}
-```
-
-Registers a managed parameter completer for the Name parameter on Test-Tool.
-
-### EXAMPLE 2
-
-Register-CompleterRegistration -CommandName 'git' -Native -ScriptBlock $nativeCompleter -Force -PassThru
-
-Replaces any existing native completer registration for git and returns the new
-managed registration record.
 
 ## PARAMETERS
 
 ### -CommandName
 
-Specifies the command name whose completer should be registered.
+Specifies one or more command names whose completers should be registered.
 
 ```yaml
-Type: System.String
+Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -80,13 +72,13 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -137,21 +129,47 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -InputObject
+
+Supplies one or more objects that describe completer targets.
+Input objects must
+expose target metadata through Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
+property whose value is a script block.
+
+```yaml
+Type: System.Management.Automation.PSObject[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: InputObject
+  Position: Named
+  IsRequired: true
+  ValueFromPipeline: true
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -Native
 
-Registers a native completer for the command instead of a parameter completer.
+Registers native completers for the commands instead of parameter completers.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
 DefaultValue: False
 SupportsWildcards: false
-Aliases: []
+Aliases:
+- IsNative
 ParameterSets:
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -160,10 +178,11 @@ HelpMessage: ''
 
 ### -ParameterName
 
-Specifies the parameter name for a command-parameter completer registration.
+Specifies one or more parameter names for command-parameter completer
+registrations.
 
 ```yaml
-Type: System.String
+Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -172,7 +191,7 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -181,7 +200,7 @@ HelpMessage: ''
 
 ### -PassThru
 
-Returns the managed registration record that was created or reused.
+Returns the managed registration records that were created or reused.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -203,6 +222,8 @@ HelpMessage: ''
 ### -ScriptBlock
 
 Provides the completer script block to register.
+When multiple targets are
+supplied through arrays, the same script block is reused for each target.
 
 ```yaml
 Type: System.Management.Automation.ScriptBlock
@@ -210,7 +231,13 @@ DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
 ParameterSets:
-- Name: (All)
+- Name: CommandParameter
+  Position: Named
+  IsRequired: true
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+- Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
@@ -251,6 +278,12 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+### System.Management.Automation.PSObject[]
+
+### System.String[]
+
+### System.Management.Automation.SwitchParameter
 
 ## OUTPUTS
 

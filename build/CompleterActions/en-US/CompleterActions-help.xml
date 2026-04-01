@@ -10,17 +10,208 @@
       <command:noun>CompleterRegistration</command:noun>
     </command:details>
     <maml:description>
-      <maml:para>Returns completer registration records for all registrations, a specific registration key, a native command completer, or a command parameter completer. By default the command merges module-managed registrations with runtime-discovered registrations and prefers the managed record when both refer to the same target.</maml:para>
+      <maml:para>Returns completer registration records for all registrations, specific registration keys, native command completers, or command parameter completers. By default the command merges module-managed registrations with runtime-discovered registrations and prefers the managed record when both refer to the same target. The command accepts arrays for key, command, and parameter lookup scenarios and supports property-name pipeline binding for key-based and target-based lookups.</maml:para>
     </maml:description>
-    <command:syntax />
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Get-CompleterRegistration</maml:name>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>DiscoveredOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations discovered from the current PowerShell runtime.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>First</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>IncludeTotalCount</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ManagedOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations tracked by this module.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Skip</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Get-CompleterRegistration</maml:name>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>DiscoveredOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations discovered from the current PowerShell runtime.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>First</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>IncludeTotalCount</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Key</maml:name>
+          <maml:description>
+            <maml:para>Gets the registrations that match one or more registration keys.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ManagedOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations tracked by this module.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Skip</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Get-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description>
+            <maml:para>Limits results to one or more command names for native or command-parameter
+completers.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>DiscoveredOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations discovered from the current PowerShell runtime.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>First</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>IncludeTotalCount</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ManagedOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations tracked by this module.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ParameterName</maml:name>
+          <maml:description>
+            <maml:para>Limits results to one or more parameter completer targets.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Skip</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Get-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description>
+            <maml:para>Limits results to one or more command names for native or command-parameter
+completers.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>DiscoveredOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations discovered from the current PowerShell runtime.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>First</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>IncludeTotalCount</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ManagedOnly</maml:name>
+          <maml:description>
+            <maml:para>Returns only registrations tracked by this module.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Native</maml:name>
+          <maml:description>
+            <maml:para>Indicates that the lookup target is a native command completer instead of a
+command parameter completer.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Skip</maml:name>
+          <maml:description>
+            <maml:para />
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
     <command:parameters>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>CommandName</maml:name>
         <maml:description>
-          <maml:para>Limits results to a specific command name for native or command-parameter
+          <maml:para>Limits results to one or more command names for native or command-parameter
 completers.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>DiscoveredOnly</maml:name>
@@ -29,12 +220,26 @@ completers.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>First</maml:name>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+        <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>IncludeTotalCount</maml:name>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+      </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Key</maml:name>
         <maml:description>
-          <maml:para>Gets the registration that matches a specific registration key.</maml:para>
+          <maml:para>Gets the registrations that match one or more registration keys.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ManagedOnly</maml:name>
@@ -54,12 +259,36 @@ command parameter completer.</maml:para>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ParameterName</maml:name>
         <maml:description>
-          <maml:para>Limits results to a specific parameter completer target.</maml:para>
+          <maml:para>Limits results to one or more parameter completer targets.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Skip</maml:name>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+        <command:parameterValue required="false" variableLength="true">System.UInt64</command:parameterValue>
       </command:parameter>
     </command:parameters>
-    <command:inputTypes />
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.String</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.Management.Automation.SwitchParameter</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
@@ -98,9 +327,9 @@ git.</maml:para>
       <command:example>
         <maml:title>--------- EXAMPLE 2 ---------</maml:title>
         <maml:introduction>
-          <maml:para>Get-CompleterRegistration -ManagedOnly</maml:para>
+          <maml:para>Get-CompleterRegistration -Key 'git:checkout', 'git:branch'</maml:para>
           <maml:para>&#x80;</maml:para>
-          <maml:para>Lists only completer registrations that were registered through this module.</maml:para>
+          <maml:para>Gets multiple completer registrations by key in a single call.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -123,254 +352,152 @@ git.</maml:para>
       <command:noun>CompleterRegistration</command:noun>
     </command:details>
     <maml:description>
-      <maml:para>Registers a native or command-parameter argument completer with Register-ArgumentCompleter and records the registration in the module's managed state. Existing managed or runtime registrations are preserved unless you use -Force to replace them.</maml:para>
+      <maml:para>Registers native or command-parameter argument completers with Register-ArgumentCompleter and records the registrations in the module's managed state. Existing managed or runtime registrations are preserved unless you use -Force to replace them. The command supports array inputs for command and parameter targets, and it can also accept pipeline InputObject values that describe the target and expose a ScriptBlock property.</maml:para>
     </maml:description>
-    <command:syntax />
-    <command:parameters>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>CommandName</maml:name>
-        <maml:description>
-          <maml:para>Specifies the command name whose completer should be registered.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>Confirm</maml:name>
-        <maml:description>
-          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>Force</maml:name>
-        <maml:description>
-          <maml:para>Removes an existing managed or runtime registration for the same target before
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Register-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description>
+            <maml:para>Specifies one or more command names whose completers should be registered.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description>
+            <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Force</maml:name>
+          <maml:description>
+            <maml:para>Removes an existing managed or runtime registration for the same target before
 registering the new completer.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>Native</maml:name>
-        <maml:description>
-          <maml:para>Registers a native completer for the command instead of a parameter completer.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>ParameterName</maml:name>
-        <maml:description>
-          <maml:para>Specifies the parameter name for a command-parameter completer registration.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>PassThru</maml:name>
-        <maml:description>
-          <maml:para>Returns the managed registration record that was created or reused.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>ScriptBlock</maml:name>
-        <maml:description>
-          <maml:para>Provides the completer script block to register.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.ScriptBlock</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>WhatIf</maml:name>
-        <maml:description>
-          <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-    </command:parameters>
-    <command:inputTypes />
-    <command:returnValues>
-      <command:returnValue>
-        <dev:type>
-          <dev:name>System.Management.Automation.PSCustomObject</dev:name>
-        </dev:type>
-        <maml:description>
-          <maml:para>When -PassThru is used</maml:para>
-        </maml:description>
-      </command:returnValue>
-      <command:returnValue>
-        <dev:type>
-          <dev:name>System.Management.Automation.PSObject</dev:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
-        </maml:description>
-      </command:returnValue>
-    </command:returnValues>
-    <maml:alertSet>
-      <maml:alert>
-        <maml:para />
-      </maml:alert>
-    </maml:alertSet>
-    <command:examples>
-      <command:example>
-        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>```powershell
-Register-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -ScriptBlock {
-    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
-}
-```</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Registers a managed parameter completer for the Name parameter on Test-Tool.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-      <command:example>
-        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Register-CompleterRegistration -CommandName 'git' -Native -ScriptBlock $nativeCompleter -Force -PassThru</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Replaces any existing native completer registration for git and returns the new
-managed registration record.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-    </command:examples>
-    <command:relatedLinks>
-      <maml:navigationLink>
-        <maml:linkText>Online Version</maml:linkText>
-        <command:uri />
-      </maml:navigationLink>
-    </command:relatedLinks>
-  </command:command>
-  <command:command>
-    <command:details>
-      <command:name>Unregister-CompleterRegistration</command:name>
-      <maml:description>
-        <maml:para>Removes a completer registration from runtime and, when applicable, module state.</maml:para>
-      </maml:description>
-      <command:verb>Unregister</command:verb>
-      <command:noun>CompleterRegistration</command:noun>
-    </command:details>
-    <maml:description>
-      <maml:para>Removes a completer registration identified by registration key, native command, or command parameter target. Managed registrations are removed from both the PowerShell runtime and the module's registration table. Runtime-only registrations require -AllowUnmanaged before they can be removed.</maml:para>
-    </maml:description>
-    <command:syntax />
-    <command:parameters>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>AllowUnmanaged</maml:name>
-        <maml:description>
-          <maml:para>Allows removal of a runtime registration that is not tracked by this module.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>CommandName</maml:name>
-        <maml:description>
-          <maml:para>Specifies the command name whose completer should be removed.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>Confirm</maml:name>
-        <maml:description>
-          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>Key</maml:name>
-        <maml:description>
-          <maml:para>Removes the registration that matches a specific registration key.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>Native</maml:name>
-        <maml:description>
-          <maml:para>Targets a native completer registration instead of a command parameter
-completer.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>ParameterName</maml:name>
-        <maml:description>
-          <maml:para>Specifies the parameter name for a command-parameter completer removal target.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>PassThru</maml:name>
-        <maml:description>
-          <maml:para>Returns the registration record that was removed.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
-        <maml:name>WhatIf</maml:name>
-        <maml:description>
-          <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
-        </maml:description>
-        <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
-      </command:parameter>
-    </command:parameters>
-    <command:inputTypes />
-    <command:returnValues>
-      <command:returnValue>
-        <dev:type>
-          <dev:name>System.Management.Automation.PSCustomObject</dev:name>
-        </dev:type>
-        <maml:description>
-          <maml:para>When -PassThru is used</maml:para>
-        </maml:description>
-      </command:returnValue>
-      <command:returnValue>
-        <dev:type>
-          <dev:name>System.Management.Automation.PSObject</dev:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
-        </maml:description>
-      </command:returnValue>
-    </command:returnValues>
-    <maml:alertSet>
-      <maml:alert>
-        <maml:para />
-      </maml:alert>
-    </maml:alertSet>
-    <command:examples>
-      <command:example>
-        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Unregister-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -Confirm:$false</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Removes the managed parameter completer for Test-Tool Name without prompting.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-      <command:example>
-        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Unregister-CompleterRegistration -CommandName 'git' -Native -AllowUnmanaged -Confirm:$false -PassThru</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Removes a native runtime completer for git even if it was not registered
-through this module, and returns the removed record.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-    </command:examples>
-    <command:relatedLinks>
-      <maml:navigationLink>
-        <maml:linkText>Online Version</maml:linkText>
-        <command:uri />
-      </maml:navigationLink>
-    </command:relatedLinks>
-  </command:command>
-</helpItems>    <maml:para>Provides the completer script block to register.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ParameterName</maml:name>
+          <maml:description>
+            <maml:para>Specifies one or more parameter names for command-parameter completer
+registrations.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description>
+            <maml:para>Returns the managed registration records that were created or reused.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ScriptBlock</maml:name>
+          <maml:description>
+            <maml:para>Provides the completer script block to register.
+When multiple targets are
+supplied through arrays, the same script block is reused for each target.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.Management.Automation.ScriptBlock</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description>
+            <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Register-CompleterRegistration</maml:name>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description>
+            <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Force</maml:name>
+          <maml:description>
+            <maml:para>Removes an existing managed or runtime registration for the same target before
+registering the new completer.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>InputObject</maml:name>
+          <maml:description>
+            <maml:para>Supplies one or more objects that describe completer targets.
+Input objects must
+expose target metadata through Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
+property whose value is a script block.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description>
+            <maml:para>Returns the managed registration records that were created or reused.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description>
+            <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Register-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description>
+            <maml:para>Specifies one or more command names whose completers should be registered.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description>
+            <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Force</maml:name>
+          <maml:description>
+            <maml:para>Removes an existing managed or runtime registration for the same target before
+registering the new completer.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Native</maml:name>
+          <maml:description>
+            <maml:para>Registers native completers for the commands instead of parameter completers.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description>
+            <maml:para>Returns the managed registration records that were created or reused.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>ScriptBlock</maml:name>
+          <maml:description>
+            <maml:para>Provides the completer script block to register.
+When multiple targets are
+supplied through arrays, the same script block is reused for each target.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="true">System.Management.Automation.ScriptBlock</command:parameterValue>
         </command:parameter>
@@ -387,9 +514,9 @@ through this module, and returns the removed record.</maml:para>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>CommandName</maml:name>
         <maml:description>
-          <maml:para>Specifies the command name whose completer should be registered.</maml:para>
+          <maml:para>Specifies one or more command names whose completers should be registered.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Confirm</maml:name>
@@ -407,30 +534,44 @@ registering the new completer.</maml:para>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>InputObject</maml:name>
+        <maml:description>
+          <maml:para>Supplies one or more objects that describe completer targets.
+Input objects must
+expose target metadata through Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
+property whose value is a script block.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Native</maml:name>
         <maml:description>
-          <maml:para>Registers a native completer for the command instead of a parameter completer.</maml:para>
+          <maml:para>Registers native completers for the commands instead of parameter completers.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ParameterName</maml:name>
         <maml:description>
-          <maml:para>Specifies the parameter name for a command-parameter completer registration.</maml:para>
+          <maml:para>Specifies one or more parameter names for command-parameter completer
+registrations.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>PassThru</maml:name>
         <maml:description>
-          <maml:para>Returns the managed registration record that was created or reused.</maml:para>
+          <maml:para>Returns the managed registration records that were created or reused.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ScriptBlock</maml:name>
         <maml:description>
-          <maml:para>Provides the completer script block to register.</maml:para>
+          <maml:para>Provides the completer script block to register.
+When multiple targets are
+supplied through arrays, the same script block is reused for each target.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Management.Automation.ScriptBlock</command:parameterValue>
       </command:parameter>
@@ -442,16 +583,39 @@ registering the new completer.</maml:para>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
     </command:parameters>
-    <command:inputTypes />
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.Management.Automation.PSObject</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.String</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.Management.Automation.SwitchParameter</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
           <dev:name>System.Management.Automation.PSCustomObject</dev:name>
         </dev:type>
         <maml:description>
-          <maml:para>When -PassThru is used
-
-{{ Fill in the Description }}</maml:para>
+          <maml:para>When -PassThru is used</maml:para>
         </maml:description>
       </command:returnValue>
       <command:returnValue>
@@ -459,7 +623,7 @@ registering the new completer.</maml:para>
           <dev:name>System.Management.Automation.PSObject</dev:name>
         </dev:type>
         <maml:description>
-          <maml:para>{{ Fill in the Description }}</maml:para>
+          <maml:para />
         </maml:description>
       </command:returnValue>
     </command:returnValues>
@@ -468,32 +632,7 @@ registering the new completer.</maml:para>
         <maml:para />
       </maml:alert>
     </maml:alertSet>
-    <command:examples>
-      <command:example>
-        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Register-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -ScriptBlock {
-&gt;&gt;     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-&gt;&gt;     [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
-&gt;&gt; }</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Registers a managed parameter completer for the Name parameter on Test-Tool.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-      <command:example>
-        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Register-CompleterRegistration -CommandName 'git' -Native -ScriptBlock $nativeCompleter -Force -PassThru</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Replaces any existing native completer registration for git and returns the new
-managed registration record.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-    </command:examples>
+    <command:examples />
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
@@ -505,13 +644,13 @@ managed registration record.</maml:para>
     <command:details>
       <command:name>Unregister-CompleterRegistration</command:name>
       <maml:description>
-        <maml:para>Removes a completer registration from runtime and, when applicable, module state.</maml:para>
+        <maml:para>Removes completer registrations from runtime and, when applicable, module state.</maml:para>
       </maml:description>
       <command:verb>Unregister</command:verb>
       <command:noun>CompleterRegistration</command:noun>
     </command:details>
     <maml:description>
-      <maml:para>Removes a completer registration identified by registration key, native command, or command parameter target. Managed registrations are removed from both the PowerShell runtime and the module's registration table. Runtime-only registrations require -AllowUnmanaged before they can be removed.</maml:para>
+      <maml:para>Removes completer registrations identified by registration key, native command, command parameter target, or pipeline InputObject values. Managed registrations are removed from both the PowerShell runtime and the module's registration table. Runtime-only registrations require -AllowUnmanaged before they can be removed. The command supports array inputs for keys and target fields, plus pipeline input from Get-CompleterRegistration output.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -519,7 +658,7 @@ managed registration record.</maml:para>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>AllowUnmanaged</maml:name>
           <maml:description>
-            <maml:para>Allows removal of a runtime registration that is not tracked by this module.</maml:para>
+            <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
@@ -533,14 +672,14 @@ managed registration record.</maml:para>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>Key</maml:name>
           <maml:description>
-            <maml:para>Removes the registration that matches a specific registration key.</maml:para>
+            <maml:para>Removes the registrations that match one or more registration keys.</maml:para>
           </maml:description>
-          <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>PassThru</maml:name>
           <maml:description>
-            <maml:para>Returns the registration record that was removed.</maml:para>
+            <maml:para>Returns the registration records that were removed.</maml:para>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
@@ -557,16 +696,57 @@ managed registration record.</maml:para>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>AllowUnmanaged</maml:name>
           <maml:description>
-            <maml:para>Allows removal of a runtime registration that is not tracked by this module.</maml:para>
+            <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description>
+            <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>InputObject</maml:name>
+          <maml:description>
+            <maml:para>Supplies one or more objects that describe registrations to remove.
+Input
+objects can expose Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description>
+            <maml:para>Returns the registration records that were removed.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description>
+            <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
+          </maml:description>
+          <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Unregister-CompleterRegistration</maml:name>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>AllowUnmanaged</maml:name>
+          <maml:description>
+            <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description>
-            <maml:para>Specifies the command name whose completer should be removed.</maml:para>
+            <maml:para>Specifies one or more command names whose completers should be removed.</maml:para>
           </maml:description>
-          <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>Confirm</maml:name>
@@ -578,14 +758,15 @@ managed registration record.</maml:para>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description>
-            <maml:para>Specifies the parameter name for a command-parameter completer removal target.</maml:para>
+            <maml:para>Specifies one or more parameter names for command-parameter completer removal
+targets.</maml:para>
           </maml:description>
-          <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>PassThru</maml:name>
           <maml:description>
-            <maml:para>Returns the registration record that was removed.</maml:para>
+            <maml:para>Returns the registration records that were removed.</maml:para>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
@@ -602,16 +783,16 @@ managed registration record.</maml:para>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>AllowUnmanaged</maml:name>
           <maml:description>
-            <maml:para>Allows removal of a runtime registration that is not tracked by this module.</maml:para>
+            <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description>
-            <maml:para>Specifies the command name whose completer should be removed.</maml:para>
+            <maml:para>Specifies one or more command names whose completers should be removed.</maml:para>
           </maml:description>
-          <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>Confirm</maml:name>
@@ -623,15 +804,14 @@ managed registration record.</maml:para>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description>
-            <maml:para>Targets a native completer registration instead of a command parameter
-completer.</maml:para>
+            <maml:para>Targets native completer registrations instead of command parameter completers.</maml:para>
           </maml:description>
           <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
           <maml:name>PassThru</maml:name>
           <maml:description>
-            <maml:para>Returns the registration record that was removed.</maml:para>
+            <maml:para>Returns the registration records that were removed.</maml:para>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
@@ -648,16 +828,16 @@ completer.</maml:para>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>AllowUnmanaged</maml:name>
         <maml:description>
-          <maml:para>Allows removal of a runtime registration that is not tracked by this module.</maml:para>
+          <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>CommandName</maml:name>
         <maml:description>
-          <maml:para>Specifies the command name whose completer should be removed.</maml:para>
+          <maml:para>Specifies one or more command names whose completers should be removed.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Confirm</maml:name>
@@ -667,31 +847,41 @@ completer.</maml:para>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>InputObject</maml:name>
+        <maml:description>
+          <maml:para>Supplies one or more objects that describe registrations to remove.
+Input
+objects can expose Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Key</maml:name>
         <maml:description>
-          <maml:para>Removes the registration that matches a specific registration key.</maml:para>
+          <maml:para>Removes the registrations that match one or more registration keys.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Native</maml:name>
         <maml:description>
-          <maml:para>Targets a native completer registration instead of a command parameter
-completer.</maml:para>
+          <maml:para>Targets native completer registrations instead of command parameter completers.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ParameterName</maml:name>
         <maml:description>
-          <maml:para>Specifies the parameter name for a command-parameter completer removal target.</maml:para>
+          <maml:para>Specifies one or more parameter names for command-parameter completer removal
+targets.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>PassThru</maml:name>
         <maml:description>
-          <maml:para>Returns the registration record that was removed.</maml:para>
+          <maml:para>Returns the registration records that were removed.</maml:para>
         </maml:description>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
@@ -703,16 +893,39 @@ completer.</maml:para>
         <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
       </command:parameter>
     </command:parameters>
-    <command:inputTypes />
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.Management.Automation.PSObject</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.String</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.Management.Automation.SwitchParameter</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
           <dev:name>System.Management.Automation.PSCustomObject</dev:name>
         </dev:type>
         <maml:description>
-          <maml:para>When -PassThru is used
-
-{{ Fill in the Description }}</maml:para>
+          <maml:para>When -PassThru is used</maml:para>
         </maml:description>
       </command:returnValue>
       <command:returnValue>
@@ -720,7 +933,7 @@ completer.</maml:para>
           <dev:name>System.Management.Automation.PSObject</dev:name>
         </dev:type>
         <maml:description>
-          <maml:para>{{ Fill in the Description }}</maml:para>
+          <maml:para />
         </maml:description>
       </command:returnValue>
     </command:returnValues>
@@ -729,29 +942,30 @@ completer.</maml:para>
         <maml:para />
       </maml:alert>
     </maml:alertSet>
-    <command:examples>
-      <command:example>
-        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Unregister-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -Confirm:$false</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Removes the managed parameter completer for Test-Tool Name without prompting.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-      <command:example>
-        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
-        <maml:introduction>
-          <maml:para>Unregister-CompleterRegistration -CommandName 'git' -Native -AllowUnmanaged -Confirm:$false -PassThru</maml:para>
-          <maml:para>&#x80;</maml:para>
-          <maml:para>Removes a native runtime completer for git even if it was not registered
-through this module, and returns the removed record.</maml:para>
-        </maml:introduction>
-        <dev:code />
-        <dev:remarks />
-      </command:example>
-    </command:examples>
+    <command:examples />
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <command:uri />
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+</helpItems>:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+</helpItems>    <dev:name>System.Management.Automation.PSObject</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para />
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples />
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>

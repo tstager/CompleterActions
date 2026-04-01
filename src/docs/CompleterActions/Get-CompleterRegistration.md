@@ -9,7 +9,7 @@ PlatyPS schema version: 2024-05-01
 title: Get-CompleterRegistration
 ---
 
-# Get-CompleterRegistration <!-- markdownlint-disable-line MD025 -->
+# Get-CompleterRegistration
 
 ## SYNOPSIS
 
@@ -18,44 +18,47 @@ Gets completer registrations known to the module or discovered at runtime.
 ## SYNTAX
 
 ### All (Default)
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Get-CompleterRegistration [-ManagedOnly] [-DiscoveredOnly] [<CommonParameters>]
+
+```PowerShell
+Get-CompleterRegistration [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount] [-Skip <ulong>]
+ [-First <ulong>] [<CommonParameters>]
 ```
 
 ### ByKey
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Get-CompleterRegistration -Key <string> [-ManagedOnly] [-DiscoveredOnly] [<CommonParameters>]
+
+```PowerShell
+Get-CompleterRegistration -Key <string[]> [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount]
+ [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
 ### CommandParameter
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Get-CompleterRegistration -CommandName <string> -ParameterName <string> [-ManagedOnly]
- [-DiscoveredOnly] [<CommonParameters>]
+
+```PowerShell
+Get-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> [-ManagedOnly]
+ [-DiscoveredOnly] [-IncludeTotalCount] [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
 ### Native
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Get-CompleterRegistration -CommandName <string> -Native [-ManagedOnly] [-DiscoveredOnly]
- [<CommonParameters>]
+
+```PowerShell
+Get-CompleterRegistration -CommandName <string[]> -Native [-ManagedOnly] [-DiscoveredOnly]
+ [-IncludeTotalCount] [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
 ## ALIASES
 
 This cmdlet has the following aliases,
-  {{Insert list of aliases}}
 
 ## DESCRIPTION
 
-Returns completer registration records for all registrations, a specific
-registration key, a native command completer, or a command parameter
-completer.
+Returns completer registration records for all registrations, specific
+registration keys, native command completers, or command parameter completers.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
 to the same target.
+The command accepts arrays for key, command, and parameter
+lookup scenarios and supports property-name pipeline binding for key-based and
+target-based lookups.
 
 ## EXAMPLES
 
@@ -68,19 +71,19 @@ git.
 
 ### EXAMPLE 2
 
-Get-CompleterRegistration -ManagedOnly
+Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
 
-Lists only completer registrations that were registered through this module.
+Gets multiple completer registrations by key in a single call.
 
 ## PARAMETERS
 
 ### -CommandName
 
-Limits results to a specific command name for native or command-parameter
+Limits results to one or more command names for native or command-parameter
 completers.
 
 ```yaml
-Type: System.String
+Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -89,13 +92,13 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -123,21 +126,60 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
-### -Key
-
-Gets the registration that matches a specific registration key.
+### -First
 
 ```yaml
-Type: System.String
+Type: System.UInt64
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -IncludeTotalCount
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -Key
+
+Gets the registrations that match one or more registration keys.
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases:
+- RegistrationKey
 ParameterSets:
 - Name: ByKey
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -174,13 +216,14 @@ command parameter completer.
 Type: System.Management.Automation.SwitchParameter
 DefaultValue: False
 SupportsWildcards: false
-Aliases: []
+Aliases:
+- IsNative
 ParameterSets:
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -189,10 +232,10 @@ HelpMessage: ''
 
 ### -ParameterName
 
-Limits results to a specific parameter completer target.
+Limits results to one or more parameter completer targets.
 
 ```yaml
-Type: System.String
+Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -200,6 +243,25 @@ ParameterSets:
 - Name: CommandParameter
   Position: Named
   IsRequired: true
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: true
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -Skip
+
+```yaml
+Type: System.UInt64
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
@@ -216,6 +278,10 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+### System.String[]
+
+### System.Management.Automation.SwitchParameter
 
 ## OUTPUTS
 

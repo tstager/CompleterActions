@@ -8,70 +8,66 @@ ms.date: 04/01/2026
 PlatyPS schema version: 2024-05-01
 title: Unregister-CompleterRegistration
 ---
-<!-- markdownlint-disable-next-line MD025 -->
+
 # Unregister-CompleterRegistration
 
 ## SYNOPSIS
 
-Removes a completer registration from runtime and, when applicable, module state.
+Removes completer registrations from runtime and, when applicable, module state.
 
 ## SYNTAX
 
 ### ByKey (Default)
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Unregister-CompleterRegistration -Key <string> [-AllowUnmanaged] [-PassThru] [-WhatIf] [-Confirm]
+
+```PowerShell
+Unregister-CompleterRegistration -Key <string[]> [-AllowUnmanaged] [-PassThru] [-WhatIf] [-Confirm]
  [<CommonParameters>]
 ```
 
-### CommandParameter
-<!-- markdownlint-disable-next-line MD040 -->
+### InputObject
+
+```PowerShell
+Unregister-CompleterRegistration -InputObject <psobject[]> [-AllowUnmanaged] [-PassThru] [-WhatIf]
+ [-Confirm] [<CommonParameters>]
 ```
-Unregister-CompleterRegistration -CommandName <string> -ParameterName <string> [-AllowUnmanaged]
+
+### CommandParameter
+
+```PowerShell
+Unregister-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> [-AllowUnmanaged]
  [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### Native
-<!-- markdownlint-disable-next-line MD040 -->
-```
-Unregister-CompleterRegistration -CommandName <string> -Native [-AllowUnmanaged] [-PassThru]
+
+```PowerShell
+Unregister-CompleterRegistration -CommandName <string[]> -Native [-AllowUnmanaged] [-PassThru]
  [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ## ALIASES
 
 This cmdlet has the following aliases,
-  {{Insert list of aliases}}
 
 ## DESCRIPTION
 
-Removes a completer registration identified by registration key, native command,
-or command parameter target.
-Managed registrations are removed from both the
-PowerShell runtime and the module's registration table.
-Runtime-only
-registrations require -AllowUnmanaged before they can be removed.
+Removes completer registrations identified by registration key, native command,
+command parameter target, or pipeline InputObject values.
+Managed registrations
+are removed from both the PowerShell runtime and the module's registration
+table.
+Runtime-only registrations require -AllowUnmanaged before they can be
+removed.
+The command supports array inputs for keys and target fields, plus
+pipeline input from Get-CompleterRegistration output.
 
 ## EXAMPLES
-
-### EXAMPLE 1
-
-Unregister-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -Confirm:$false
-
-Removes the managed parameter completer for Test-Tool Name without prompting.
-
-### EXAMPLE 2
-
-Unregister-CompleterRegistration -CommandName 'git' -Native -AllowUnmanaged -Confirm:$false -PassThru
-
-Removes a native runtime completer for git even if it was not registered
-through this module, and returns the removed record.
 
 ## PARAMETERS
 
 ### -AllowUnmanaged
 
-Allows removal of a runtime registration that is not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -92,10 +88,10 @@ HelpMessage: ''
 
 ### -CommandName
 
-Specifies the command name whose completer should be removed.
+Specifies one or more command names whose completers should be removed.
 
 ```yaml
-Type: System.String
+Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -104,13 +100,13 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -139,21 +135,46 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
-### -Key
+### -InputObject
 
-Removes the registration that matches a specific registration key.
+Supplies one or more objects that describe registrations to remove.
+Input
+objects can expose Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native.
 
 ```yaml
-Type: System.String
+Type: System.Management.Automation.PSObject[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
+ParameterSets:
+- Name: InputObject
+  Position: Named
+  IsRequired: true
+  ValueFromPipeline: true
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -Key
+
+Removes the registrations that match one or more registration keys.
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases:
+- RegistrationKey
 ParameterSets:
 - Name: ByKey
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -162,20 +183,20 @@ HelpMessage: ''
 
 ### -Native
 
-Targets a native completer registration instead of a command parameter
-completer.
+Targets native completer registrations instead of command parameter completers.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
 DefaultValue: False
 SupportsWildcards: false
-Aliases: []
+Aliases:
+- IsNative
 ParameterSets:
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -184,10 +205,11 @@ HelpMessage: ''
 
 ### -ParameterName
 
-Specifies the parameter name for a command-parameter completer removal target.
+Specifies one or more parameter names for command-parameter completer removal
+targets.
 
 ```yaml
-Type: System.String
+Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -196,7 +218,7 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: false
+  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -205,7 +227,7 @@ HelpMessage: ''
 
 ### -PassThru
 
-Returns the registration record that was removed.
+Returns the registration records that were removed.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -254,6 +276,12 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+### System.Management.Automation.PSObject[]
+
+### System.String[]
+
+### System.Management.Automation.SwitchParameter
 
 ## OUTPUTS
 
