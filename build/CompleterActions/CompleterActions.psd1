@@ -15,7 +15,7 @@ RootModule = 'CompleterActions.psm1'
 ModuleVersion = '1.0.0'
 
 # Supported PSEditions
-CompatiblePSEditions = 'Desktop', 'Core'
+CompatiblePSEditions = 'Core'
 
 # ID used to uniquely identify this module
 GUID = '7cb01313-d25f-466d-969d-481dd26508fa'
@@ -33,7 +33,7 @@ Copyright = '(c) 2026 . All rights reserved.'
 Description = 'Interacts with PowerShell completers'
 
 # Minimum version of the PowerShell engine required by this module
-PowerShellVersion = '5.1'
+PowerShellVersion = '7.0'
 
 # Name of the PowerShell host required by this module
 # PowerShellHostName = ''

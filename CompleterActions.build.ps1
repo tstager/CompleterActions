@@ -6,10 +6,7 @@ Author: tstager
 param (
     [Parameter()]
     [String]
-    $author,
-    [string[]]
-    [ValidateSet("Desktop", "Core")]
-    $pseditions = @("Desktop", "Core")
+    $author
 )
 
 
@@ -17,6 +14,8 @@ $modulename = $PSScriptRoot.Split("\")[-1]
 $buildpath = "$PSScriptRoot\build"
 $modulepath = "$buildpath\$modulename"
 $docPath = "$PSScriptRoot\src\docs\$modulename"
+$sourceManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psd1"
+$sourceManifestData = Import-PowerShellDataFile -Path $sourceManifestPath
 # Synopsis:
 
 task clean {
@@ -125,8 +124,8 @@ task build clean, external_help, {
 
     $Data = @{
 
-        CompatiblePSEditions = $pseditions
-        PowerShellVersion    = 5.1
+        CompatiblePSEditions = @($sourceManifestData.CompatiblePSEditions)
+        PowerShellVersion    = $sourceManifestData.PowerShellVersion
         Copyright            = "(c) $((get-date).Year) $author. All rights reserved."
         Path                 = "$modulePath\$moduleName.psd1"
         FunctionsToExport    = $public.BaseName

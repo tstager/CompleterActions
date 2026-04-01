@@ -370,8 +370,7 @@ through this module, and returns the removed record.</maml:para>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
-</helpItems>ption>
-            <maml:para>Returns the managed registration record that was created or reused.</maml:para>
+</helpItems>a>
           </maml:description>
           <command:parameterValue required="false" variableLength="true">System.Management.Automation.SwitchParameter</command:parameterValue>
         </command:parameter>
