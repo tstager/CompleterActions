@@ -3,21 +3,23 @@
 Gets completer registrations known to the module or discovered at runtime.
 
 .DESCRIPTION
-Returns completer registration records for all registrations, a specific
-registration key, a native command completer, or a command parameter
-completer. By default the command merges module-managed registrations with
+Returns completer registration records for all registrations, specific
+registration keys, native command completers, or command parameter completers.
+By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
-to the same target.
+to the same target. The command accepts arrays for key, command, and parameter
+lookup scenarios and supports property-name pipeline binding for key-based and
+target-based lookups.
 
 .PARAMETER Key
-Gets the registration that matches a specific registration key.
+Gets the registrations that match one or more registration keys.
 
 .PARAMETER CommandName
-Limits results to a specific command name for native or command-parameter
+Limits results to one or more command names for native or command-parameter
 completers.
 
 .PARAMETER ParameterName
-Limits results to a specific parameter completer target.
+Limits results to one or more parameter completer targets.
 
 .PARAMETER Native
 Indicates that the lookup target is a native command completer instead of a
@@ -40,9 +42,9 @@ Gets the registration record for the native completer currently associated with
 git.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -ManagedOnly
+PS> Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
 
-Lists only completer registrations that were registered through this module.
+Gets multiple completer registrations by key in a single call.
 #>
 function Get-CompleterRegistration
 <#
@@ -52,20 +54,22 @@ function Get-CompleterRegistration
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
+        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
+        [Alias('RegistrationKey')]
         [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [string[]] $Key,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
-        [string] $CommandName,
+        [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
-        [string] $ParameterName,
+        [string[]] $ParameterName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
         [switch] $Native,
 
         [Parameter()]
@@ -75,146 +79,217 @@ function Get-CompleterRegistration
         [switch] $DiscoveredOnly
     )
 
-    if ($ManagedOnly -and $DiscoveredOnly)
+    begin
     {
-        throw 'ManagedOnly and DiscoveredOnly cannot be used together.'
+        if ($ManagedOnly -and $DiscoveredOnly)
+        {
+            throw 'ManagedOnly and DiscoveredOnly cannot be used together.'
+        }
+
+        $registrationsByKey = [ordered] @{}
     }
 
-    $managedRegistrations = @()
-    $discoveredRegistrations = @()
-
-    if (-not $DiscoveredOnly)
+    process
     {
-        $managedRegistrations = switch ($PSCmdlet.ParameterSetName)
+        $targets = @()
+        $managedRegistrations = @()
+        $discoveredRegistrations = @()
+
+        try
         {
-            'All' { @(Find-ManagedCompleterRegistration) }
-            'ByKey' { @(Find-ManagedCompleterRegistration -Key $Key) }
-            'Native' { @(Find-ManagedCompleterRegistration -CommandName $CommandName -Native) }
-            'CommandParameter' { @(Find-ManagedCompleterRegistration -CommandName $CommandName -ParameterName $ParameterName) }
+            if ($PSCmdlet.ParameterSetName -ne 'All')
+            {
+                $targetParameters = @{}
+
+                switch ($PSCmdlet.ParameterSetName)
+                {
+                    'ByKey'
+                    {
+                        $targetParameters['Key'] = $Key
+                        break
+                    }
+
+                    'Native'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['Native'] = $true
+                        break
+                    }
+
+                    'CommandParameter'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['ParameterName'] = $ParameterName
+                        break
+                    }
+                }
+
+                $targets = @(Resolve-CompleterTargetList @targetParameters)
+            }
+
+            if (-not $DiscoveredOnly)
+            {
+                if ($targets.Count -eq 0)
+                {
+                    $managedRegistrations = @(Find-ManagedCompleterRegistration)
+                }
+                else
+                {
+                    foreach ($target in $targets)
+                    {
+                        $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
+                    }
+                }
+            }
+
+            if (-not $ManagedOnly)
+            {
+                if ($targets.Count -eq 0)
+                {
+                    $discoveredRegistrations = @(Find-RuntimeCompleterRegistration)
+                }
+                else
+                {
+                    foreach ($target in $targets)
+                    {
+                        $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
+                    }
+                }
+            }
+
+            foreach ($registration in $managedRegistrations)
+            {
+                if ($null -eq $registration)
+                {
+                    continue
+                }
+
+                $registrationsByKey[[string] $registration.Key] = $registration
+            }
+
+            foreach ($registration in $discoveredRegistrations)
+            {
+                if ($null -eq $registration)
+                {
+                    continue
+                }
+
+                if ($DiscoveredOnly)
+                {
+                    if ($registrationsByKey.Contains([string] $registration.Key))
+                    {
+                        continue
+                    }
+
+                    $managedMatch = Find-ManagedCompleterRegistration -Key $registration.Key
+                    if ($null -ne $managedMatch)
+                    {
+                        continue
+                    }
+                }
+
+                if (-not $registrationsByKey.Contains([string] $registration.Key))
+                {
+                    $registrationsByKey[[string] $registration.Key] = $registration
+                }
+            }
+        }
+        catch
+        {
+            throw "Failed to retrieve completer registrations. $($_.Exception.Message)"
+        }
+        finally
+        {
+            $targets = @()
+            $managedRegistrations = @()
+            $discoveredRegistrations = @()
         }
     }
 
-    if (-not $ManagedOnly)
+    end
     {
-        $discoveredRegistrations = switch ($PSCmdlet.ParameterSetName)
-        {
-            'All' { @(Find-RuntimeCompleterRegistration) }
-            'ByKey' { @(Find-RuntimeCompleterRegistration -Key $Key) }
-            'Native' { @(Find-RuntimeCompleterRegistration -CommandName $CommandName -Native) }
-            'CommandParameter' { @(Find-RuntimeCompleterRegistration -CommandName $CommandName -ParameterName $ParameterName) }
-        }
-    }
+        $registrations = @($registrationsByKey.Values)
+        $totalCount = $registrations.Count
 
-    $registrationsByKey = [ordered] @{}
-
-    foreach ($registration in $managedRegistrations)
-    {
-        if ($null -eq $registration)
+        if ($PSCmdlet.PagingParameters.IncludeTotalCount)
         {
-            continue
+            $null = $PSCmdlet.WriteObject($PSCmdlet.PagingParameters.NewTotalCount($totalCount, 1.0))
         }
 
-        $registrationsByKey[[string] $registration.Key] = $registration
-    }
+        $skip = $PSCmdlet.PagingParameters.Skip
+        $first = $PSCmdlet.PagingParameters.First
 
-    foreach ($registration in $discoveredRegistrations)
-    {
-        if ($null -eq $registration)
+        if ($skip -ge [uint64] $totalCount)
         {
-            continue
+            return
         }
 
-        if (-not $registrationsByKey.Contains([string] $registration.Key))
+        $startIndex = [int] $skip
+        $itemsAvailable = $totalCount - $startIndex
+        $itemsToEmit = if ($first -eq [uint64]::MaxValue)
         {
-            $registrationsByKey[[string] $registration.Key] = $registration
+            $itemsAvailable
         }
-    }
+        elseif ($first -gt [uint64] $itemsAvailable)
+        {
+            $itemsAvailable
+        }
+        else
+        {
+            [int] $first
+        }
 
-    $registrations = @($registrationsByKey.Values)
-    $totalCount = $registrations.Count
+        if ($itemsToEmit -le 0)
+        {
+            return
+        }
 
-    if ($PSCmdlet.PagingParameters.IncludeTotalCount)
-    {
-        $null = $PSCmdlet.WriteObject($PSCmdlet.PagingParameters.NewTotalCount($totalCount, 1.0))
+        $endIndex = $startIndex + $itemsToEmit - 1
+        $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
     }
-
-    $skip = $PSCmdlet.PagingParameters.Skip
-    $first = $PSCmdlet.PagingParameters.First
-
-    if ($skip -ge [uint64] $totalCount)
-    {
-        return
-    }
-
-    $startIndex = [int] $skip
-    $itemsAvailable = $totalCount - $startIndex
-    $itemsToEmit = if ($first -eq [uint64]::MaxValue)
-    {
-        $itemsAvailable
-    }
-    elseif ($first -gt [uint64] $itemsAvailable)
-    {
-        $itemsAvailable
-    }
-    else
-    {
-        [int] $first
-    }
-
-    if ($itemsToEmit -le 0)
-    {
-        return
-    }
-
-    $endIndex = $startIndex + $itemsToEmit - 1
-    $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
 }
 <#
 .SYNOPSIS
 Registers a managed PowerShell argument completer.
 
 .DESCRIPTION
-Registers a native or command-parameter argument completer with
-Register-ArgumentCompleter and records the registration in the module's managed
+Registers native or command-parameter argument completers with
+Register-ArgumentCompleter and records the registrations in the module's managed
 state. Existing managed or runtime registrations are preserved unless you use
--Force to replace them.
+-Force to replace them. The command supports array inputs for command and
+parameter targets, and it can also accept pipeline InputObject values that
+describe the target and expose a ScriptBlock property.
+
+.PARAMETER InputObject
+Supplies one or more objects that describe completer targets. Input objects must
+expose target metadata through Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
+property whose value is a script block.
 
 .PARAMETER CommandName
-Specifies the command name whose completer should be registered.
+Specifies one or more command names whose completers should be registered.
 
 .PARAMETER ParameterName
-Specifies the parameter name for a command-parameter completer registration.
+Specifies one or more parameter names for command-parameter completer
+registrations.
 
 .PARAMETER Native
-Registers a native completer for the command instead of a parameter completer.
+Registers native completers for the commands instead of parameter completers.
 
 .PARAMETER ScriptBlock
-Provides the completer script block to register.
+Provides the completer script block to register. When multiple targets are
+supplied through arrays, the same script block is reused for each target.
 
 .PARAMETER Force
 Removes an existing managed or runtime registration for the same target before
 registering the new completer.
 
 .PARAMETER PassThru
-Returns the managed registration record that was created or reused.
+Returns the managed registration records that were created or reused.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-When -PassThru is used, returns a CompleterActions.CompleterRegistration record.
-
-.EXAMPLE
-PS> Register-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -ScriptBlock {
->>     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
->>     [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
->> }
-
-Registers a managed parameter completer for the Name parameter on Test-Tool.
-
-.EXAMPLE
-PS> Register-CompleterRegistration -CommandName 'git' -Native -ScriptBlock $nativeCompleter -Force -PassThru
-
-Replaces any existing native completer registration for git and returns the new
-managed registration record.
+When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 #>
 function Register-CompleterRegistration
 <#
@@ -224,19 +299,25 @@ function Register-CompleterRegistration
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
-        [ValidateNotNullOrEmpty()]
-        [string] $CommandName,
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [psobject[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
-        [string] $ParameterName,
+        [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
         [switch] $Native,
 
-        [Parameter(Mandatory)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNull()]
         [scriptblock] $ScriptBlock,
 
@@ -247,117 +328,203 @@ function Register-CompleterRegistration
         [switch] $PassThru
     )
 
-    $target = if ($PSCmdlet.ParameterSetName -eq 'Native')
+    process
     {
-        Resolve-CompleterTarget -CommandName $CommandName -Native
-    }
-    else
-    {
-        Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
-    }
+        $resolvedInputs = @()
 
-    $existingManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-    $existingRuntimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
-
-    if ($null -ne $existingManagedRegistration -and -not $Force)
-    {
-        if ($existingManagedRegistration.ScriptText -eq $ScriptBlock.ToString())
+        try
         {
-            if ($PassThru)
+            if ($PSCmdlet.ParameterSetName -eq 'InputObject')
             {
-                return $existingManagedRegistration
+                $resolvedInputs = @($InputObject | Resolve-CompleterInputObject -RequireScriptBlock)
+            }
+            else
+            {
+                $targetParameters = @{}
+
+                switch ($PSCmdlet.ParameterSetName)
+                {
+                    'Native'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['Native'] = $true
+                        break
+                    }
+
+                    'CommandParameter'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['ParameterName'] = $ParameterName
+                        break
+                    }
+                }
+
+                foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
+                {
+                    $resolvedInputs += [pscustomobject] [ordered] @{
+                        Target = $target
+                        ScriptBlock = $ScriptBlock
+                    }
+                }
             }
 
-            return
+            foreach ($resolvedInput in $resolvedInputs)
+            {
+                $target = $resolvedInput.Target
+                $targetScriptBlock = $resolvedInput.ScriptBlock
+                $existingManagedRegistration = $null
+                $existingRuntimeRegistration = $null
+                $removedManagedRegistration = $null
+                $removedRuntimeRegistration = $null
+
+                try
+                {
+                    $existingManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
+                    $existingRuntimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+
+                    if ($null -ne $existingManagedRegistration -and -not $Force)
+                    {
+                        if ($existingManagedRegistration.ScriptText -eq $targetScriptBlock.ToString())
+                        {
+                            if ($PassThru)
+                            {
+                                $PSCmdlet.WriteObject($existingManagedRegistration)
+                            }
+
+                            continue
+                        }
+
+                        throw "A module-managed completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
+                    }
+
+                    if ($null -eq $existingManagedRegistration -and $null -ne $existingRuntimeRegistration -and -not $Force)
+                    {
+                        throw "A runtime completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
+                    }
+
+                    if (-not $PSCmdlet.ShouldProcess($target.RuntimeKey, 'Register completer registration'))
+                    {
+                        continue
+                    }
+
+                    if ($Force)
+                    {
+                        if ($null -ne $existingManagedRegistration)
+                        {
+                            $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $target.Key
+                        }
+
+                        if ($null -ne $existingRuntimeRegistration)
+                        {
+                            $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $target.Key
+                        }
+                    }
+
+                    if ($target.IsNative)
+                    {
+                        Register-ArgumentCompleter -CommandName $target.CommandName -Native -ScriptBlock $targetScriptBlock
+                    }
+                    else
+                    {
+                        Register-ArgumentCompleter -CommandName $target.CommandName -ParameterName $target.ParameterName -ScriptBlock $targetScriptBlock
+                    }
+
+                    $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed'
+                    $registration = Add-ManagedCompleterRegistration -Registration $registration
+
+                    if ($PassThru)
+                    {
+                        $PSCmdlet.WriteObject($registration)
+                    }
+                }
+                catch
+                {
+                    if ($Force)
+                    {
+                        $currentManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
+                        if ($null -ne $currentManagedRegistration)
+                        {
+                            $null = Remove-ManagedCompleterRegistration -Key $target.Key
+                        }
+
+                        if ($null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+                        {
+                            if ($null -ne $removedRuntimeRegistration)
+                            {
+                                if ($removedRuntimeRegistration.IsNative)
+                                {
+                                    Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -Native -ScriptBlock $removedRuntimeRegistration.ScriptBlock
+                                }
+                                else
+                                {
+                                    Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -ParameterName $removedRuntimeRegistration.ParameterName -ScriptBlock $removedRuntimeRegistration.ScriptBlock
+                                }
+                            }
+
+                            if ($null -ne $removedManagedRegistration)
+                            {
+                                $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
+                            }
+                        }
+                    }
+
+                    throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
+                }
+                finally
+                {
+                    $existingManagedRegistration = $null
+                    $existingRuntimeRegistration = $null
+                    $removedManagedRegistration = $null
+                    $removedRuntimeRegistration = $null
+                }
+            }
         }
-
-        throw "A module-managed completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
-    }
-
-    if ($null -eq $existingManagedRegistration -and $null -ne $existingRuntimeRegistration -and -not $Force)
-    {
-        throw "A runtime completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
-    }
-
-    if (-not $PSCmdlet.ShouldProcess($target.RuntimeKey, 'Register completer registration'))
-    {
-        return
-    }
-
-    if ($Force)
-    {
-        if ($null -ne $existingManagedRegistration)
+        finally
         {
-            $null = Remove-ManagedCompleterRegistration -Key $target.Key
+            $resolvedInputs = @()
         }
-
-        if ($null -ne $existingRuntimeRegistration)
-        {
-            $null = Remove-RuntimeCompleterRegistration -Key $target.Key
-        }
-    }
-
-    if ($target.IsNative)
-    {
-        Register-ArgumentCompleter -CommandName $target.CommandName -Native -ScriptBlock $ScriptBlock
-    }
-    else
-    {
-        Register-ArgumentCompleter -CommandName $target.CommandName -ParameterName $target.ParameterName -ScriptBlock $ScriptBlock
-    }
-
-    $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $ScriptBlock -Source 'Managed'
-    $registration = Add-ManagedCompleterRegistration -Registration $registration
-
-    if ($PassThru)
-    {
-        return $registration
     }
 }
 <#
 .SYNOPSIS
-Removes a completer registration from runtime and, when applicable, module state.
+Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
-Removes a completer registration identified by registration key, native command,
-or command parameter target. Managed registrations are removed from both the
-PowerShell runtime and the module's registration table. Runtime-only
-registrations require -AllowUnmanaged before they can be removed.
+Removes completer registrations identified by registration key, native command,
+command parameter target, or pipeline InputObject values. Managed registrations
+are removed from both the PowerShell runtime and the module's registration
+table. Runtime-only registrations require -AllowUnmanaged before they can be
+removed. The command supports array inputs for keys and target fields, plus
+pipeline input from Get-CompleterRegistration output.
+
+.PARAMETER InputObject
+Supplies one or more objects that describe registrations to remove. Input
+objects can expose Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native.
 
 .PARAMETER Key
-Removes the registration that matches a specific registration key.
+Removes the registrations that match one or more registration keys.
 
 .PARAMETER CommandName
-Specifies the command name whose completer should be removed.
+Specifies one or more command names whose completers should be removed.
 
 .PARAMETER ParameterName
-Specifies the parameter name for a command-parameter completer removal target.
+Specifies one or more parameter names for command-parameter completer removal
+targets.
 
 .PARAMETER Native
-Targets a native completer registration instead of a command parameter
-completer.
+Targets native completer registrations instead of command parameter completers.
 
 .PARAMETER AllowUnmanaged
-Allows removal of a runtime registration that is not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module.
 
 .PARAMETER PassThru
-Returns the registration record that was removed.
+Returns the registration records that were removed.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-When -PassThru is used, returns the removed CompleterActions.CompleterRegistration
-record.
-
-.EXAMPLE
-PS> Unregister-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -Confirm:$false
-
-Removes the managed parameter completer for Test-Tool Name without prompting.
-
-.EXAMPLE
-PS> Unregister-CompleterRegistration -CommandName 'git' -Native -AllowUnmanaged -Confirm:$false -PassThru
-
-Removes a native runtime completer for git even if it was not registered
-through this module, and returns the removed record.
+When -PassThru is used, returns removed CompleterActions.CompleterRegistration
+records.
 #>
 function Unregister-CompleterRegistration
 <#
@@ -367,20 +534,26 @@ function Unregister-CompleterRegistration
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'ByKey', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [psobject[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
+        [Alias('RegistrationKey')]
         [ValidateNotNullOrEmpty()]
-        [string] $CommandName,
+        [string[]] $Key,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
-        [string] $ParameterName,
+        [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
         [switch] $Native,
 
         [Parameter()]
@@ -390,87 +563,139 @@ function Unregister-CompleterRegistration
         [switch] $PassThru
     )
 
-    $lookup = switch ($PSCmdlet.ParameterSetName)
+    process
     {
-        'ByKey'
+        $resolvedTargets = @()
+
+        try
         {
-            [ordered] @{
-                Managed = Find-ManagedCompleterRegistration -Key $Key
-                Runtime = Find-RuntimeCompleterRegistration -Key $Key
+            if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+            {
+                $resolvedTargets = @($InputObject | Resolve-CompleterInputObject | ForEach-Object { $_.Target })
             }
-            break
-        }
+            else
+            {
+                $targetParameters = @{}
 
-        'Native'
-        {
-            [ordered] @{
-                Managed = Find-ManagedCompleterRegistration -CommandName $CommandName -Native
-                Runtime = Find-RuntimeCompleterRegistration -CommandName $CommandName -Native
+                switch ($PSCmdlet.ParameterSetName)
+                {
+                    'ByKey'
+                    {
+                        $targetParameters['Key'] = $Key
+                        break
+                    }
+
+                    'Native'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['Native'] = $true
+                        break
+                    }
+
+                    'CommandParameter'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['ParameterName'] = $ParameterName
+                        break
+                    }
+                }
+
+                $resolvedTargets = @(Resolve-CompleterTargetList @targetParameters)
             }
-            break
-        }
 
-        'CommandParameter'
-        {
-            [ordered] @{
-                Managed = Find-ManagedCompleterRegistration -CommandName $CommandName -ParameterName $ParameterName
-                Runtime = Find-RuntimeCompleterRegistration -CommandName $CommandName -ParameterName $ParameterName
+            foreach ($target in $resolvedTargets)
+            {
+                $managedRegistration = $null
+                $runtimeRegistration = $null
+                $registrationToRemove = $null
+                $removedRuntimeRegistration = $null
+                $removedManagedRegistration = $null
+
+                try
+                {
+                    $managedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
+                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+
+                    if ($null -ne $managedRegistration)
+                    {
+                        $registrationToRemove = $managedRegistration
+                    }
+                    elseif ($null -ne $runtimeRegistration)
+                    {
+                        if (-not $AllowUnmanaged)
+                        {
+                            throw "The completer registration '$($runtimeRegistration.RuntimeKey)' is not module-managed. Re-run with -AllowUnmanaged to remove the runtime registration."
+                        }
+
+                        $registrationToRemove = $runtimeRegistration
+                    }
+                    else
+                    {
+                        throw 'No completer registration was found for the requested target.'
+                    }
+
+                    if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
+                    {
+                        continue
+                    }
+
+                    if ($null -ne $runtimeRegistration)
+                    {
+                        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $registrationToRemove.Key
+                    }
+
+                    if ($null -ne $managedRegistration)
+                    {
+                        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
+                    }
+
+                    if ($PassThru)
+                    {
+                        if ($null -ne $removedManagedRegistration)
+                        {
+                            $PSCmdlet.WriteObject($removedManagedRegistration)
+                        }
+                        elseif ($null -ne $removedRuntimeRegistration)
+                        {
+                            $PSCmdlet.WriteObject($removedRuntimeRegistration)
+                        }
+                    }
+                }
+                catch
+                {
+                    if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+                    {
+                        if ($removedRuntimeRegistration.IsNative)
+                        {
+                            Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -Native -ScriptBlock $removedRuntimeRegistration.ScriptBlock
+                        }
+                        else
+                        {
+                            Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -ParameterName $removedRuntimeRegistration.ParameterName -ScriptBlock $removedRuntimeRegistration.ScriptBlock
+                        }
+                    }
+
+                    if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Key $target.Key))
+                    {
+                        $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
+                    }
+
+                    throw "Failed to unregister the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
+                }
+                finally
+                {
+                    $managedRegistration = $null
+                    $runtimeRegistration = $null
+                    $registrationToRemove = $null
+                    $removedRuntimeRegistration = $null
+                    $removedManagedRegistration = $null
+                }
             }
-            break
         }
-    }
-
-    $managedRegistration = $lookup['Managed']
-    $runtimeRegistration = $lookup['Runtime']
-    if ($null -ne $managedRegistration)
-    {
-        $registrationToRemove = $managedRegistration
-    }
-    elseif ($null -ne $runtimeRegistration)
-    {
-        if (-not $AllowUnmanaged)
+        finally
         {
-            throw "The completer registration '$($runtimeRegistration.RuntimeKey)' is not module-managed. Re-run with -AllowUnmanaged to remove the runtime registration."
+            $resolvedTargets = @()
         }
-
-        $registrationToRemove = $runtimeRegistration
-    }
-    else
-    {
-        $registrationToRemove = $null
-    }
-
-    if ($null -eq $registrationToRemove)
-    {
-        throw 'No completer registration was found for the requested target.'
-    }
-
-    if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
-    {
-        return
-    }
-
-    $removedRuntimeRegistration = $null
-    $removedManagedRegistration = $null
-
-    if ($null -ne $runtimeRegistration)
-    {
-        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $registrationToRemove.Key
-    }
-
-    if ($null -ne $managedRegistration)
-    {
-        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
-    }
-
-    if ($PassThru)
-    {
-        if ($null -ne $removedManagedRegistration)
-        {
-            return $removedManagedRegistration
-        }
-
-        return $removedRuntimeRegistration
     }
 }
 <#
@@ -517,10 +742,17 @@ function Add-ManagedCompleterRegistration
             throw 'Registration records must expose a non-empty Key property.'
         }
 
-        $registrations = Get-ManagedCompleterRegistrationTable
-        $registrations[[string] $Registration.Key] = $Registration
+        try
+        {
+            $registrations = Get-ManagedCompleterRegistrationTable
+            $registrations[[string] $Registration.Key] = $Registration
 
-        return $registrations[[string] $Registration.Key]
+            return $registrations[[string] $Registration.Key]
+        }
+        catch
+        {
+            throw "Failed to add the managed completer registration '$([string] $Registration.Key)'. $($_.Exception.Message)"
+        }
     }
 }
 <#
@@ -1293,51 +1525,258 @@ function Remove-RuntimeCompleterRegistration
         [switch] $Native
     )
 
-    $runtime = Get-CompleterRuntime
+    $runtime = $null
+    $runtimeRegistration = $null
+    $target = $null
+    $dictionary = $null
 
-    if ($PSCmdlet.ParameterSetName -eq 'ByKey')
+    try
     {
-        $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $Key
+        $runtime = Get-CompleterRuntime
 
-        if ($null -eq $runtimeRegistration)
+        if ($PSCmdlet.ParameterSetName -eq 'ByKey')
+        {
+            $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $Key
+
+            if ($null -eq $runtimeRegistration)
+            {
+                return
+            }
+
+            if ($runtimeRegistration.IsNative)
+            {
+                $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey -Native
+            }
+            else
+            {
+                $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey
+            }
+        }
+        elseif ($PSCmdlet.ParameterSetName -eq 'Native')
+        {
+            if (-not $Native)
+            {
+                throw 'Native target resolution requires the -Native switch.'
+            }
+
+            $target = Resolve-CompleterTarget -CommandName $CommandName -Native
+        }
+        else
+        {
+            $target = Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
+        }
+
+        $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+
+        if (-not $dictionary.ContainsKey($target.RuntimeKey))
         {
             return
         }
 
-        if ($runtimeRegistration.IsNative)
-        {
-            $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey -Native
-        }
-        else
-        {
-            $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey
-        }
+        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $dictionary[$target.RuntimeKey] -Source 'Discovered'
+        $null = $dictionary.Remove($target.RuntimeKey)
+
+        return $removedRegistration
     }
-    elseif ($PSCmdlet.ParameterSetName -eq 'Native')
+    catch
     {
-        if (-not $Native)
+        $targetDescription = if ($null -ne $target) { $target.RuntimeKey } elseif (-not [string]::IsNullOrWhiteSpace($Key)) { $Key } else { $CommandName }
+        throw "Failed to remove the runtime completer registration '$targetDescription'. $($_.Exception.Message)"
+    }
+    finally
+    {
+        $runtime = $null
+        $runtimeRegistration = $null
+        $target = $null
+        $dictionary = $null
+    }
+}
+<#
+.SYNOPSIS
+Resolves a pipeline input object into a completer target definition.
+
+.DESCRIPTION
+Normalizes public pipeline input into the target metadata used by the module's
+registration, lookup, and removal commands. The helper accepts module
+registration records and custom objects that expose either key-based target
+properties or command/parameter metadata.
+
+.PARAMETER InputObject
+The object to resolve into a completer target.
+
+.PARAMETER RequireScriptBlock
+Requires the input object to expose a ScriptBlock property whose value is a
+script block.
+
+.OUTPUTS
+CompleterActions.ResolvedInputObject
+
+.EXAMPLE
+Resolve-CompleterInputObject -InputObject $registration
+
+Resolves a completer registration object returned by Get-CompleterRegistration
+into the normalized target metadata used by the module internals.
+#>
+function Resolve-CompleterInputObject
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [ValidateNotNull()]
+        [psobject] $InputObject,
+
+        [Parameter()]
+        [switch] $RequireScriptBlock
+    )
+
+    process
+    {
+        $keyValue = $null
+        $runtimeKey = $null
+        $commandName = $null
+        $parameterName = $null
+        $hasNativeIndicator = $false
+        $isNative = $false
+        $scriptBlock = $null
+        $target = $null
+
+        try
         {
-            throw 'Native target resolution requires the -Native switch.'
+            foreach ($propertyName in 'Key', 'RegistrationKey', 'RuntimeKey')
+            {
+                $property = $InputObject.PSObject.Properties[$propertyName]
+                if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
+                {
+                    if ($propertyName -eq 'RuntimeKey')
+                    {
+                        $runtimeKey = [string] $property.Value
+                    }
+                    else
+                    {
+                        $keyValue = [string] $property.Value
+                    }
+
+                    break
+                }
+            }
+
+            $commandProperty = $InputObject.PSObject.Properties['CommandName']
+            if ($null -ne $commandProperty -and -not [string]::IsNullOrWhiteSpace([string] $commandProperty.Value))
+            {
+                $commandName = [string] $commandProperty.Value
+            }
+
+            $parameterProperty = $InputObject.PSObject.Properties['ParameterName']
+            if ($null -ne $parameterProperty -and -not [string]::IsNullOrWhiteSpace([string] $parameterProperty.Value))
+            {
+                $parameterName = [string] $parameterProperty.Value
+            }
+
+            foreach ($propertyName in 'IsNative', 'Native')
+            {
+                $property = $InputObject.PSObject.Properties[$propertyName]
+                if ($null -ne $property)
+                {
+                    $hasNativeIndicator = $true
+                    $isNative = [bool] $property.Value
+                    break
+                }
+            }
+
+            $scriptBlockProperty = $InputObject.PSObject.Properties['ScriptBlock']
+            if ($null -ne $scriptBlockProperty -and $scriptBlockProperty.Value -is [scriptblock])
+            {
+                $scriptBlock = [scriptblock] $scriptBlockProperty.Value
+            }
+
+            if ($RequireScriptBlock -and $null -eq $scriptBlock)
+            {
+                throw 'InputObject must expose a ScriptBlock property whose value is a script block.'
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($commandName))
+            {
+                if ($hasNativeIndicator -and $isNative)
+                {
+                    $target = Resolve-CompleterTarget -CommandName $commandName -Native
+                }
+                elseif (-not [string]::IsNullOrWhiteSpace($parameterName))
+                {
+                    $target = Resolve-CompleterTarget -CommandName $commandName -ParameterName $parameterName
+                }
+                else
+                {
+                    throw 'InputObject must expose ParameterName for command-parameter targets or IsNative/Native for native targets.'
+                }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($runtimeKey))
+            {
+                if ($hasNativeIndicator -and $isNative)
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
+                }
+                elseif ($hasNativeIndicator -and -not $isNative)
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
+                }
+                elseif ($runtimeKey -match ':')
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
+                }
+                else
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
+                }
+            }
+            elseif (-not [string]::IsNullOrWhiteSpace($keyValue))
+            {
+                if ($hasNativeIndicator -and $isNative)
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                }
+                elseif ($hasNativeIndicator -and -not $isNative)
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
+                }
+                elseif ($keyValue -match ':')
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
+                }
+                else
+                {
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                }
+            }
+            else
+            {
+                throw 'InputObject must expose Key, RegistrationKey, RuntimeKey, or CommandName.'
+            }
+
+            [pscustomobject] [ordered] @{
+                PSTypeName = 'CompleterActions.ResolvedInputObject'
+                InputObject = $InputObject
+                Target = $target
+                ScriptBlock = $scriptBlock
+            }
         }
-
-        $target = Resolve-CompleterTarget -CommandName $CommandName -Native
+        catch
+        {
+            throw "Failed to resolve a completer target from InputObject. $($_.Exception.Message)"
+        }
+        finally
+        {
+            $keyValue = $null
+            $runtimeKey = $null
+            $commandName = $null
+            $parameterName = $null
+            $scriptBlock = $null
+            $target = $null
+        }
     }
-    else
-    {
-        $target = Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
-    }
-
-    $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
-
-    if (-not $dictionary.ContainsKey($target.RuntimeKey))
-    {
-        return
-    }
-
-    $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $dictionary[$target.RuntimeKey] -Source 'Discovered'
-    $dictionary.Remove($target.RuntimeKey)
-
-    return $removedRegistration
 }
 <#
 .SYNOPSIS
@@ -1483,4 +1922,106 @@ function Resolve-CompleterTarget
     }
 
     return $target
+}
+<#
+.SYNOPSIS
+Resolves one or more public cmdlet inputs into completer targets.
+
+.DESCRIPTION
+Expands array-based public command inputs into the normalized target objects used
+throughout the module. Command and parameter arrays are paired by position when
+they have matching lengths, or broadcast when either side contains a single
+value.
+
+.PARAMETER Key
+One or more normalized or runtime keys to resolve.
+
+.PARAMETER CommandName
+One or more command names to resolve.
+
+.PARAMETER ParameterName
+One or more parameter names to resolve for command-parameter targets.
+
+.PARAMETER Native
+Indicates that the targets refer to native completers.
+
+.OUTPUTS
+CompleterActions.CompleterTarget
+#>
+function Resolve-CompleterTargetList
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Key,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [switch] $Native
+    )
+
+    switch ($PSCmdlet.ParameterSetName)
+    {
+        'ByKey'
+        {
+            foreach ($keyItem in $Key)
+            {
+                if ($keyItem -match ':')
+                {
+                    Resolve-CompleterTarget -RuntimeKey $keyItem
+                    continue
+                }
+
+                Resolve-CompleterTarget -RuntimeKey $keyItem -Native
+            }
+
+            break
+        }
+
+        'Native'
+        {
+            foreach ($commandNameItem in $CommandName)
+            {
+                Resolve-CompleterTarget -CommandName $commandNameItem -Native
+            }
+
+            break
+        }
+
+        'CommandParameter'
+        {
+            $commandCount = $CommandName.Count
+            $parameterCount = $ParameterName.Count
+
+            if ($commandCount -ne $parameterCount -and $commandCount -ne 1 -and $parameterCount -ne 1)
+            {
+                throw 'CommandName and ParameterName arrays must have matching lengths, or one side must provide a single value to broadcast.'
+            }
+
+            $iterationCount = [Math]::Max($commandCount, $parameterCount)
+
+            for ($index = 0; $index -lt $iterationCount; $index++)
+            {
+                $resolvedCommandName = if ($commandCount -eq 1) { $CommandName[0] } else { $CommandName[$index] }
+                $resolvedParameterName = if ($parameterCount -eq 1) { $ParameterName[0] } else { $ParameterName[$index] }
+
+                Resolve-CompleterTarget -CommandName $resolvedCommandName -ParameterName $resolvedParameterName
+            }
+
+            break
+        }
+    }
 }

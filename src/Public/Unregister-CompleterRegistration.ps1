@@ -1,67 +1,69 @@
 <#
 .SYNOPSIS
-Removes a completer registration from runtime and, when applicable, module state.
+Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
-Removes a completer registration identified by registration key, native command,
-or command parameter target. Managed registrations are removed from both the
-PowerShell runtime and the module's registration table. Runtime-only
-registrations require -AllowUnmanaged before they can be removed.
+Removes completer registrations identified by registration key, native command,
+command parameter target, or pipeline InputObject values. Managed registrations
+are removed from both the PowerShell runtime and the module's registration
+table. Runtime-only registrations require -AllowUnmanaged before they can be
+removed. The command supports array inputs for keys and target fields, plus
+pipeline input from Get-CompleterRegistration output.
+
+.PARAMETER InputObject
+Supplies one or more objects that describe registrations to remove. Input
+objects can expose Key, RegistrationKey, RuntimeKey, or
+CommandName/ParameterName plus IsNative/Native.
 
 .PARAMETER Key
-Removes the registration that matches a specific registration key.
+Removes the registrations that match one or more registration keys.
 
 .PARAMETER CommandName
-Specifies the command name whose completer should be removed.
+Specifies one or more command names whose completers should be removed.
 
 .PARAMETER ParameterName
-Specifies the parameter name for a command-parameter completer removal target.
+Specifies one or more parameter names for command-parameter completer removal
+targets.
 
 .PARAMETER Native
-Targets a native completer registration instead of a command parameter
-completer.
+Targets native completer registrations instead of command parameter completers.
 
 .PARAMETER AllowUnmanaged
-Allows removal of a runtime registration that is not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module.
 
 .PARAMETER PassThru
-Returns the registration record that was removed.
+Returns the registration records that were removed.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-When -PassThru is used, returns the removed CompleterActions.CompleterRegistration
-record.
-
-.EXAMPLE
-PS> Unregister-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -Confirm:$false
-
-Removes the managed parameter completer for Test-Tool Name without prompting.
-
-.EXAMPLE
-PS> Unregister-CompleterRegistration -CommandName 'git' -Native -AllowUnmanaged -Confirm:$false -PassThru
-
-Removes a native runtime completer for git even if it was not registered
-through this module, and returns the removed record.
+When -PassThru is used, returns removed CompleterActions.CompleterRegistration
+records.
 #>
 function Unregister-CompleterRegistration
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'ByKey', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [psobject[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
+        [Alias('RegistrationKey')]
         [ValidateNotNullOrEmpty()]
-        [string] $CommandName,
+        [string[]] $Key,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
-        [string] $ParameterName,
+        [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
         [switch] $Native,
 
         [Parameter()]
@@ -71,86 +73,138 @@ function Unregister-CompleterRegistration
         [switch] $PassThru
     )
 
-    $lookup = switch ($PSCmdlet.ParameterSetName)
+    process
     {
-        'ByKey'
+        $resolvedTargets = @()
+
+        try
         {
-            [ordered] @{
-                Managed = Find-ManagedCompleterRegistration -Key $Key
-                Runtime = Find-RuntimeCompleterRegistration -Key $Key
+            if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+            {
+                $resolvedTargets = @($InputObject | Resolve-CompleterInputObject | ForEach-Object { $_.Target })
             }
-            break
-        }
+            else
+            {
+                $targetParameters = @{}
 
-        'Native'
-        {
-            [ordered] @{
-                Managed = Find-ManagedCompleterRegistration -CommandName $CommandName -Native
-                Runtime = Find-RuntimeCompleterRegistration -CommandName $CommandName -Native
+                switch ($PSCmdlet.ParameterSetName)
+                {
+                    'ByKey'
+                    {
+                        $targetParameters['Key'] = $Key
+                        break
+                    }
+
+                    'Native'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['Native'] = $true
+                        break
+                    }
+
+                    'CommandParameter'
+                    {
+                        $targetParameters['CommandName'] = $CommandName
+                        $targetParameters['ParameterName'] = $ParameterName
+                        break
+                    }
+                }
+
+                $resolvedTargets = @(Resolve-CompleterTargetList @targetParameters)
             }
-            break
-        }
 
-        'CommandParameter'
-        {
-            [ordered] @{
-                Managed = Find-ManagedCompleterRegistration -CommandName $CommandName -ParameterName $ParameterName
-                Runtime = Find-RuntimeCompleterRegistration -CommandName $CommandName -ParameterName $ParameterName
+            foreach ($target in $resolvedTargets)
+            {
+                $managedRegistration = $null
+                $runtimeRegistration = $null
+                $registrationToRemove = $null
+                $removedRuntimeRegistration = $null
+                $removedManagedRegistration = $null
+
+                try
+                {
+                    $managedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
+                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+
+                    if ($null -ne $managedRegistration)
+                    {
+                        $registrationToRemove = $managedRegistration
+                    }
+                    elseif ($null -ne $runtimeRegistration)
+                    {
+                        if (-not $AllowUnmanaged)
+                        {
+                            throw "The completer registration '$($runtimeRegistration.RuntimeKey)' is not module-managed. Re-run with -AllowUnmanaged to remove the runtime registration."
+                        }
+
+                        $registrationToRemove = $runtimeRegistration
+                    }
+                    else
+                    {
+                        throw 'No completer registration was found for the requested target.'
+                    }
+
+                    if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
+                    {
+                        continue
+                    }
+
+                    if ($null -ne $runtimeRegistration)
+                    {
+                        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $registrationToRemove.Key
+                    }
+
+                    if ($null -ne $managedRegistration)
+                    {
+                        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
+                    }
+
+                    if ($PassThru)
+                    {
+                        if ($null -ne $removedManagedRegistration)
+                        {
+                            $PSCmdlet.WriteObject($removedManagedRegistration)
+                        }
+                        elseif ($null -ne $removedRuntimeRegistration)
+                        {
+                            $PSCmdlet.WriteObject($removedRuntimeRegistration)
+                        }
+                    }
+                }
+                catch
+                {
+                    if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+                    {
+                        if ($removedRuntimeRegistration.IsNative)
+                        {
+                            Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -Native -ScriptBlock $removedRuntimeRegistration.ScriptBlock
+                        }
+                        else
+                        {
+                            Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -ParameterName $removedRuntimeRegistration.ParameterName -ScriptBlock $removedRuntimeRegistration.ScriptBlock
+                        }
+                    }
+
+                    if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Key $target.Key))
+                    {
+                        $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
+                    }
+
+                    throw "Failed to unregister the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
+                }
+                finally
+                {
+                    $managedRegistration = $null
+                    $runtimeRegistration = $null
+                    $registrationToRemove = $null
+                    $removedRuntimeRegistration = $null
+                    $removedManagedRegistration = $null
+                }
             }
-            break
         }
-    }
-
-    $managedRegistration = $lookup['Managed']
-    $runtimeRegistration = $lookup['Runtime']
-    if ($null -ne $managedRegistration)
-    {
-        $registrationToRemove = $managedRegistration
-    }
-    elseif ($null -ne $runtimeRegistration)
-    {
-        if (-not $AllowUnmanaged)
+        finally
         {
-            throw "The completer registration '$($runtimeRegistration.RuntimeKey)' is not module-managed. Re-run with -AllowUnmanaged to remove the runtime registration."
+            $resolvedTargets = @()
         }
-
-        $registrationToRemove = $runtimeRegistration
-    }
-    else
-    {
-        $registrationToRemove = $null
-    }
-
-    if ($null -eq $registrationToRemove)
-    {
-        throw 'No completer registration was found for the requested target.'
-    }
-
-    if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
-    {
-        return
-    }
-
-    $removedRuntimeRegistration = $null
-    $removedManagedRegistration = $null
-
-    if ($null -ne $runtimeRegistration)
-    {
-        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $registrationToRemove.Key
-    }
-
-    if ($null -ne $managedRegistration)
-    {
-        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
-    }
-
-    if ($PassThru)
-    {
-        if ($null -ne $removedManagedRegistration)
-        {
-            return $removedManagedRegistration
-        }
-
-        return $removedRuntimeRegistration
     }
 }

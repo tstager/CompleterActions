@@ -39,9 +39,16 @@ function Add-ManagedCompleterRegistration
             throw 'Registration records must expose a non-empty Key property.'
         }
 
-        $registrations = Get-ManagedCompleterRegistrationTable
-        $registrations[[string] $Registration.Key] = $Registration
+        try
+        {
+            $registrations = Get-ManagedCompleterRegistrationTable
+            $registrations[[string] $Registration.Key] = $Registration
 
-        return $registrations[[string] $Registration.Key]
+            return $registrations[[string] $Registration.Key]
+        }
+        catch
+        {
+            throw "Failed to add the managed completer registration '$([string] $Registration.Key)'. $($_.Exception.Message)"
+        }
     }
 }

@@ -64,6 +64,12 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayOne' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeOne' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
     }
@@ -75,6 +81,12 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayOne' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeOne' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -389,5 +401,130 @@ Describe 'Completer registration public API' {
         $results = @(Get-CompleterRegistration -ManagedOnly -First 1 -Skip 1)
 
         $results | Should -BeNullOrEmpty
+    }
+
+    It 'supports command and parameter arrays for registration and lookup' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('theta', 'theta', 'ParameterValue', 'theta')
+        }
+
+        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock -PassThru)
+
+        $registrations.Count | Should -Be 2
+        @($registrations.Key | Sort-Object) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
+
+        $resolvedRegistrations = @(Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path')
+        @($resolvedRegistrations.Key | Sort-Object) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
+    }
+
+    It 'supports native command arrays for registration and lookup' {
+        $scriptBlock = {
+            param($wordToComplete, $commandAst, $cursorPosition)
+
+            [System.Management.Automation.CompletionResult]::new('iota', 'iota', 'ParameterValue', 'iota')
+        }
+
+        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayNativeOne', 'Test-ArrayNativeTwo' -Native -ScriptBlock $scriptBlock -PassThru)
+
+        $registrations.Count | Should -Be 2
+        @($registrations.Key | Sort-Object) | Should -Be @('test-arraynativeone', 'test-arraynativetwo')
+
+        $resolvedRegistrations = @(Get-CompleterRegistration -CommandName 'Test-ArrayNativeOne', 'Test-ArrayNativeTwo' -Native)
+        @($resolvedRegistrations.Key | Sort-Object) | Should -Be @('test-arraynativeone', 'test-arraynativetwo')
+    }
+
+    It 'supports property-name pipeline binding for get by key' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('kappa', 'kappa', 'ParameterValue', 'kappa')
+        }
+
+        $registration = Register-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+
+        $resolved = [pscustomobject] @{ RegistrationKey = $registration.Key } | Get-CompleterRegistration
+
+        $resolved.Key | Should -Be 'test-pipelinemanagedtool:name'
+    }
+
+    It 'supports pipeline unregister from get output' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('lambda', 'lambda', 'ParameterValue', 'lambda')
+        }
+
+        $null = Register-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+
+        $removed = @(Get-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+
+        $removed.Count | Should -Be 1
+        $removed[0].Key | Should -Be 'test-pipelinemanagedtool:name'
+        Get-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
+    It 'supports unregister input objects in batches' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('mu', 'mu', 'ParameterValue', 'mu')
+        }
+
+        $null = Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock -PassThru
+        $registrations = @(Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path')
+
+        $removed = @($registrations | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+
+        $removed.Count | Should -Be 2
+        Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' | Should -BeNullOrEmpty
+    }
+
+    It 'supports register input objects with script blocks' {
+        $inputObjects = @(
+            [pscustomobject] @{
+                CommandName = 'Test-ArrayOne'
+                ParameterName = 'Name'
+                ScriptBlock = {
+                    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+                    [System.Management.Automation.CompletionResult]::new('nu', 'nu', 'ParameterValue', 'nu')
+                }
+            },
+            [pscustomobject] @{
+                CommandName = 'Test-ArrayTwo'
+                ParameterName = 'Path'
+                ScriptBlock = {
+                    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+                    [System.Management.Automation.CompletionResult]::new('xi', 'xi', 'ParameterValue', 'xi')
+                }
+            }
+        )
+
+        $registrations = @($inputObjects | Register-CompleterRegistration -PassThru)
+
+        $registrations.Count | Should -Be 2
+        @($registrations.Key | Sort-Object) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
+    }
+
+    It 'throws for invalid register input objects' {
+        {
+            [pscustomobject] @{ CommandName = 'Test-ArrayOne' } | Register-CompleterRegistration -PassThru
+        } | Should -Throw '*Failed to resolve a completer target from InputObject*'
+    }
+
+    It 'requires allow unmanaged for pipeline removal of discovered registrations' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('omicron', 'omicron', 'ParameterValue', 'omicron')
+        }
+
+        Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+
+        {
+            Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' |
+                Unregister-CompleterRegistration -Confirm:$false
+        } | Should -Throw '*-AllowUnmanaged*'
     }
 }
