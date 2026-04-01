@@ -1,3 +1,23 @@
+<#
+.SYNOPSIS
+Gets the module-scoped completer state table.
+
+.DESCRIPTION
+Returns the script-scoped state container used by the module to track managed
+completer registrations. The helper initializes the state on first access and
+repairs missing top-level members when older or partially constructed state is
+encountered during maintenance or tests.
+
+.OUTPUTS
+System.Collections.Specialized.OrderedDictionary
+Returns the module state dictionary with SchemaVersion and Registrations entries.
+
+.EXAMPLE
+PS> $state = Get-CompleterActionState
+
+Retrieves the current in-memory state table so a maintainer can inspect or
+update registration bookkeeping during module development.
+#>
 function Get-CompleterActionState
 {
     [CmdletBinding()]

@@ -1,3 +1,54 @@
+<#
+.SYNOPSIS
+Resolves completer target metadata from user-facing inputs or runtime keys.
+
+.DESCRIPTION
+Normalizes the different target shapes used by the module into a single
+CompleterTarget record. Maintainers use this helper when moving between the
+module's public command/parameter model and the runtime key shapes used by
+PowerShell's completer dictionaries.
+
+For command-parameter completers, runtime keys are expected to use the
+'Command:Parameter' format. For native completers, the runtime key is the
+command name. This helper validates those assumptions and returns a normalized
+target object that other runtime helpers can consume.
+
+.PARAMETER CommandName
+The command or native executable name that identifies the completer target.
+
+.PARAMETER ParameterName
+The parameter name for a command-parameter completer target.
+
+.PARAMETER Native
+Indicates that the target refers to a native command completer rather than a
+PowerShell command parameter completer.
+
+.PARAMETER RuntimeKey
+The raw key shape used by the PowerShell runtime dictionaries. This is either a
+native command name or a 'Command:Parameter' string for command-parameter
+targets.
+
+.OUTPUTS
+CompleterActions.CompleterTarget
+
+.EXAMPLE
+Resolve-CompleterTarget -CommandName git -Native
+
+Shows the maintainer-oriented path that converts a native completer target into
+the normalized object used by runtime registration helpers.
+
+.EXAMPLE
+Resolve-CompleterTarget -RuntimeKey 'Get-Item:Path'
+
+Shows how a command-parameter runtime key is parsed back into normalized target
+metadata.
+
+.NOTES
+This helper is intentionally aligned with the runtime key conventions used by
+PowerShell's completer dictionaries and the module's registration records. If
+those runtime conventions change, update this parser and the related runtime
+helpers together.
+#>
 function Resolve-CompleterTarget
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]

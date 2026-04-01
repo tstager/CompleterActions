@@ -1,3 +1,34 @@
+<#
+.SYNOPSIS
+Creates an internal completer registration record object.
+
+.DESCRIPTION
+Builds the PSCustomObject stored in the managed registration table. The helper
+copies the required target metadata, derives convenience properties such as
+CompleterType and IsManaged, and captures both the script block and its text so
+module internals can inspect the registered completer later.
+
+.PARAMETER Target
+The resolved completer target metadata object. It must expose the Key,
+RuntimeKey, CommandName, ParameterName, IsNative, and TargetType properties.
+
+.PARAMETER ScriptBlock
+The script block that was or will be registered for the completer target.
+
+.PARAMETER Source
+Indicates whether the record originated from module-managed registration or from
+runtime discovery.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
+
+.EXAMPLE
+PS> $record = New-CompleterRegistrationRecord -Target $target -ScriptBlock $scriptBlock
+
+Creates a managed registration record from previously resolved target metadata
+before adding it to the in-memory registration table.
+#>
 function New-CompleterRegistrationRecord
 {
     [CmdletBinding()]

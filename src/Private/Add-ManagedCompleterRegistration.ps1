@@ -1,3 +1,27 @@
+<#
+.SYNOPSIS
+Adds or replaces a managed registration record in module state.
+
+.DESCRIPTION
+Stores a registration object in the module's in-memory registration table using
+its Key property as the dictionary key. Existing entries with the same key are
+replaced, which lets higher-level registration code refresh an internal record
+after re-registering a completer.
+
+.PARAMETER Registration
+The registration record to store. The object must expose a non-empty Key
+property.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns the record that is stored in the managed registration table.
+
+.EXAMPLE
+PS> $record | Add-ManagedCompleterRegistration
+
+Adds a newly created internal registration record to the module state, replacing
+any prior record for the same target key.
+#>
 function Add-ManagedCompleterRegistration
 {
     [CmdletBinding()]

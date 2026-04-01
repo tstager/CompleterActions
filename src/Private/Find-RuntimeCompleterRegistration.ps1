@@ -1,3 +1,60 @@
+<#
+.SYNOPSIS
+Finds completer registrations from the live PowerShell runtime dictionaries.
+
+.DESCRIPTION
+Queries the current session's runtime completer dictionaries and returns
+registration records for discovered entries. Maintainers use this helper to
+inspect the registrations that PowerShell is actually using, rather than only
+the module's cached or intended state.
+
+The lookup can enumerate all discovered registrations, resolve a specific
+command-parameter or native target, or search by the module's normalized key.
+Because the underlying data comes from PowerShell runtime internals, the result
+represents the current session only and depends on internal dictionary shapes
+remaining stable.
+
+.PARAMETER Key
+The normalized registration key used by the module when matching a discovered
+runtime registration.
+
+.PARAMETER CommandName
+The command or native executable name that identifies the runtime completer
+target.
+
+.PARAMETER ParameterName
+The parameter name for a command-parameter completer target.
+
+.PARAMETER Native
+Indicates that the lookup targets the native completer dictionary.
+
+.OUTPUTS
+CompleterActions.CompleterRegistration
+System.Collections.Generic.List[object]
+
+.EXAMPLE
+Find-RuntimeCompleterRegistration
+
+Enumerates all completer registrations currently exposed by the live PowerShell
+runtime for maintainer inspection.
+
+.EXAMPLE
+Find-RuntimeCompleterRegistration -CommandName git -Native
+
+Looks up the discovered runtime registration for a native completer target.
+
+.EXAMPLE
+Find-RuntimeCompleterRegistration -Key 'get-item:path'
+
+Shows how maintainers can search for a runtime registration by the module's
+normalized key instead of by raw runtime key shape.
+
+.NOTES
+This helper reads PowerShell's live completer dictionaries through
+Get-CompleterRuntime, which depends on runtime internals. Treat the discovered
+results as implementation details for maintainers, not as a stable public
+contract.
+#>
 function Find-RuntimeCompleterRegistration
 {
     [CmdletBinding(DefaultParameterSetName = 'All')]

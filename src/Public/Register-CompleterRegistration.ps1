@@ -1,3 +1,50 @@
+<#
+.SYNOPSIS
+Registers a managed PowerShell argument completer.
+
+.DESCRIPTION
+Registers a native or command-parameter argument completer with
+Register-ArgumentCompleter and records the registration in the module's managed
+state. Existing managed or runtime registrations are preserved unless you use
+-Force to replace them.
+
+.PARAMETER CommandName
+Specifies the command name whose completer should be registered.
+
+.PARAMETER ParameterName
+Specifies the parameter name for a command-parameter completer registration.
+
+.PARAMETER Native
+Registers a native completer for the command instead of a parameter completer.
+
+.PARAMETER ScriptBlock
+Provides the completer script block to register.
+
+.PARAMETER Force
+Removes an existing managed or runtime registration for the same target before
+registering the new completer.
+
+.PARAMETER PassThru
+Returns the managed registration record that was created or reused.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+When -PassThru is used, returns a CompleterActions.CompleterRegistration record.
+
+.EXAMPLE
+PS> Register-CompleterRegistration -CommandName 'Test-Tool' -ParameterName 'Name' -ScriptBlock {
+>>     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+>>     [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+>> }
+
+Registers a managed parameter completer for the Name parameter on Test-Tool.
+
+.EXAMPLE
+PS> Register-CompleterRegistration -CommandName 'git' -Native -ScriptBlock $nativeCompleter -Force -PassThru
+
+Replaces any existing native completer registration for git and returns the new
+managed registration record.
+#>
 function Register-CompleterRegistration
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
