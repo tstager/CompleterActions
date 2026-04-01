@@ -12,7 +12,7 @@ param (
     $pseditions = @("Desktop", "Core")
 )
 
-import-module -Name Hyper-V -Force
+
 $modulename = $PSScriptRoot.Split("\")[-1]
 $buildpath = "$PSScriptRoot\build"
 $modulepath = "$buildpath\$modulename"
@@ -113,7 +113,7 @@ task build clean, external_help, {
 
     }
 
-    Copy-Item -Path "$PSScriptRoot\src\$modulename.psd1" -Destination $modulepath
+    Copy-Item -Path "$PSScriptRoot\$modulename.psd1" -Destination $modulepath
 
     if(-not(Test-Path -Path $buildpath\"en-US")) {
 
@@ -127,7 +127,6 @@ task build clean, external_help, {
 
         CompatiblePSEditions = $pseditions
         PowerShellVersion    = 5.1
-        RequiredModules      = "Hyper-V"
         Copyright            = "(c) $((get-date).Year) $author. All rights reserved."
         Path                 = "$modulePath\$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
@@ -152,7 +151,7 @@ task Markdown_templates {
 
     # Import the module if not already loaded
     if (-not (Get-Module -Name $modulename -ErrorAction SilentlyContinue)) {
-        Import-Module -Name "$PSScriptRoot\src\$modulename.psm1" -Force
+        Import-Module -Name "$PSScriptRoot\$modulename.psm1" -Force
     }
 
     # Create markdown templates for all commands in the module using the new PlatyPS 1.0 API
