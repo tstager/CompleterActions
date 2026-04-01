@@ -1,5 +1,5 @@
 $sourceRoot = Join-Path -Path $PSScriptRoot -ChildPath 'src'
-$functionFolders = @('Private', 'Public', 'docs')
+$functionFolders = @('Private', 'Public')
 
 ForEach ($folder in $functionFolders)
 {
@@ -7,7 +7,7 @@ ForEach ($folder in $functionFolders)
     If (Test-Path -Path $folderPath)
     {
         Write-Verbose -Message "Importing from $folder"
-        $functions = Get-ChildItem -Path $folderPath -Filter '*.ps1'
+        $functions = Get-ChildItem -Path $folderPath -Filter '*.ps1' | Sort-Object -Property Name
         ForEach ($function in $functions)
         {
             Write-Verbose -Message "  Importing $($function.BaseName)"
@@ -16,5 +16,10 @@ ForEach ($folder in $functionFolders)
     }
 }
 
-$publicFunctions = (Get-ChildItem -Path (Join-Path -Path $sourceRoot -ChildPath 'Public') -Filter '*.ps1').BaseName
+$null = Get-CompleterActionState
+
+$publicFunctions = Get-ChildItem -Path (Join-Path -Path $sourceRoot -ChildPath 'Public') -Filter '*.ps1' |
+    Sort-Object -Property BaseName |
+    Select-Object -ExpandProperty BaseName
+
 Export-ModuleMember -Function $publicFunctions
