@@ -1,31 +1,32 @@
 # CompleterActions repository instructions
 
-## Build, test, and lint commands
+## Module shape
 
-- Build uses Invoke-Build tasks defined in `CompleterActions.build.ps1` and surfaced through generated VS Code tasks in `.vscode\tasks.json`.
-- Run the default build task from the repository root with `Invoke-Build -Task .`.
-- Run named build tasks with `Invoke-Build -Task clean` or `Invoke-Build -Task build`. The generated task list also includes `Markdown_templates`, `external_help`, and `?`, but only `clean`, `build`, and `.` currently exist in `CompleterActions.build.ps1`.
-- Run the current test suite from the repository root with `Invoke-Pester`.
-- Run a single test file with `Invoke-Pester -Path .\tests\CompleterActions.Tests.ps1`.
-- Run a single test case with `Invoke-Pester -Path .\tests\CompleterActions.Tests.ps1 -FullNameFilter 'Module Manifest Tests.Passes Test-ModuleManifest'`.
-- Lint with the repository ruleset using `Invoke-ScriptAnalyzer -Path .\src -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` and `Invoke-ScriptAnalyzer -Path .\tests -Recurse -Settings .\PSScriptAnalyzerSettings.psd1`.
-- VS Code is configured to use `.\PSScriptAnalyzerSettings.psd1` automatically through `.vscode\settings.json`.
-- `tests\CompleterActions.Tests.ps1` assumes the module manifest lives at the repository root as `CompleterActions.psd1`.
+- `CompleterActions` is a PowerShell 7+ / Core-only script module rooted at `CompleterActions.psd1` and `CompleterActions.psm1`.
+- The public surface is exactly three functions: `Get-CompleterRegistration`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`.
+- `CompleterActions.psm1` dot-sources `src\Private\*.ps1` and `src\Public\*.ps1`, initializes module state with `Get-CompleterActionState`, and exports the public function filenames.
+- The manifest explicitly exports the same three functions and loads `CompleterActions.Format.ps1xml`.
 
-## High-level architecture
+## Domain behavior
 
-- This repository is a PowerShell module skeleton centered on the root-level `CompleterActions.psd1` and `CompleterActions.psm1`.
-- The manifest declares `RootModule = 'CompleterActions.psm1'`, so importing the module starts in the repo-root module file.
-- Module assembly is file-system driven. `CompleterActions.psm1` uses the repository root as its anchor, then dot-sources `*.ps1` files from selected folders under `src\` before exporting public commands.
-- Only functions whose scripts live in `src\Public\` are exported. Export names are derived from the `.ps1` filenames in that folder with `Export-ModuleMember -Function $publicFunctions`.
-- Internal helpers belong in `src\Private\` and are expected to be loaded into module scope without being exported.
-- The repository layout also reserves `src\Classes\`, `src\docs\`, and `src\DSCResources\` for classes, docs/help content, and DSC resources, even though they are currently empty.
+- The module manages PowerShell argument completer registrations for native commands and command parameters.
+- Managed registrations are tracked in module-owned state; runtime-only registrations can also be discovered from the live session.
+- Runtime discovery and removal rely on PowerShell runtime internals, not a public API. Keep any related changes aligned across discovery, reconciliation, and tests.
+- `Get-CompleterRegistration` merges managed and discovered registrations, prefers managed records for duplicate targets, and supports `SupportsPaging`.
+- Public commands support array inputs; `Get-*` supports pipeline-by-property-name target lookup; `Register-*` and `Unregister-*` support `InputObject` pipeline input where appropriate.
+- `Register-CompleterRegistration` and `Unregister-CompleterRegistration` are state-changing commands with `ShouldProcess` semantics.
 
-## Key conventions
+## Implementation conventions
 
-- Treat `CompleterActions.psm1` as the source of truth for module bootstrapping. It loads code from `src\Private`, `src\Public`, and `src\docs`, so changes to source layout need corresponding updates there.
-- Public command discovery is convention-based rather than manifest-based. Adding or renaming a file in `src\Public\` changes the exported function set automatically.
-- The module manifest still exports wildcards (`FunctionsToExport = '*'`, `CmdletsToExport = '*'`, `VariablesToExport = '*'`, `AliasesToExport = '*'`), but the `.psm1` narrows function exports explicitly. When changing exports, keep both layers consistent.
-- `.vscode\tasks.json` is generated; do not hand-edit it. The file explicitly says to change `CompleterActions.build.ps1` or `.vscode\tasks-merge.json` and then regenerate tasks.
-- The repository is set up for strict PSScriptAnalyzer enforcement. `PSScriptAnalyzerSettings.psd1` enables rules such as approved verbs, singular nouns, no aliases, no positional parameters, and `ShouldProcess` requirements for state-changing functions.
-- `.justfile` is only a convenience wrapper for launching Copilot with GitHub MCP tools enabled. It is not the build or test entry point for the module itself.
+- Keep public functions in `src\Public` and helpers in `src\Private`; exports are filename-driven.
+- Preserve the module's normalized registration contracts and object-oriented outputs (`CompleterActions.CompleterRegistration`, runtime wrapper/state helper objects).
+- Prefer explicit parameter typing, validation, actionable errors, and PowerShell-friendly pipeline behavior over ad hoc convenience logic.
+- When touching completer behavior, validate the real registered runtime path, not just helper functions in isolation.
+
+## Build, test, and lint
+
+- Build from the repo root with `Invoke-Build -Task .` or `Invoke-Build -Task build`; clean with `Invoke-Build -Task clean`.
+- The build packages the module into `build\CompleterActions`, copies the format file, and emits external help into `build\CompleterActions\en-US`.
+- Tests run with `Invoke-Pester`; use `Invoke-Pester -Path .\tests\CompleterActions.Tests.ps1` for the public command suite.
+- Lint with `Invoke-ScriptAnalyzer -Path .\src -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` and the same command for `.\tests`.
+- Tests cover manifest/export alignment, module state bootstrap, runtime-internal completer discovery/removal, public command behavior, and real completion behavior via `TabExpansion2`.
