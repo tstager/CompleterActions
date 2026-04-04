@@ -64,6 +64,10 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedOne'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayOne'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayOne'; ParameterName = 'Path'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
             @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
         ))
@@ -74,6 +78,8 @@ Describe 'Completer script importer public API' {
         Remove-Item -Path 'Function:\Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\Test-ImportedOne' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\Test-ImportedTwo' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\Test-ImportedArrayOne' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\Test-ImportedArrayTwo' -ErrorAction SilentlyContinue
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
 
@@ -100,6 +106,24 @@ Describe 'Completer script importer public API' {
                 [string] $Name
             )
         }
+
+        function Test-ImportedArrayOne
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name,
+                [string] $Path
+            )
+        }
+
+        function Test-ImportedArrayTwo
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name,
+                [string] $Path
+            )
+        }
     }
 
     AfterEach {
@@ -107,6 +131,10 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedOne'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayOne'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayOne'; ParameterName = 'Path'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
             @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
         ))
@@ -117,6 +145,8 @@ Describe 'Completer script importer public API' {
         Remove-Item -Path 'Function:\Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\Test-ImportedOne' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\Test-ImportedTwo' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\Test-ImportedArrayOne' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\Test-ImportedArrayTwo' -ErrorAction SilentlyContinue
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -181,6 +211,34 @@ Describe 'Completer script importer public API' {
         $completionTwo.CompletionMatches.CompletionText | Should -Contain 'imported-shared'
     }
 
+    It 'imports literal array expression target metadata and registers every resolved target' {
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'ArrayExpressionCompleter.ps1'
+
+        $imported = @(Import-CompleterScript -Path $fixturePath)
+
+        $imported.Count | Should -Be 2
+        @($imported.Key | Sort-Object) | Should -Be @(
+            'test-importedarrayone:name',
+            'test-importedarraytwo:path'
+        )
+
+        $registered = @($imported | Register-CompleterRegistration -PassThru)
+
+        $registered.Count | Should -Be 2
+        @($registered.Key | Sort-Object) | Should -Be @(
+            'test-importedarrayone:name',
+            'test-importedarraytwo:path'
+        )
+
+        $nameInputScript = 'Test-ImportedArrayOne -Name array'
+        $nameCompletion = TabExpansion2 -InputScript $nameInputScript -CursorColumn $nameInputScript.Length
+        $nameCompletion.CompletionMatches.CompletionText | Should -Contain 'array-target'
+
+        $pathInputScript = 'Test-ImportedArrayTwo -Path array'
+        $pathCompletion = TabExpansion2 -InputScript $pathInputScript -CursorColumn $pathInputScript.Length
+        $pathCompletion.CompletionMatches.CompletionText | Should -Contain 'array-target'
+    }
+
     It 'imports native completer scripts that depend on helper functions and script scope' {
         $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\ImportableNativeCompleter.ps1'
 
@@ -207,6 +265,10 @@ Describe 'Completer script importer public API' {
         },
         @{
             Path = 'DynamicCommandName.ps1'
+            Message = '*must use literal string values for -CommandName*'
+        },
+        @{
+            Path = 'DynamicArrayExpressionCommandName.ps1'
             Message = '*must use literal string values for -CommandName*'
         },
         @{

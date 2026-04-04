@@ -47,6 +47,55 @@ function Test-CompleterScriptAst
             [string] $Path
         )
 
+        function Test-IsSupportedLiteralStringArrayExpressionAst
+        {
+            param(
+                [Parameter(Mandatory)]
+                [ValidateNotNull()]
+                [System.Management.Automation.Language.ArrayExpressionAst] $ExpressionAst,
+
+                [Parameter(Mandatory)]
+                [ValidateNotNullOrEmpty()]
+                [string] $AstParameterName,
+
+                [Parameter(Mandatory)]
+                [ValidateNotNullOrEmpty()]
+                [string] $AstPath
+            )
+
+            $statementBlockAst = $ExpressionAst.SubExpression
+            if ($statementBlockAst.Traps.Count -ne 0 -or $statementBlockAst.Statements.Count -ne 1)
+            {
+                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            $pipelineAst = $statementBlockAst.Statements[0]
+            if ($pipelineAst -isnot [System.Management.Automation.Language.PipelineAst] -or $pipelineAst.PipelineElements.Count -ne 1)
+            {
+                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            $commandExpressionAst = $pipelineAst.PipelineElements[0]
+            if ($commandExpressionAst -isnot [System.Management.Automation.Language.CommandExpressionAst])
+            {
+                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            $arrayLiteralAst = $commandExpressionAst.Expression
+            if ($arrayLiteralAst -isnot [System.Management.Automation.Language.ArrayLiteralAst])
+            {
+                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            foreach ($element in $arrayLiteralAst.Elements)
+            {
+                if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst])
+                {
+                    throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+                }
+            }
+        }
+
         switch ($ParameterName)
         {
             'CommandName'
@@ -66,6 +115,12 @@ function Test-CompleterScriptAst
                         }
                     }
 
+                    return
+                }
+
+                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayExpressionAst])
+                {
+                    Test-IsSupportedLiteralStringArrayExpressionAst -ExpressionAst $ArgumentAst -AstParameterName $ParameterName -AstPath $Path
                     return
                 }
 
@@ -89,6 +144,12 @@ function Test-CompleterScriptAst
                         }
                     }
 
+                    return
+                }
+
+                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayExpressionAst])
+                {
+                    Test-IsSupportedLiteralStringArrayExpressionAst -ExpressionAst $ArgumentAst -AstParameterName $ParameterName -AstPath $Path
                     return
                 }
 
