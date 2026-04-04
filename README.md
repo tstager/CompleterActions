@@ -10,6 +10,7 @@ It wraps `Register-ArgumentCompleter` with module-managed registration tracking,
 ## Features
 
 - Manage both **parameter completers** and **native command completers**
+- Import supported completer scripts into **managed registration input objects**
 - Query **module-managed** registrations and **runtime-discovered** registrations
 - Remove managed registrations cleanly from both runtime and module state
 - Require explicit opt-in before removing unmanaged runtime registrations
@@ -29,6 +30,18 @@ Use it to:
 - query native completers by command name
 - query parameter completers by command + parameter
 - limit results to managed-only or discovered-only entries
+
+### `Import-CompleterScript`
+
+Imports supported completer scripts into objects that can be piped directly to
+`Register-CompleterRegistration -InputObject`.
+
+Use it to:
+
+- import self-contained completer scripts without mutating the live runtime
+- preserve helper functions and script-scope state captured by the imported script block
+- reject unsupported script shapes before execution
+- bridge existing standalone completer scripts into this module's managed workflow
 
 ### `Register-CompleterRegistration`
 
@@ -105,6 +118,13 @@ $nativeScriptBlock = {
 }
 
 Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+```
+
+### Import an existing completer script
+
+```powershell
+Import-CompleterScript -Path 'C:\Users\Trent\OneDrive\Documents\Powershell\Completers\7z_completer\7z_completer.ps1' |
+    Register-CompleterRegistration -PassThru
 ```
 
 ## Common flows
@@ -188,6 +208,7 @@ Get-CompleterRegistration -Skip 10 -First 10 -IncludeTotalCount
 Pipeline highlights:
 
 - `Get-CompleterRegistration` supports property-name binding for key/command/parameter lookups
+- `Import-CompleterScript` emits input objects that are ready for `Register-CompleterRegistration -InputObject`
 - `Register-CompleterRegistration` can accept input objects that describe a target and expose a `ScriptBlock`
 - `Unregister-CompleterRegistration` can accept pipeline input directly from `Get-CompleterRegistration`
 
@@ -234,8 +255,9 @@ Invoke-ScriptAnalyzer -Path .\CompleterActions.psm1 -Settings .\PSScriptAnalyzer
 - `CompleterActions.psd1` is the root manifest and defines the exported public functions, formatting file, and PowerShell/Core compatibility.
 - `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Private` and `src\Public`, initializes module state, and exports the public function set.
 - `src\Public` contains the user-facing command surface:
-  - `Get-CompleterRegistration`
-  - `Register-CompleterRegistration`
+   - `Get-CompleterRegistration`
+   - `Import-CompleterScript`
+   - `Register-CompleterRegistration`
   - `Unregister-CompleterRegistration`
 - `src\Private` contains the runtime/state helpers that resolve targets, manage the module registration table, and inspect/remove runtime registrations.
 

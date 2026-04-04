@@ -250,6 +250,137 @@ function Get-CompleterRegistration
 }
 <#
 .SYNOPSIS
+Imports self-contained completer scripts into registration input objects.
+
+.DESCRIPTION
+Parses and validates one or more completer scripts, executes them inside a
+temporary module that shadows Register-ArgumentCompleter, and emits objects that
+can be piped directly to Register-CompleterRegistration -InputObject.
+
+Import-CompleterScript is safe by default for supported script shapes: it rejects
+unsupported Register-ArgumentCompleter patterns during AST validation and avoids
+mutating the live runtime completer tables during import. Imported ScriptBlock
+objects keep the temporary module context that contains helper functions and
+script-scope state defined by the source script.
+
+.PARAMETER Path
+One or more paths to completer script files. Wildcards are supported.
+
+.PARAMETER LiteralPath
+One or more literal paths to completer script files. Wildcards are not expanded.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns CompleterActions.ImportedCompleterRegistration records compatible with
+Register-CompleterRegistration -InputObject.
+
+.EXAMPLE
+PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-CompleterRegistration -PassThru
+
+Imports a supported completer script and immediately registers the imported
+completer definitions through the module's managed registration API.
+#>
+function Import-CompleterScript
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'Path')]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath', ValueFromPipelineByPropertyName)]
+        [Alias('PSPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $LiteralPath
+    )
+
+    process
+    {
+        $resolvedPaths = @()
+
+        try
+        {
+            switch ($PSCmdlet.ParameterSetName)
+            {
+                'Path'
+                {
+                    foreach ($pathItem in $Path)
+                    {
+                        $resolvedPaths += @(Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath)
+                    }
+
+                    break
+                }
+
+                'LiteralPath'
+                {
+                    foreach ($literalPathItem in $LiteralPath)
+                    {
+                        $resolvedPaths += (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                    }
+
+                    break
+                }
+            }
+
+            foreach ($resolvedPath in $resolvedPaths)
+            {
+                $file = Get-Item -LiteralPath $resolvedPath -ErrorAction Stop
+                if ($file.PSIsContainer)
+                {
+                    throw "Completer script imports require a file path. '$resolvedPath' is a directory."
+                }
+
+                if ($file.Extension -ne '.ps1')
+                {
+                    throw "Completer script imports require .ps1 files. Received '$resolvedPath'."
+                }
+
+                $parseResult = Get-CompleterScriptParseResult -LiteralPath $file.FullName
+                $null = Test-CompleterScriptAst -Ast $parseResult.Ast -LiteralPath $file.FullName
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $file.FullName
+
+                foreach ($definition in $importSession.Definitions)
+                {
+                    $targetParameters = @{
+                        CommandName = $definition.CommandName
+                    }
+
+                    if ($definition.IsNative)
+                    {
+                        $targetParameters['Native'] = $true
+                    }
+                    else
+                    {
+                        $targetParameters['ParameterName'] = $definition.ParameterName
+                    }
+
+                    foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
+                    {
+                        $PSCmdlet.WriteObject(
+                            (New-ImportedCompleterRegistration -Target $target -ScriptBlock $definition.ScriptBlock -SourcePath $file.FullName -ImportModule $importSession.Module)
+                        )
+                    }
+                }
+            }
+        }
+        catch
+        {
+            throw "Failed to import completer script. $($_.Exception.Message)"
+        }
+        finally
+        {
+            $resolvedPaths = @()
+        }
+    }
+}
+<#
+.SYNOPSIS
 Registers a managed PowerShell argument completer.
 
 .DESCRIPTION
@@ -372,6 +503,7 @@ function Register-CompleterRegistration
             {
                 $target = $resolvedInput.Target
                 $targetScriptBlock = $resolvedInput.ScriptBlock
+                $targetImportModule = $resolvedInput.ImportModule
                 $existingManagedRegistration = $null
                 $existingRuntimeRegistration = $null
                 $removedManagedRegistration = $null
@@ -420,16 +552,9 @@ function Register-CompleterRegistration
                         }
                     }
 
-                    if ($target.IsNative)
-                    {
-                        Register-ArgumentCompleter -CommandName $target.CommandName -Native -ScriptBlock $targetScriptBlock
-                    }
-                    else
-                    {
-                        Register-ArgumentCompleter -CommandName $target.CommandName -ParameterName $target.ParameterName -ScriptBlock $targetScriptBlock
-                    }
+                    $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
 
-                    $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed'
+                    $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed' -ImportModule $targetImportModule
                     $registration = Add-ManagedCompleterRegistration -Registration $registration
 
                     if ($PassThru)
@@ -451,14 +576,7 @@ function Register-CompleterRegistration
                         {
                             if ($null -ne $removedRuntimeRegistration)
                             {
-                                if ($removedRuntimeRegistration.IsNative)
-                                {
-                                    Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -Native -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                                }
-                                else
-                                {
-                                    Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -ParameterName $removedRuntimeRegistration.ParameterName -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                                }
+                                $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
                             }
 
                             if ($null -ne $removedManagedRegistration)
@@ -476,6 +594,7 @@ function Register-CompleterRegistration
                     $existingRuntimeRegistration = $null
                     $removedManagedRegistration = $null
                     $removedRuntimeRegistration = $null
+                    $targetImportModule = $null
                 }
             }
         }
@@ -665,14 +784,7 @@ function Unregister-CompleterRegistration
                 {
                     if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
                     {
-                        if ($removedRuntimeRegistration.IsNative)
-                        {
-                            Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -Native -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                        }
-                        else
-                        {
-                            Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -ParameterName $removedRuntimeRegistration.ParameterName -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                        }
+                        $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
                     }
 
                     if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Key $target.Key))
@@ -754,6 +866,69 @@ function Add-ManagedCompleterRegistration
             throw "Failed to add the managed completer registration '$([string] $Registration.Key)'. $($_.Exception.Message)"
         }
     }
+}
+<#
+.SYNOPSIS
+Adds or replaces a runtime completer registration in PowerShell's live dictionaries.
+
+.DESCRIPTION
+Writes directly to the runtime completer dictionaries that back TabExpansion2. The
+helper initializes the relevant dictionary when PowerShell has not created it yet,
+which keeps imported and ordinary completer registrations on the same runtime path.
+
+.PARAMETER Target
+The completer target or registration object. It must expose RuntimeKey and IsNative.
+
+.PARAMETER ScriptBlock
+The completer script block to register.
+#>
+function Add-RuntimeCompleterRegistration
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only mutates the live completer runtime dictionaries on behalf of public commands.')]
+    [OutputType([scriptblock])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Target,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [scriptblock] $ScriptBlock
+    )
+
+    foreach ($requiredProperty in 'RuntimeKey', 'IsNative')
+    {
+        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        {
+            throw "Target is missing required property '$requiredProperty'."
+        }
+    }
+
+    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
+    $runtime = Get-CompleterRuntime
+    $propertyName = if ($Target.IsNative) { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
+    $dictionary = $runtime.$propertyName
+
+    if ($null -eq $dictionary)
+    {
+        $runtimeExecutionContextType = $runtime.ExecutionContext.GetType()
+        $runtimeProperty = $runtimeExecutionContextType.GetProperty($propertyName, $bindingFlags)
+        if ($null -eq $runtimeProperty)
+        {
+            throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
+        }
+
+        $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $runtimeProperty.SetValue($runtime.ExecutionContext, $dictionary)
+    }
+
+    $dictionary[[string] $Target.RuntimeKey] = $ScriptBlock
+
+    return $dictionary[[string] $Target.RuntimeKey]
 }
 <#
 .SYNOPSIS
@@ -1247,6 +1422,61 @@ function Get-CompleterRuntime
 }
 <#
 .SYNOPSIS
+Parses a completer script file into a reusable AST result.
+
+.DESCRIPTION
+Uses PowerShell's parser to read a completer script from disk and returns the
+root AST, token stream, and parse errors so higher-level import helpers can
+validate the script shape before executing it in a controlled scope.
+
+.PARAMETER LiteralPath
+The literal path to the completer script file.
+
+.OUTPUTS
+CompleterActions.CompleterScriptParseResult
+#>
+function Get-CompleterScriptParseResult
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
+        $LiteralPath,
+        [ref] $tokens,
+        [ref] $parseErrors
+    )
+
+    if ($parseErrors.Count -gt 0)
+    {
+        $errorSummary = @($parseErrors |
+            Select-Object -First 3 |
+            ForEach-Object {
+                'line {0}, column {1}: {2}' -f $_.Extent.StartLineNumber, $_.Extent.StartColumnNumber, $_.Message
+            }) -join '; '
+
+        throw "Completer script '$LiteralPath' could not be parsed. $errorSummary"
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName  = 'CompleterActions.CompleterScriptParseResult'
+        Path        = $LiteralPath
+        Ast         = $ast
+        Tokens      = @($tokens)
+        ParseErrors = @($parseErrors)
+    }
+}
+<#
+.SYNOPSIS
 Gets the managed registration dictionary from module state.
 
 .DESCRIPTION
@@ -1285,6 +1515,109 @@ function Get-ManagedCompleterRegistrationTable
 }
 <#
 .SYNOPSIS
+Executes a completer script in a controlled capture module.
+
+.DESCRIPTION
+Creates a temporary dynamic module that shadows Register-ArgumentCompleter so the
+target script can run without mutating the live runtime completer tables. The
+captured registration definitions preserve the imported script block behavior and
+module scope so helper functions and script state remain available later.
+
+.PARAMETER LiteralPath
+The literal path to the completer script file.
+
+.OUTPUTS
+CompleterActions.CompleterScriptImportSession
+#>
+function Import-CompleterScriptDefinition
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $importModule = $null
+    $capturedDefinitions = @()
+
+    try
+    {
+        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -ArgumentList $LiteralPath -ScriptBlock {
+            param(
+                [Parameter(Mandatory)]
+                [string] $ScriptPath
+            )
+
+            $script:CapturedCompleterDefinitions = [System.Collections.Generic.List[object]]::new()
+
+            function Register-ArgumentCompleter
+            {
+                [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
+                param(
+                    [Parameter(Mandatory, ParameterSetName = 'Native')]
+                    [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+                    [ValidateNotNullOrEmpty()]
+                    [string[]] $CommandName,
+
+                    [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+                    [ValidateNotNullOrEmpty()]
+                    [string[]] $ParameterName,
+
+                    [Parameter(Mandatory, ParameterSetName = 'Native')]
+                    [switch] $Native,
+
+                    [Parameter(Mandatory, ParameterSetName = 'Native')]
+                    [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+                    [ValidateNotNull()]
+                    [scriptblock] $ScriptBlock
+                )
+
+                process
+                {
+                    $capturedScriptBlock = $ExecutionContext.SessionState.InvokeCommand.NewScriptBlock($ScriptBlock.ToString())
+
+                    $script:CapturedCompleterDefinitions.Add(
+                        [pscustomobject] [ordered] @{
+                            CommandName   = @($CommandName)
+                            ParameterName = if ($Native) { @() } else { @($ParameterName) }
+                            IsNative      = [bool] $Native
+                            ScriptBlock   = $capturedScriptBlock
+                        }
+                    )
+                }
+            }
+
+            $null = @(. $ScriptPath)
+        }
+
+        $capturedDefinitions = @(& $importModule {
+                @($script:CapturedCompleterDefinitions)
+            })
+
+        if ($capturedDefinitions.Count -eq 0)
+        {
+            throw 'The script executed successfully but did not register any completers at script scope.'
+        }
+
+        [pscustomobject] [ordered] @{
+            PSTypeName  = 'CompleterActions.CompleterScriptImportSession'
+            Path        = $LiteralPath
+            Module      = $importModule
+            Definitions = $capturedDefinitions
+        }
+    }
+    catch
+    {
+        throw "Failed to execute completer script '$LiteralPath' in the import scope. $($_.Exception.Message)"
+    }
+}
+<#
+.SYNOPSIS
 Creates an internal completer registration record object.
 
 .DESCRIPTION
@@ -1303,6 +1636,10 @@ The script block that was or will be registered for the completer target.
 .PARAMETER Source
 Indicates whether the record originated from module-managed registration or from
 runtime discovery.
+
+.PARAMETER ImportModule
+Preserves a reference to an imported helper module when a registration originated
+from Import-CompleterScript.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
@@ -1333,7 +1670,10 @@ function New-CompleterRegistrationRecord
 
         [Parameter()]
         [ValidateSet('Managed', 'Discovered')]
-        [string] $Source = 'Managed'
+        [string] $Source = 'Managed',
+
+        [Parameter()]
+        [System.Management.Automation.PSModuleInfo] $ImportModule
     )
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
@@ -1357,11 +1697,82 @@ function New-CompleterRegistrationRecord
         Source              = $Source
         IsManaged           = $Source -eq 'Managed'
         IsRuntimeRegistered = $true
+        ImportModule        = $ImportModule
         ScriptBlock         = $ScriptBlock
         ScriptText          = $ScriptBlock.ToString()
     }
 
     return $registration
+}
+<#
+.SYNOPSIS
+Creates a Register-CompleterRegistration-compatible import object.
+
+.DESCRIPTION
+Builds the public object emitted by Import-CompleterScript. The resulting object
+captures normalized target metadata plus the imported ScriptBlock object from the
+temporary import module so callers can pipe it directly into
+Register-CompleterRegistration -InputObject.
+
+.PARAMETER Target
+The normalized completer target metadata.
+
+.PARAMETER ScriptBlock
+The imported completer script block.
+
+.PARAMETER SourcePath
+The source completer script path.
+
+.PARAMETER ImportModule
+The temporary module that owns the imported script block context.
+
+.OUTPUTS
+CompleterActions.ImportedCompleterRegistration
+#>
+function New-ImportedCompleterRegistration
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an import object.')]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Target,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [scriptblock] $ScriptBlock,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $SourcePath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Management.Automation.PSModuleInfo] $ImportModule
+    )
+
+    [pscustomobject] [ordered] @{
+        PSTypeName      = 'CompleterActions.ImportedCompleterRegistration'
+        Key             = [string] $Target.Key
+        RegistrationKey = [string] $Target.Key
+        RuntimeKey      = [string] $Target.RuntimeKey
+        CommandName     = [string] $Target.CommandName
+        ParameterName   = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+        IsNative        = [bool] $Target.IsNative
+        Native          = [bool] $Target.IsNative
+        CompleterType   = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
+        TargetType      = [string] $Target.TargetType
+        Source          = 'Imported'
+        Path            = $SourcePath
+        SourcePath      = $SourcePath
+        ImportModule    = $ImportModule
+        ScriptBlock     = $ScriptBlock
+        ScriptText      = $ScriptBlock.ToString()
+    }
 }
 <#
 .SYNOPSIS
@@ -1642,6 +2053,7 @@ function Resolve-CompleterInputObject
         $hasNativeIndicator = $false
         $isNative = $false
         $scriptBlock = $null
+        $importModule = $null
         $target = $null
 
         try
@@ -1691,6 +2103,12 @@ function Resolve-CompleterInputObject
             if ($null -ne $scriptBlockProperty -and $scriptBlockProperty.Value -is [scriptblock])
             {
                 $scriptBlock = [scriptblock] $scriptBlockProperty.Value
+            }
+
+            $importModuleProperty = $InputObject.PSObject.Properties['ImportModule']
+            if ($null -ne $importModuleProperty -and $importModuleProperty.Value -is [System.Management.Automation.PSModuleInfo])
+            {
+                $importModule = [System.Management.Automation.PSModuleInfo] $importModuleProperty.Value
             }
 
             if ($RequireScriptBlock -and $null -eq $scriptBlock)
@@ -1761,6 +2179,7 @@ function Resolve-CompleterInputObject
                 InputObject = $InputObject
                 Target = $target
                 ScriptBlock = $scriptBlock
+                ImportModule = $importModule
             }
         }
         catch
@@ -1774,6 +2193,7 @@ function Resolve-CompleterInputObject
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
+            $importModule = $null
             $target = $null
         }
     }
@@ -2024,4 +2444,311 @@ function Resolve-CompleterTargetList
             break
         }
     }
+}
+<#
+.SYNOPSIS
+Validates that a completer script uses a supported import shape.
+
+.DESCRIPTION
+Checks the script AST for patterns that Import-CompleterScript can safely and
+predictably import. Supported scripts must be self-contained, must call
+Register-ArgumentCompleter at script scope, and must use literal values for the
+registration target and script block.
+
+.PARAMETER Ast
+The parsed script AST to validate.
+
+.PARAMETER LiteralPath
+The source path for error reporting.
+
+.OUTPUTS
+System.Boolean
+#>
+function Test-CompleterScriptAst
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Management.Automation.Language.ScriptBlockAst] $Ast,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    function Test-IsSupportedRegisterArgumentAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.Ast] $ArgumentAst,
+
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $ParameterName,
+
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $Path
+        )
+
+        switch ($ParameterName)
+        {
+            'CommandName'
+            {
+                if ($ArgumentAst -is [System.Management.Automation.Language.StringConstantExpressionAst])
+                {
+                    return
+                }
+
+                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayLiteralAst])
+                {
+                    foreach ($element in $ArgumentAst.Elements)
+                    {
+                        if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst])
+                        {
+                            throw "Completer script '$Path' must use literal string values for -CommandName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
+                        }
+                    }
+
+                    return
+                }
+
+                throw "Completer script '$Path' must use literal string values for -CommandName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
+            }
+
+            'ParameterName'
+            {
+                if ($ArgumentAst -is [System.Management.Automation.Language.StringConstantExpressionAst])
+                {
+                    return
+                }
+
+                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayLiteralAst])
+                {
+                    foreach ($element in $ArgumentAst.Elements)
+                    {
+                        if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst])
+                        {
+                            throw "Completer script '$Path' must use literal string values for -ParameterName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
+                        }
+                    }
+
+                    return
+                }
+
+                throw "Completer script '$Path' must use literal string values for -ParameterName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
+            }
+
+            'ScriptBlock'
+            {
+                if ($ArgumentAst -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst])
+                {
+                    throw "Completer script '$Path' must provide a literal script block for -ScriptBlock. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
+                }
+
+                return
+            }
+        }
+    }
+
+    foreach ($statement in @($Ast.EndBlock.Statements))
+    {
+        if ($statement -isnot [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $statement -isnot [System.Management.Automation.Language.IfStatementAst] -and
+            $statement -isnot [System.Management.Automation.Language.PipelineAst])
+        {
+            throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($statement.GetType().Name)' at line $($statement.Extent.StartLineNumber)."
+        }
+    }
+
+    $allowedImportCommands = @(
+        'Get-Variable',
+        'Register-ArgumentCompleter',
+        'Set-StrictMode'
+    )
+
+    foreach ($commandAst in @($Ast.FindAll(
+                {
+                    param($node)
+
+                    $node -is [System.Management.Automation.Language.CommandAst]
+                },
+                $true
+            )))
+    {
+        $isTopLevelCommand = $true
+        $ancestor = $commandAst.Parent
+
+        while ($null -ne $ancestor -and $ancestor -ne $Ast)
+        {
+            if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                $ancestor -is [System.Management.Automation.Language.ScriptBlockExpressionAst])
+            {
+                $isTopLevelCommand = $false
+                break
+            }
+
+            $ancestor = $ancestor.Parent
+        }
+
+        if (-not $isTopLevelCommand)
+        {
+            continue
+        }
+
+        $commandName = $commandAst.GetCommandName()
+        if ([string]::IsNullOrWhiteSpace($commandName))
+        {
+            throw "Completer script '$LiteralPath' uses a non-literal top-level command at line $($commandAst.Extent.StartLineNumber)."
+        }
+
+        if ($allowedImportCommands -notcontains $commandName)
+        {
+            throw "Completer script '$LiteralPath' uses unsupported top-level command '$commandName' at line $($commandAst.Extent.StartLineNumber)."
+        }
+    }
+
+    $functionOverrides = @($Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -eq 'Register-ArgumentCompleter'
+            },
+            $true
+        ))
+
+    if ($functionOverrides.Count -gt 0)
+    {
+        $lineNumber = $functionOverrides[0].Extent.StartLineNumber
+        throw "Completer script '$LiteralPath' defines its own Register-ArgumentCompleter function at line $lineNumber. Import-CompleterScript only supports scripts that call the built-in command name directly."
+    }
+
+    $dotSourcedCommands = @($Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot
+            },
+            $true
+        ))
+
+    if ($dotSourcedCommands.Count -gt 0)
+    {
+        $lineNumber = $dotSourcedCommands[0].Extent.StartLineNumber
+        throw "Completer script '$LiteralPath' dot-sources another script at line $lineNumber. Import-CompleterScript only supports self-contained completer scripts."
+    }
+
+    $registerCommands = @($Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'Register-ArgumentCompleter'
+            },
+            $true
+        ))
+
+    if ($registerCommands.Count -eq 0)
+    {
+        throw "Completer script '$LiteralPath' does not contain a Register-ArgumentCompleter call."
+    }
+
+    foreach ($registerCommand in $registerCommands)
+    {
+        $ancestor = $registerCommand.Parent
+        while ($null -ne $ancestor -and $ancestor -ne $Ast)
+        {
+            if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                $ancestor -is [System.Management.Automation.Language.ScriptBlockExpressionAst])
+            {
+                throw "Completer script '$LiteralPath' registers a completer from inside a nested function or script block at line $($registerCommand.Extent.StartLineNumber). Import-CompleterScript only supports script-scope Register-ArgumentCompleter calls."
+            }
+
+            $ancestor = $ancestor.Parent
+        }
+
+        $currentParameter = $null
+        $seenParameters = [ordered] @{}
+
+        foreach ($commandElement in ($registerCommand.CommandElements | Select-Object -Skip 1))
+        {
+            if ($commandElement -is [System.Management.Automation.Language.CommandParameterAst])
+            {
+                if ($commandElement.ParameterName -notin 'CommandName', 'ParameterName', 'Native', 'ScriptBlock')
+                {
+                    throw "Completer script '$LiteralPath' uses unsupported Register-ArgumentCompleter parameter '-$($commandElement.ParameterName)' at line $($commandElement.Extent.StartLineNumber). Supported import parameters are -CommandName, -ParameterName, -Native, and -ScriptBlock."
+                }
+
+                if ($null -ne $commandElement.Argument)
+                {
+                    if ($commandElement.ParameterName -eq 'Native')
+                    {
+                        throw "Completer script '$LiteralPath' uses an argument for -Native at line $($commandElement.Extent.StartLineNumber). Import-CompleterScript only supports the bare -Native switch."
+                    }
+
+                    Test-IsSupportedRegisterArgumentAst -ArgumentAst $commandElement.Argument -ParameterName $commandElement.ParameterName -Path $LiteralPath
+                    $currentParameter = $null
+                }
+                elseif ($commandElement.ParameterName -eq 'Native')
+                {
+                    $currentParameter = $null
+                }
+                else
+                {
+                    $currentParameter = $commandElement.ParameterName
+                }
+
+                $seenParameters[$commandElement.ParameterName] = $true
+                continue
+            }
+
+            if ($commandElement -is [System.Management.Automation.Language.VariableExpressionAst] -and $commandElement.Splatted)
+            {
+                throw "Completer script '$LiteralPath' uses argument splatting at line $($commandElement.Extent.StartLineNumber). Import-CompleterScript requires explicit Register-ArgumentCompleter parameters."
+            }
+
+            if ([string]::IsNullOrWhiteSpace($currentParameter))
+            {
+                throw "Completer script '$LiteralPath' uses positional Register-ArgumentCompleter arguments at line $($commandElement.Extent.StartLineNumber). Import-CompleterScript requires explicit parameter names."
+            }
+
+            Test-IsSupportedRegisterArgumentAst -ArgumentAst $commandElement -ParameterName $currentParameter -Path $LiteralPath
+            $currentParameter = $null
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($currentParameter))
+        {
+            throw "Completer script '$LiteralPath' is missing the argument for -$currentParameter at line $($registerCommand.Extent.StartLineNumber)."
+        }
+
+        if (-not $seenParameters.Contains('CommandName'))
+        {
+            throw "Completer script '$LiteralPath' is missing -CommandName in a Register-ArgumentCompleter call at line $($registerCommand.Extent.StartLineNumber)."
+        }
+
+        if (-not $seenParameters.Contains('ScriptBlock'))
+        {
+            throw "Completer script '$LiteralPath' is missing -ScriptBlock in a Register-ArgumentCompleter call at line $($registerCommand.Extent.StartLineNumber)."
+        }
+
+        if ($seenParameters.Contains('Native') -and $seenParameters.Contains('ParameterName'))
+        {
+            throw "Completer script '$LiteralPath' combines -Native and -ParameterName at line $($registerCommand.Extent.StartLineNumber). Import-CompleterScript only supports the standard Register-ArgumentCompleter parameter sets."
+        }
+
+        if (-not $seenParameters.Contains('Native') -and -not $seenParameters.Contains('ParameterName'))
+        {
+            throw "Completer script '$LiteralPath' does not identify whether the completer is native or parameter-based at line $($registerCommand.Extent.StartLineNumber). Use -Native or -ParameterName."
+        }
+    }
+
+    return $true
 }

@@ -70,6 +70,8 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeOne' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture.exe' -CompleterType 'Native'
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
     }
@@ -87,6 +89,8 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeOne' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture.exe' -CompleterType 'Native'
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -511,6 +515,41 @@ Describe 'Completer registration public API' {
         {
             [pscustomobject] @{ CommandName = 'Test-ArrayOne' } | Register-CompleterRegistration -PassThru
         } | Should -Throw '*Failed to resolve a completer target from InputObject*'
+    }
+
+    It 'imports supported completer scripts without mutating runtime and produces register-compatible objects' {
+        $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\ImportableNativeCompleter.ps1'
+
+        $importedRegistrations = @(Import-CompleterScript -LiteralPath $fixturePath)
+
+        $importedRegistrations.Count | Should -Be 2
+        @($importedRegistrations.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+        $importedRegistrations[0].Source | Should -Be 'Imported'
+        $importedRegistrations[0].Path | Should -Be $fixturePath
+        $importedRegistrations[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
+
+        Get-CompleterRegistration -Native -CommandName 'importfixture' | Should -BeNullOrEmpty
+
+        $commandAst = [System.Management.Automation.Language.Parser]::ParseInput(
+            'importfixture a',
+            [ref] $null,
+            [ref] $null
+        ).EndBlock.Statements[0].PipelineElements[0]
+
+        $completionMatches = @(& $importedRegistrations[0].ScriptBlock 'a' $commandAst 15)
+        $completionMatches.CompletionText | Should -Contain 'alpha'
+
+        $registered = @($importedRegistrations | Register-CompleterRegistration -PassThru)
+        $registered.Count | Should -Be 2
+        @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+    }
+
+    It 'rejects unsupported dynamic Register-ArgumentCompleter arguments during import' {
+        $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\UnsupportedDynamicCompleter.ps1'
+
+        {
+            Import-CompleterScript -LiteralPath $fixturePath
+        } | Should -Throw '*must use literal string values for -CommandName*'
     }
 
     It 'requires allow unmanaged for pipeline removal of discovered registrations' {

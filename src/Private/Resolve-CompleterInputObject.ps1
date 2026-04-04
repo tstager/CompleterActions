@@ -46,6 +46,7 @@ function Resolve-CompleterInputObject
         $hasNativeIndicator = $false
         $isNative = $false
         $scriptBlock = $null
+        $importModule = $null
         $target = $null
 
         try
@@ -95,6 +96,12 @@ function Resolve-CompleterInputObject
             if ($null -ne $scriptBlockProperty -and $scriptBlockProperty.Value -is [scriptblock])
             {
                 $scriptBlock = [scriptblock] $scriptBlockProperty.Value
+            }
+
+            $importModuleProperty = $InputObject.PSObject.Properties['ImportModule']
+            if ($null -ne $importModuleProperty -and $importModuleProperty.Value -is [System.Management.Automation.PSModuleInfo])
+            {
+                $importModule = [System.Management.Automation.PSModuleInfo] $importModuleProperty.Value
             }
 
             if ($RequireScriptBlock -and $null -eq $scriptBlock)
@@ -165,6 +172,7 @@ function Resolve-CompleterInputObject
                 InputObject = $InputObject
                 Target = $target
                 ScriptBlock = $scriptBlock
+                ImportModule = $importModule
             }
         }
         catch
@@ -178,6 +186,7 @@ function Resolve-CompleterInputObject
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
+            $importModule = $null
             $target = $null
         }
     }

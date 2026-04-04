@@ -20,6 +20,10 @@ title: CompleterActions Module
 
 Gets completer registrations known to the module or discovered at runtime.
 
+### [Import-CompleterScript](Import-CompleterScript.md)
+
+Imports self-contained completer scripts into registration input objects.
+
 ### [Register-CompleterRegistration](Register-CompleterRegistration.md)
 
 Registers a managed PowerShell argument completer.

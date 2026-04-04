@@ -3,17 +3,18 @@
 ## Module shape
 
 - `CompleterActions` is a PowerShell 7+ / Core-only script module rooted at `CompleterActions.psd1` and `CompleterActions.psm1`.
-- The public surface is exactly three functions: `Get-CompleterRegistration`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`.
+- The public surface is exactly four functions: `Get-CompleterRegistration`, `Import-CompleterScript`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`.
 - `CompleterActions.psm1` dot-sources `src\Private\*.ps1` and `src\Public\*.ps1`, initializes module state with `Get-CompleterActionState`, and exports the public function filenames.
-- The manifest explicitly exports the same three functions and loads `CompleterActions.Format.ps1xml`.
+- The manifest explicitly exports the same four functions and loads `CompleterActions.Format.ps1xml`.
 
 ## Domain behavior
 
 - The module manages PowerShell argument completer registrations for native commands and command parameters.
+- `Import-CompleterScript` converts supported standalone completer scripts into `Register-CompleterRegistration -InputObject` payloads without mutating the live runtime during import.
 - Managed registrations are tracked in module-owned state; runtime-only registrations can also be discovered from the live session.
 - Runtime discovery and removal rely on PowerShell runtime internals, not a public API. Keep any related changes aligned across discovery, reconciliation, and tests.
 - `Get-CompleterRegistration` merges managed and discovered registrations, prefers managed records for duplicate targets, and supports `SupportsPaging`.
-- Public commands support array inputs; `Get-*` supports pipeline-by-property-name target lookup; `Register-*` and `Unregister-*` support `InputObject` pipeline input where appropriate.
+- Public commands support array inputs; `Get-*` supports pipeline-by-property-name target lookup; `Import-*` supports path input; `Register-*` and `Unregister-*` support `InputObject` pipeline input where appropriate.
 - `Register-CompleterRegistration` and `Unregister-CompleterRegistration` are state-changing commands with `ShouldProcess` semantics.
 
 ## Implementation conventions

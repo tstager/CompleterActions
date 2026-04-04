@@ -344,6 +344,106 @@ git.</maml:para>
   </command:command>
   <command:command>
     <command:details>
+      <command:name>Import-CompleterScript</command:name>
+      <maml:description>
+        <maml:para>Imports self-contained completer scripts into registration input objects.</maml:para>
+      </maml:description>
+      <command:verb>Import</command:verb>
+      <command:noun>CompleterScript</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Parses and validates one or more completer scripts, executes them inside a temporary module that shadows `Register-ArgumentCompleter`, and emits objects that can be piped directly to `Register-CompleterRegistration -InputObject`.</maml:para>
+      <maml:para>Supported scripts must be self-contained and must use literal `Register-ArgumentCompleter` arguments for the target metadata and script block. Imported script blocks preserve the temporary module context that contains any helper functions and script-scope state defined by the source script.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Import-CompleterScript</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="none">
+          <maml:name>Path</maml:name>
+          <maml:description>
+            <maml:para>One or more paths to completer script files. Wildcards are supported.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Import-CompleterScript</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+          <maml:name>LiteralPath</maml:name>
+          <maml:description>
+            <maml:para>One or more literal paths to completer script files. Wildcards are not expanded.</maml:para>
+          </maml:description>
+          <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>LiteralPath</maml:name>
+        <maml:description>
+          <maml:para>One or more literal paths to completer script files. Wildcards are not expanded.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="none">
+        <maml:name>Path</maml:name>
+        <maml:description>
+          <maml:para>One or more paths to completer script files. Wildcards are supported.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <dev:name>System.String</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <dev:name>System.Management.Automation.PSCustomObject</dev:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
+`Register-CompleterRegistration -InputObject`.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para />
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterScript -Path .\7z_completer.ps1 |
+    Register-CompleterRegistration -PassThru
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Imports a supported completer script and registers the imported definitions
+through the module's managed registration API.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <command:uri />
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
       <command:name>Register-CompleterRegistration</command:name>
       <maml:description>
         <maml:para>Registers a managed PowerShell argument completer.</maml:para>
@@ -931,29 +1031,6 @@ targets.</maml:para>
       <command:returnValue>
         <dev:type>
           <dev:name>System.Management.Automation.PSObject</dev:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
-        </maml:description>
-      </command:returnValue>
-    </command:returnValues>
-    <maml:alertSet>
-      <maml:alert>
-        <maml:para />
-      </maml:alert>
-    </maml:alertSet>
-    <command:examples />
-    <command:relatedLinks>
-      <maml:navigationLink>
-        <maml:linkText>Online Version</maml:linkText>
-        <command:uri />
-      </maml:navigationLink>
-    </command:relatedLinks>
-  </command:command>
-</helpItems>:navigationLink>
-    </command:relatedLinks>
-  </command:command>
-</helpItems>    <dev:name>System.Management.Automation.PSObject</dev:name>
         </dev:type>
         <maml:description>
           <maml:para />

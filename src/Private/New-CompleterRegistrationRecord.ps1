@@ -19,6 +19,10 @@ The script block that was or will be registered for the completer target.
 Indicates whether the record originated from module-managed registration or from
 runtime discovery.
 
+.PARAMETER ImportModule
+Preserves a reference to an imported helper module when a registration originated
+from Import-CompleterScript.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
@@ -45,7 +49,10 @@ function New-CompleterRegistrationRecord
 
         [Parameter()]
         [ValidateSet('Managed', 'Discovered')]
-        [string] $Source = 'Managed'
+        [string] $Source = 'Managed',
+
+        [Parameter()]
+        [System.Management.Automation.PSModuleInfo] $ImportModule
     )
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
@@ -69,6 +76,7 @@ function New-CompleterRegistrationRecord
         Source              = $Source
         IsManaged           = $Source -eq 'Managed'
         IsRuntimeRegistered = $true
+        ImportModule        = $ImportModule
         ScriptBlock         = $ScriptBlock
         ScriptText          = $ScriptBlock.ToString()
     }

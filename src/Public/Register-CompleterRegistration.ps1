@@ -119,6 +119,7 @@ function Register-CompleterRegistration
             {
                 $target = $resolvedInput.Target
                 $targetScriptBlock = $resolvedInput.ScriptBlock
+                $targetImportModule = $resolvedInput.ImportModule
                 $existingManagedRegistration = $null
                 $existingRuntimeRegistration = $null
                 $removedManagedRegistration = $null
@@ -167,16 +168,9 @@ function Register-CompleterRegistration
                         }
                     }
 
-                    if ($target.IsNative)
-                    {
-                        Register-ArgumentCompleter -CommandName $target.CommandName -Native -ScriptBlock $targetScriptBlock
-                    }
-                    else
-                    {
-                        Register-ArgumentCompleter -CommandName $target.CommandName -ParameterName $target.ParameterName -ScriptBlock $targetScriptBlock
-                    }
+                    $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
 
-                    $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed'
+                    $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed' -ImportModule $targetImportModule
                     $registration = Add-ManagedCompleterRegistration -Registration $registration
 
                     if ($PassThru)
@@ -198,14 +192,7 @@ function Register-CompleterRegistration
                         {
                             if ($null -ne $removedRuntimeRegistration)
                             {
-                                if ($removedRuntimeRegistration.IsNative)
-                                {
-                                    Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -Native -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                                }
-                                else
-                                {
-                                    Register-ArgumentCompleter -CommandName $removedRuntimeRegistration.CommandName -ParameterName $removedRuntimeRegistration.ParameterName -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                                }
+                                $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
                             }
 
                             if ($null -ne $removedManagedRegistration)
@@ -223,6 +210,7 @@ function Register-CompleterRegistration
                     $existingRuntimeRegistration = $null
                     $removedManagedRegistration = $null
                     $removedRuntimeRegistration = $null
+                    $targetImportModule = $null
                 }
             }
         }
