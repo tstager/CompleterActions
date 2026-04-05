@@ -79,6 +79,12 @@ Or import the built module output after running the build:
 Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```
 
+For the conceptual import guide, run:
+
+```powershell
+Get-Help about_Import_Completers
+```
+
 ## Quick start
 
 ### Register a parameter completer

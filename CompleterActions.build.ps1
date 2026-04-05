@@ -128,6 +128,14 @@ task build clean, external_help, {
 
     Copy-Item -Path "$docPath\$modulename\$modulename-help.xml" -Destination "$modulepath\en-US\$modulename-help.xml" -Force
 
+    $aboutHelpSourcePath = Join-Path -Path $PSScriptRoot -ChildPath 'en-US'
+    if (Test-Path -Path $aboutHelpSourcePath) {
+        Get-ChildItem -Path $aboutHelpSourcePath -Filter 'about_*.help.txt' -File |
+            ForEach-Object {
+                Copy-Item -Path $_.FullName -Destination (Join-Path -Path "$modulepath\en-US" -ChildPath $_.Name) -Force
+            }
+    }
+
 
     $Data = @{
 

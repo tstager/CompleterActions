@@ -1,0 +1,326 @@
+TOPIC
+    about_Import_Completers
+
+SYNOPSIS
+    Explains how to import standalone completer scripts into this module.
+
+LONG DESCRIPTION
+
+    CompleterActions can import an existing standalone completer script without
+    registering it immediately in the live session. `Import-CompleterScript`
+    parses the script, validates that it uses a supported shape, executes it in
+    a temporary capture module, and emits one or more
+    `CompleterActions.ImportedCompleterRegistration` objects.
+
+    Those output objects are designed to pipe directly into
+    `Register-CompleterRegistration -InputObject`. This lets you move an
+    existing script into the module's managed workflow while keeping the live
+    runtime unchanged until you explicitly register the imported definitions.
+
+    The import path is intentionally strict. The cmdlet only accepts
+    self-contained completer scripts that it can analyze and replay safely.
+    Unsupported top-level behavior is rejected before the imported completer can
+    affect the session.
+
+WHEN TO USE IMPORT-COMPLETERSCRIPT
+
+    Use `Import-CompleterScript` when you already have a `.ps1` file that calls
+    `Register-ArgumentCompleter` and you want to:
+
+    - inspect what the script would register before changing the session
+    - convert old standalone completer scripts into managed registrations
+    - preserve helper functions and script-scope state used by the completer
+    - register the imported definitions later with
+      `Register-CompleterRegistration`
+
+    Do not use `Import-CompleterScript` if you only need to create a new
+    completer from a script block you already have in memory. In that case, call
+    `Register-CompleterRegistration` directly.
+
+HOW IMPORT-COMPLETERSCRIPT WORKS
+
+    `Import-CompleterScript` performs four steps for each input file:
+
+    1. Resolve the input path to a single `.ps1` file.
+    2. Parse the file and validate that the script uses a supported
+       `Register-ArgumentCompleter` shape.
+    3. Execute the script inside a temporary module that shadows
+       `Register-ArgumentCompleter`, so the script can declare its completers
+       without modifying the live runtime tables.
+    4. Emit normalized import objects for each resolved target.
+
+    A single `Register-ArgumentCompleter` call can produce more than one output
+    object. For example, a script that registers one native completer for both
+    `tool` and `tool.exe` produces two imported registrations, one per command
+    target.
+
+PARAMETERS
+
+    `Import-CompleterScript` has two path parameters:
+
+    - `-Path`
+      Accepts one or more paths. Wildcards are resolved. This parameter accepts
+      pipeline input and property-name binding from `FullName`.
+
+    - `-LiteralPath`
+      Accepts one or more literal file paths. Wildcards are not expanded. This
+      parameter accepts property-name binding from `PSPath`.
+
+    Both parameters require `.ps1` files. Directories and non-`.ps1` files are
+    rejected.
+
+OUTPUT OBJECTS
+
+    Each imported object is a
+    `CompleterActions.ImportedCompleterRegistration` record with properties that
+    are ready for `Register-CompleterRegistration -InputObject`.
+
+    The most useful properties are:
+
+    - `Key` and `RegistrationKey`
+      The module's normalized key for the target.
+
+    - `RuntimeKey`
+      The target key as PowerShell runtime registration logic expects it.
+
+    - `CommandName`
+      The command or native executable name.
+
+    - `ParameterName`
+      The parameter name for parameter completers. Native completers leave this
+      empty.
+
+    - `Native` and `IsNative`
+      Indicate whether the target is a native completer.
+
+    - `CompleterType`
+      Either `Parameter` or `Native`.
+
+    - `Path` and `SourcePath`
+      The source file that produced the imported registration.
+
+    - `ScriptBlock`
+      The imported script block. It preserves the temporary module context that
+      contains helper functions and script-scope state from the source script.
+
+    - `ScriptText`
+      The script block text, which is useful for inspection and debugging.
+
+BASIC WORKFLOW
+
+    The normal workflow is:
+
+    1. Import the module.
+    2. Import one or more completer scripts.
+    3. Inspect the emitted objects if needed.
+    4. Pipe them into `Register-CompleterRegistration`.
+    5. Verify the registration with `Get-CompleterRegistration`.
+
+EXAMPLE 1
+
+    Import a single parameter completer script and register it:
+
+        Import-CompleterScript -Path .\MyTool.Completer.ps1 |
+            Register-CompleterRegistration -PassThru
+
+    `-PassThru` returns the managed registration records so you can inspect the
+    final registrations that were created.
+
+EXAMPLE 2
+
+    Inspect imported definitions before registering them:
+
+        $imported = Import-CompleterScript -Path .\MyTool.Completer.ps1
+
+        $imported | Format-List CommandName, ParameterName, CompleterType, Path
+        $imported.ScriptText
+
+    This is useful when you want to verify the discovered targets and the
+    imported script text before you mutate the runtime.
+
+EXAMPLE 3
+
+    Import multiple script files by wildcard:
+
+        Import-CompleterScript -Path .\Completers\*.ps1 |
+            Register-CompleterRegistration
+
+    `-Path` resolves wildcards first, then imports each matching `.ps1` file.
+
+EXAMPLE 4
+
+    Import files from `Get-ChildItem` pipeline output:
+
+        Get-ChildItem -Path .\Completers -Filter *.ps1 -File |
+            Import-CompleterScript |
+            Register-CompleterRegistration
+
+    `Import-CompleterScript` accepts property-name binding from `FullName`, so
+    `FileInfo` objects from `Get-ChildItem` work directly.
+
+EXAMPLE 5
+
+    Use `-LiteralPath` when the file name contains wildcard characters:
+
+        Import-CompleterScript -LiteralPath '.\Completers\[demo].ps1'
+
+    `-LiteralPath` treats the path exactly as written and does not expand `[]`,
+    `*`, or `?`.
+
+SUPPORTED SCRIPT SHAPE
+
+    To remain import-compatible, a standalone completer script should follow
+    these rules:
+
+    - Keep the script self-contained. Do not dot-source other scripts.
+    - Keep script-scope statements limited to:
+      - `Set-StrictMode`
+      - function definitions
+      - importer-safe `if` statements
+      - script-scope `Register-ArgumentCompleter` calls
+    - Call the built-in `Register-ArgumentCompleter` command directly.
+      Do not wrap it in a custom function.
+    - Use only these registration parameters:
+      - `-CommandName`
+      - `-ParameterName`
+      - bare `-Native`
+      - `-ScriptBlock`
+    - Use explicit parameter names only. Positional arguments and splatting are
+      not supported.
+    - Keep target metadata literal:
+      - `-CommandName` may be a literal string, a literal string array, or a
+        literal `@('tool', 'tool.exe')` expression
+      - `-ParameterName` may be a literal string, a literal string array, or a
+        literal array expression
+    - Keep `-ScriptBlock` literal.
+    - Keep registration calls at script scope, not inside nested functions or
+      nested script blocks.
+    - Move cache initialization, alias bootstrap, tool discovery, generated
+      completion loading, and other setup into helper functions that run lazily
+      from inside the registered script block.
+
+PARAMETER COMPLETER EXAMPLE
+
+    This is a supported parameter completer shape:
+
+        Register-ArgumentCompleter `
+            -CommandName 'Invoke-DemoTool' `
+            -ParameterName 'Name' `
+            -ScriptBlock {
+                param(
+                    $commandName,
+                    $parameterName,
+                    $wordToComplete,
+                    $commandAst,
+                    $fakeBoundParameters
+                )
+
+                $null = $commandName, $parameterName, $commandAst,
+                    $fakeBoundParameters
+
+                'alpha', 'beta' |
+                    Where-Object { $_ -like "$wordToComplete*" } |
+                    ForEach-Object {
+                        [System.Management.Automation.CompletionResult]::new(
+                            $_,
+                            $_,
+                            'ParameterValue',
+                            $_
+                        )
+                    }
+            }
+
+NATIVE COMPLETER EXAMPLE
+
+    This is a supported native completer shape with helper functions and
+    script-scope state:
+
+        Set-StrictMode -Version 2.0
+
+        if (-not (Get-Variable -Name DemoState -Scope Script -ErrorAction
+            SilentlyContinue))
+        {
+            $script:DemoState = @{
+                Values = @('alpha', 'beta')
+            }
+        }
+
+        function Complete-DemoTool
+        {
+            param(
+                [string] $WordToComplete
+            )
+
+            foreach ($value in $script:DemoState.Values)
+            {
+                if ($value -like "$WordToComplete*")
+                {
+                    [System.Management.Automation.CompletionResult]::new(
+                        $value,
+                        $value,
+                        'ParameterValue',
+                        $value
+                    )
+                }
+            }
+        }
+
+        Register-ArgumentCompleter `
+            -Native `
+            -CommandName @('demo', 'demo.exe') `
+            -ScriptBlock {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                $null = $commandAst, $cursorPosition
+
+                Complete-DemoTool -WordToComplete $wordToComplete
+            }
+
+    The helper function and `$script:DemoState` remain available because the
+    imported script block keeps the temporary module context created during
+    import.
+
+COMMON FAILURES
+
+    Import fails when the script uses patterns that the module cannot analyze or
+    replay safely. Common examples include:
+
+    - top-level commands such as `Get-Date`
+    - top-level assignments or loops
+    - `try`/`catch` blocks at script scope
+    - dot-sourcing another script
+    - a variable instead of a literal `-ScriptBlock`
+    - dynamic expressions for `-CommandName` or `-ParameterName`
+    - positional `Register-ArgumentCompleter` arguments
+    - argument splatting
+    - registering from inside a nested function or nested script block
+
+    When import fails, fix the source script so that registration metadata stays
+    literal and any expensive or dynamic behavior runs lazily inside helper
+    functions that are called from the completion script block.
+
+VERIFYING THE RESULT
+
+    After registration, verify the result with the module's discovery command:
+
+        Get-CompleterRegistration -CommandName 'Invoke-DemoTool' `
+            -ParameterName 'Name'
+
+    You can also validate real completion behavior with `TabExpansion2`:
+
+        $inputScript = 'Invoke-DemoTool -Name a'
+        $completion = TabExpansion2 `
+            -InputScript $inputScript `
+            -CursorColumn $inputScript.Length
+
+        $completion.CompletionMatches
+
+    For completer work, verifying the registered runtime behavior is more useful
+    than only invoking the imported script block in isolation.
+
+SEE ALSO
+
+    Get-Help Import-CompleterScript -Full
+    Get-Help Register-CompleterRegistration -Full
+    Get-Help Get-CompleterRegistration -Full
+    Register-ArgumentCompleter

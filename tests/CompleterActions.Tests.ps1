@@ -136,6 +136,13 @@ Describe 'Completer registration public API' {
         $discoveredRegistration.IsRuntimeRegistered | Should -BeTrue
     }
 
+    It 'loads the about help topic for completer imports' {
+        $help = Get-Help -Name 'about_Import_Completers' -ErrorAction Stop
+
+        $help.Name | Should -Be 'about_Import_Completers'
+        $help.Synopsis | Should -Match 'import standalone completer scripts'
+    }
+
     It 'treats repeated registration with the same script block as idempotent' {
         $scriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
