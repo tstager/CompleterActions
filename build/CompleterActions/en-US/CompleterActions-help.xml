@@ -354,6 +354,9 @@ git.</maml:para>
     <maml:description>
       <maml:para>Parses and validates one or more completer scripts, executes them inside a temporary module that shadows `Register-ArgumentCompleter`, and emits objects that can be piped directly to `Register-CompleterRegistration -InputObject`.</maml:para>
       <maml:para>Supported scripts must be self-contained and must use literal `Register-ArgumentCompleter` arguments for the target metadata and script block. Imported script blocks preserve the temporary module context that contains any helper functions and script-scope state defined by the source script.</maml:para>
+      <maml:para>## COMPATIBLE COMPLETER SCRIPT SPECIFICATION</maml:para>
+      <maml:para>Write standalone completer scripts to this specification if you want them to remain importable through `Import-CompleterScript` without redesign:</maml:para>
+      <maml:para>- Keep the script self-contained. Do not dot-source other scripts. - Keep script scope limited to:   - `Set-StrictMode`   - function definitions   - importer-safe `if` statements   - script-scope `Register-ArgumentCompleter` calls - Do not use top-level assignments, loops, `try`/`catch`, alias bootstrap,   cache initialization, generated completion loading, or external command   execution. - Register completers directly with the built-in   `Register-ArgumentCompleter`; do not wrap registration in custom helper   functions. - Use only these `Register-ArgumentCompleter` parameters:   - `-CommandName`   - `-ParameterName`   - bare `-Native`   - `-ScriptBlock` - Use explicit parameter names only. Positional registration arguments and   argument splatting are not supported. - Keep target metadata literal:   - `-CommandName` and `-ParameterName` may be a single literal string   - a literal string array   - or a literal `@('name', 'name.exe')` array expression - Keep `-ScriptBlock` literal. - Keep `Register-ArgumentCompleter` calls at script scope, not inside nested   functions or nested script blocks. - Move alias bootstrap, cache initialization, generated completion loading, and   other setup into lazy, idempotent helper paths reached from the registered   completion script block.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -416,7 +419,10 @@ git.</maml:para>
     </command:returnValues>
     <maml:alertSet>
       <maml:alert>
-        <maml:para />
+        <maml:para>Importer compatibility and runtime correctness are both required for future
+standalone completer scripts. Validate both the real `pwsh -NoProfile`
+completion behavior and the script's `Import-CompleterScript` compatibility
+before treating a completer as complete.</maml:para>
       </maml:alert>
     </maml:alertSet>
     <command:examples>
@@ -430,6 +436,23 @@ Import-CompleterScript -Path .\7z_completer.ps1 |
           <maml:para>&#x80;</maml:para>
           <maml:para>Imports a supported completer script and registers the imported definitions
 through the module's managed registration API.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Register-ArgumentCompleter -Native -CommandName @('tool', 'tool.exe') -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    Complete-Tool -WordToComplete $wordToComplete -CommandAst $commandAst -CursorPosition $cursorPosition
+}
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>This is the preferred registration shape for an import-compatible native
+completer. Keep setup logic in helper functions that run from `Complete-Tool`
+rather than at script scope.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />

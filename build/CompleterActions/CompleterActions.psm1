@@ -263,6 +263,21 @@ mutating the live runtime completer tables during import. Imported ScriptBlock
 objects keep the temporary module context that contains helper functions and
 script-scope state defined by the source script.
 
+Compatible completer scripts must be self-contained and must keep script scope
+limited to Set-StrictMode, function definitions, importer-safe if statements,
+and script-scope Register-ArgumentCompleter calls. Register-ArgumentCompleter
+usage must use explicit parameter names and only the supported import-time
+surface: -CommandName, -ParameterName, the bare -Native switch, and
+-ScriptBlock.
+
+Target metadata must stay literal. -CommandName and -ParameterName may be a
+single literal string, a literal string array, or a literal @('...') array
+expression. -ScriptBlock must be a literal script block. Positional arguments,
+argument splatting, custom Register-ArgumentCompleter wrappers, dot-sourcing,
+top-level assignments, loops, try/catch blocks, alias bootstrap, cache
+initialization, and external command execution are not import-compatible and
+should be moved into lazy helper paths reached from the registered script block.
+
 .PARAMETER Path
 One or more paths to completer script files. Wildcards are supported.
 
@@ -279,6 +294,20 @@ PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-CompleterRegistra
 
 Imports a supported completer script and immediately registers the imported
 completer definitions through the module's managed registration API.
+
+.NOTES
+Use this compatibility specification when authoring future standalone completer
+scripts for import:
+
+- Keep the script self-contained; do not dot-source other scripts.
+- Register completers at script scope with literal Register-ArgumentCompleter
+  calls.
+- Use only -CommandName, -ParameterName, bare -Native, and -ScriptBlock.
+- Keep -CommandName and -ParameterName literal; use literal @('name','name.exe')
+  when multiple command names are required.
+- Move alias bootstrap, cache initialization, generated completion loading, and
+  tool discovery into lazy helper logic invoked during completion rather than at
+  import time.
 #>
 function Import-CompleterScript
 <#
