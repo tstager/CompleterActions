@@ -79,6 +79,16 @@
       }
     },
     {
+      "label": "Publish_build",
+      "type": "shell",
+      "command": "Invoke-Build -Task Publish_build",
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "echo": false,
+        "showReuseMessage": false
+      }
+    },
+    {
       "label": ".",
       "type": "shell",
       "command": "Invoke-Build -Task .",

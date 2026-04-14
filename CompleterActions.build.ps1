@@ -183,6 +183,22 @@ task external_help {
     Import-MarkdownCommandHelp -Path {$_.FilePath} |
     Export-MamlCommandHelp -OutputFolder $docPath -Force
 }
+task Publish_build {
+
+    if(-not(Get-module -Name Microsoft.PowerShell.SecretManagement -ErrorAction SilentlyContinue)) {
+
+        Import-Module -Name Microsoft.PowerShell.SecretManagement -Force
+    }
+    if(-not(Get-module -Name Microsoft.PowerShell.PSResourceGet -ErrorAction SilentlyContinue)) {
+
+        Import-Module -Name Microsoft.PowerShell.PSResourceGet -Force
+    }
+
+    Unlock-SecretVault -Name Microsoft.PowerShell.SecretStore -Password (Read-Host -Prompt "Enter the password to unlock the secret vault" -AsSecureString)
+    $APIKey = Get-Secret -Name "tstager1428PS" -Vault Microsoft.PowerShell.SecretStore -AsPlainText
+    Publish-PSResource -ApiKey $APIKey -Repository PSGallery -Path $buildpath\$modulename
+
+}
 
 # Synopsis: Default task
 task . build, {
