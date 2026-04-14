@@ -121,7 +121,7 @@ task build clean, external_help, {
         Copy-Item -Path (Join-Path -Path $PSScriptRoot -ChildPath $supportFile) -Destination (Join-Path -Path $modulepath -ChildPath $supportFile) -Force
     }
 
-    if(-not(Test-Path -Path $buildpath\"en-US")) {
+    if (-not(Test-Path -Path $buildpath\"en-US")) {
 
         New-Item -Path $buildpath -ItemType Directory -Value "en-US" -Force
     }
@@ -177,19 +177,19 @@ task Markdown_templates {
 # Synopsis: Updates external help documentation
 task external_help {
 
-
     Measure-PlatyPSMarkdown -Path "$docPath\*.md" |
-    Where-Object Filetype -match 'CommandHelp' |
-    Import-MarkdownCommandHelp -Path {$_.FilePath} |
-    Export-MamlCommandHelp -OutputFolder $docPath -Force
+        Where-Object Filetype -match 'CommandHelp' |
+        Import-MarkdownCommandHelp -Path { $_.FilePath } |
+        Export-MamlCommandHelp -OutputFolder $docPath -Force
 }
+
 task Publish_build {
 
-    if(-not(Get-module -Name Microsoft.PowerShell.SecretManagement -ErrorAction SilentlyContinue)) {
+    if (-not(Get-module -Name Microsoft.PowerShell.SecretManagement -ErrorAction SilentlyContinue)) {
 
         Import-Module -Name Microsoft.PowerShell.SecretManagement -Force
     }
-    if(-not(Get-module -Name Microsoft.PowerShell.PSResourceGet -ErrorAction SilentlyContinue)) {
+    if (-not(Get-module -Name Microsoft.PowerShell.PSResourceGet -ErrorAction SilentlyContinue)) {
 
         Import-Module -Name Microsoft.PowerShell.PSResourceGet -Force
     }
