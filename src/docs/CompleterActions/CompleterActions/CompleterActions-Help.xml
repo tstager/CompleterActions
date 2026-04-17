@@ -340,6 +340,10 @@ git.</maml:para>
         <maml:linkText>Online Version</maml:linkText>
         <command:uri />
       </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>text</maml:linkText>
+        <command:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-CompleterRegistration.md</command:uri>
+      </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
   <command:command>
@@ -462,6 +466,10 @@ rather than at script scope.</maml:para>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
         <command:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>text</maml:linkText>
+        <command:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Import-CompleterScript.md</command:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -760,6 +768,10 @@ supplied through arrays, the same script block is reused for each target.</maml:
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
         <command:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>text</maml:linkText>
+        <command:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Register-CompleterRegistration.md</command:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -1070,6 +1082,10 @@ targets.</maml:para>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
         <command:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>text</maml:linkText>
+        <command:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-CompleterRegistration.md</command:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>

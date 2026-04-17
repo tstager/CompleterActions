@@ -296,3 +296,5 @@ When -PassThru is used
 ## NOTES
 
 ## RELATED LINKS
+
+[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Register-CompleterRegistration.md)

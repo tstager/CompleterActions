@@ -144,7 +144,7 @@ task build clean, external_help, {
         Copyright            = "(c) $((get-date).Year) $author. All rights reserved."
         Path                 = "$modulePath\$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
-        ProjectUri           = ""
+        ProjectUri           = "https://github.com/tstager/CompleterActions"
     }
     Update-ModuleManifest @Data
 }
