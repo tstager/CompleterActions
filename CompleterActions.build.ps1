@@ -16,6 +16,14 @@ $modulepath = "$buildpath\$modulename"
 $docPath = "$PSScriptRoot\src\docs\$modulename"
 $sourceManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psd1"
 $sourceManifestData = Import-PowerShellDataFile -Path $sourceManifestPath
+$resolvedAuthor = if ([string]::IsNullOrWhiteSpace($author)) { $sourceManifestData.Author } else { $author }
+$resolvedProjectUri = $sourceManifestData.PrivateData.PSData.ProjectUri
+$resolvedCopyright = if (-not [string]::IsNullOrWhiteSpace($sourceManifestData.Copyright)) {
+    $sourceManifestData.Copyright
+}
+else {
+    "(c) $((Get-Date).Year) $resolvedAuthor. All rights reserved."
+}
 # Synopsis:
 
 task clean {
@@ -141,11 +149,15 @@ task build clean, external_help, {
 
         CompatiblePSEditions = @($sourceManifestData.CompatiblePSEditions)
         PowerShellVersion    = $sourceManifestData.PowerShellVersion
-        Copyright            = "(c) $((get-date).Year) $author. All rights reserved."
+        Copyright            = $resolvedCopyright
         Path                 = "$modulePath\$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
-        ProjectUri           = "https://github.com/tstager/CompleterActions"
     }
+
+    if (-not [string]::IsNullOrWhiteSpace($resolvedProjectUri)) {
+        $Data['ProjectUri'] = $resolvedProjectUri
+    }
+
     Update-ModuleManifest @Data
 }
 

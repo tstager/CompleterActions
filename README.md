@@ -67,7 +67,21 @@ Use it to:
 
 ## Install / import
 
-Clone the repository and import the module from the repository root:
+After the module is published, install it from the gallery:
+
+```powershell
+Install-PSResource -Name CompleterActions
+Import-Module CompleterActions
+```
+
+If you are using Windows PowerShell's older PowerShellGet tooling:
+
+```powershell
+Install-Module -Name CompleterActions
+Import-Module CompleterActions
+```
+
+For development, clone the repository and import the module from the repository root:
 
 ```powershell
 Import-Module .\CompleterActions.psd1
@@ -84,6 +98,10 @@ For the conceptual import guide, run:
 ```powershell
 Get-Help about_Import_Completers
 ```
+
+Runtime registration discovery and unmanaged-registration removal depend on
+PowerShell runtime internals. The module is tested on PowerShell 7, but future
+engine changes may require maintenance in that discovery path.
 
 ## Quick start
 
@@ -129,7 +147,7 @@ Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $native
 ### Import an existing completer script
 
 ```powershell
-Import-CompleterScript -Path 'C:\Users\Trent\OneDrive\Documents\Powershell\Completers\7z_completer\7z_completer.ps1' |
+Import-CompleterScript -Path .\7z_completer.ps1 |
     Register-CompleterRegistration -PassThru
 ```
 
@@ -261,9 +279,9 @@ Invoke-ScriptAnalyzer -Path .\CompleterActions.psm1 -Settings .\PSScriptAnalyzer
 - `CompleterActions.psd1` is the root manifest and defines the exported public functions, formatting file, and PowerShell/Core compatibility.
 - `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Private` and `src\Public`, initializes module state, and exports the public function set.
 - `src\Public` contains the user-facing command surface:
-   - `Get-CompleterRegistration`
-   - `Import-CompleterScript`
-   - `Register-CompleterRegistration`
+  - `Get-CompleterRegistration`
+  - `Import-CompleterScript`
+  - `Register-CompleterRegistration`
   - `Unregister-CompleterRegistration`
 - `src\Private` contains the runtime/state helpers that resolve targets, manage the module registration table, and inspect/remove runtime registrations.
 

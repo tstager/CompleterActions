@@ -36,15 +36,13 @@ function Add-RuntimeCompleterRegistration
         }
     }
 
-    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
     $runtime = Get-CompleterRuntime
     $propertyName = if ($Target.IsNative) { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
     $dictionary = $runtime.$propertyName
 
     if ($null -eq $dictionary)
     {
-        $runtimeExecutionContextType = $runtime.ExecutionContext.GetType()
-        $runtimeProperty = $runtimeExecutionContextType.GetProperty($propertyName, $bindingFlags)
+        $runtimeProperty = if ($Target.IsNative) { $runtime.NativeProperty } else { $runtime.CustomProperty }
         if ($null -eq $runtimeProperty)
         {
             throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
@@ -54,7 +52,7 @@ function Add-RuntimeCompleterRegistration
         $runtimeProperty.SetValue($runtime.ExecutionContext, $dictionary)
     }
 
-    $dictionary[[string] $Target.RuntimeKey] = $ScriptBlock
+    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
 
-    return $dictionary[[string] $Target.RuntimeKey]
+    return Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey)
 }

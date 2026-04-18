@@ -27,7 +27,7 @@ Author = 'Trent Stager'
 CompanyName = 'Unknown'
 
 # Copyright statement for this module
-Copyright = '(c) 2026 . All rights reserved.'
+Copyright = '(c) Trent Stager. All rights reserved.'
 
 # Description of the functionality provided by this module
 Description = 'Interacts with PowerShell completers'

@@ -115,13 +115,13 @@ function Remove-RuntimeCompleterRegistration
 
         $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
 
-        if (-not $dictionary.ContainsKey($target.RuntimeKey))
+        if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
         {
             return
         }
 
-        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $dictionary[$target.RuntimeKey] -Source 'Discovered'
-        $null = $dictionary.Remove($target.RuntimeKey)
+        $removedScriptBlock = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey
+        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $removedScriptBlock -Source 'Discovered'
 
         return $removedRegistration
     }

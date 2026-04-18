@@ -937,15 +937,13 @@ function Add-RuntimeCompleterRegistration
         }
     }
 
-    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
     $runtime = Get-CompleterRuntime
     $propertyName = if ($Target.IsNative) { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
     $dictionary = $runtime.$propertyName
 
     if ($null -eq $dictionary)
     {
-        $runtimeExecutionContextType = $runtime.ExecutionContext.GetType()
-        $runtimeProperty = $runtimeExecutionContextType.GetProperty($propertyName, $bindingFlags)
+        $runtimeProperty = if ($Target.IsNative) { $runtime.NativeProperty } else { $runtime.CustomProperty }
         if ($null -eq $runtimeProperty)
         {
             throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
@@ -955,9 +953,9 @@ function Add-RuntimeCompleterRegistration
         $runtimeProperty.SetValue($runtime.ExecutionContext, $dictionary)
     }
 
-    $dictionary[[string] $Target.RuntimeKey] = $ScriptBlock
+    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
 
-    return $dictionary[[string] $Target.RuntimeKey]
+    return Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey)
 }
 <#
 .SYNOPSIS
@@ -1212,12 +1210,12 @@ function Find-RuntimeCompleterRegistration
 
     $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
 
-    if ($null -eq $dictionary -or -not $dictionary.ContainsKey($target.RuntimeKey))
+    if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
     {
         return
     }
 
-    return New-CompleterRegistrationRecord -Target $target -ScriptBlock $dictionary[$target.RuntimeKey] -Source 'Discovered'
+    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered'
 }
 <#
 .SYNOPSIS
@@ -1417,20 +1415,7 @@ function Get-CompleterRuntime
     param()
 
     $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-    $engineIntrinsicsField = [System.Management.Automation.EngineIntrinsics].GetField('_context', $bindingFlags)
-
-    if ($null -eq $engineIntrinsicsField)
-    {
-        throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
-    }
-
-    $runtimeExecutionContext = $engineIntrinsicsField.GetValue($ExecutionContext)
-
-    if ($null -eq $runtimeExecutionContext)
-    {
-        throw 'Unable to resolve the current PowerShell execution context.'
-    }
-
+    $runtimeExecutionContext = Resolve-CompleterRuntimeExecutionContext
     $runtimeExecutionContextType = $runtimeExecutionContext.GetType()
     $customArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('CustomArgumentCompleters', $bindingFlags)
     $nativeArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('NativeArgumentCompleters', $bindingFlags)
@@ -1443,11 +1428,45 @@ function Get-CompleterRuntime
     $runtime = [pscustomobject] [ordered] @{
         PSTypeName               = 'CompleterActions.CompleterRuntime'
         ExecutionContext         = $runtimeExecutionContext
+        CustomProperty           = $customArgumentCompletersProperty
         CustomArgumentCompleters = $customArgumentCompletersProperty.GetValue($runtimeExecutionContext)
+        NativeProperty           = $nativeArgumentCompletersProperty
         NativeArgumentCompleters = $nativeArgumentCompletersProperty.GetValue($runtimeExecutionContext)
     }
 
     return $runtime
+}
+<#
+.SYNOPSIS
+Gets a value from a runtime completer dictionary by key.
+#>
+function Get-CompleterRuntimeDictionaryValue
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [object] $Dictionary,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key
+    )
+
+    if (-not (Test-CompleterRuntimeDictionaryKey -Dictionary $Dictionary -Key $Key))
+    {
+        return $null
+    }
+
+    if ($Dictionary -is [System.Collections.IDictionary])
+    {
+        return ([System.Collections.IDictionary] $Dictionary)[$Key]
+    }
+
+    return $Dictionary[$Key]
 }
 <#
 .SYNOPSIS
@@ -1805,6 +1824,44 @@ function New-ImportedCompleterRegistration
 }
 <#
 .SYNOPSIS
+Removes and returns a value from a runtime completer dictionary by key.
+#>
+function Remove-CompleterRuntimeDictionaryValue
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only mutates in-memory runtime dictionary instances for higher-level callers.')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [object] $Dictionary,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key
+    )
+
+    if (-not (Test-CompleterRuntimeDictionaryKey -Dictionary $Dictionary -Key $Key))
+    {
+        return $null
+    }
+
+    if ($Dictionary -is [System.Collections.IDictionary])
+    {
+        $removedValue = ([System.Collections.IDictionary] $Dictionary)[$Key]
+        ([System.Collections.IDictionary] $Dictionary).Remove($Key)
+        return $removedValue
+    }
+
+    $removedValue = $Dictionary[$Key]
+    $null = $Dictionary.Remove($Key)
+
+    return $removedValue
+}
+<#
+.SYNOPSIS
 Removes a managed completer registration from module state.
 
 .DESCRIPTION
@@ -2008,13 +2065,13 @@ function Remove-RuntimeCompleterRegistration
 
         $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
 
-        if (-not $dictionary.ContainsKey($target.RuntimeKey))
+        if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
         {
             return
         }
 
-        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $dictionary[$target.RuntimeKey] -Source 'Discovered'
-        $null = $dictionary.Remove($target.RuntimeKey)
+        $removedScriptBlock = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey
+        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $removedScriptBlock -Source 'Discovered'
 
         return $removedRegistration
     }
@@ -2226,6 +2283,59 @@ function Resolve-CompleterInputObject
             $target = $null
         }
     }
+}
+<#
+.SYNOPSIS
+Resolves PowerShell's internal execution context object used for completer storage.
+
+.DESCRIPTION
+Uses reflection against EngineIntrinsics to access the internal execution
+context object that owns the runtime completer dictionaries.
+
+.PARAMETER EngineIntrinsics
+The EngineIntrinsics instance to inspect. Defaults to the current session's
+ExecutionContext.
+
+.PARAMETER EngineIntrinsicsType
+The EngineIntrinsics type to reflect against. This is primarily exposed for
+internal testing of compatibility guards.
+
+.OUTPUTS
+System.Object
+#>
+function Resolve-CompleterRuntimeExecutionContext
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([object])]
+    param(
+        [Parameter()]
+        [ValidateNotNull()]
+        [object] $EngineIntrinsics = $ExecutionContext,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [type] $EngineIntrinsicsType = [System.Management.Automation.EngineIntrinsics]
+    )
+
+    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
+    $engineIntrinsicsField = $EngineIntrinsicsType.GetField('_context', $bindingFlags)
+
+    if ($null -eq $engineIntrinsicsField)
+    {
+        throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
+    }
+
+    $runtimeExecutionContext = $engineIntrinsicsField.GetValue($EngineIntrinsics)
+
+    if ($null -eq $runtimeExecutionContext)
+    {
+        throw 'Unable to resolve the current PowerShell execution context.'
+    }
+
+    return $runtimeExecutionContext
 }
 <#
 .SYNOPSIS
@@ -2473,6 +2583,69 @@ function Resolve-CompleterTargetList
             break
         }
     }
+}
+<#
+.SYNOPSIS
+Sets a value in a runtime completer dictionary by key.
+#>
+function Set-CompleterRuntimeDictionaryValue
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only mutates in-memory runtime dictionary instances for higher-level callers.')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [object] $Dictionary,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [object] $Value
+    )
+
+    if ($Dictionary -is [System.Collections.IDictionary])
+    {
+        ([System.Collections.IDictionary] $Dictionary)[$Key] = $Value
+        return ([System.Collections.IDictionary] $Dictionary)[$Key]
+    }
+
+    $Dictionary[$Key] = $Value
+
+    return $Dictionary[$Key]
+}
+<#
+.SYNOPSIS
+Tests whether a runtime completer dictionary contains a key.
+#>
+function Test-CompleterRuntimeDictionaryKey
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [object] $Dictionary,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key
+    )
+
+    if ($Dictionary -is [System.Collections.IDictionary])
+    {
+        return ([System.Collections.IDictionary] $Dictionary).Contains($Key)
+    }
+
+    return $Dictionary.ContainsKey($Key)
 }
 <#
 .SYNOPSIS

@@ -34,20 +34,7 @@ function Get-CompleterRuntime
     param()
 
     $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-    $engineIntrinsicsField = [System.Management.Automation.EngineIntrinsics].GetField('_context', $bindingFlags)
-
-    if ($null -eq $engineIntrinsicsField)
-    {
-        throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
-    }
-
-    $runtimeExecutionContext = $engineIntrinsicsField.GetValue($ExecutionContext)
-
-    if ($null -eq $runtimeExecutionContext)
-    {
-        throw 'Unable to resolve the current PowerShell execution context.'
-    }
-
+    $runtimeExecutionContext = Resolve-CompleterRuntimeExecutionContext
     $runtimeExecutionContextType = $runtimeExecutionContext.GetType()
     $customArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('CustomArgumentCompleters', $bindingFlags)
     $nativeArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('NativeArgumentCompleters', $bindingFlags)
@@ -60,7 +47,9 @@ function Get-CompleterRuntime
     $runtime = [pscustomobject] [ordered] @{
         PSTypeName               = 'CompleterActions.CompleterRuntime'
         ExecutionContext         = $runtimeExecutionContext
+        CustomProperty           = $customArgumentCompletersProperty
         CustomArgumentCompleters = $customArgumentCompletersProperty.GetValue($runtimeExecutionContext)
+        NativeProperty           = $nativeArgumentCompletersProperty
         NativeArgumentCompleters = $nativeArgumentCompletersProperty.GetValue($runtimeExecutionContext)
     }
 

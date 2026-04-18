@@ -34,6 +34,23 @@ Describe 'Module Manifest Tests' {
 
         @($manifestData.FormatsToProcess) | Should -Be @('CompleterActions.Format.ps1xml')
     }
+
+    It 'keeps publish metadata populated in the built manifest' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
+        $buildScriptPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'
+        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build\CompleterActions\CompleterActions.psd1'
+
+        $sourceManifest = Import-PowerShellDataFile -Path $sourceManifestPath
+
+        Invoke-Build -File $buildScriptPath build
+
+        $builtManifest = Import-PowerShellDataFile -Path $builtManifestPath
+
+        $sourceManifest.PrivateData.PSData.ProjectUri | Should -Not -BeNullOrEmpty
+        $builtManifest.PrivateData.PSData.ProjectUri | Should -Be $sourceManifest.PrivateData.PSData.ProjectUri
+        $builtManifest.Copyright | Should -Match ([regex]::Escape($sourceManifest.Author))
+    }
 }
 
 Describe 'Module state bootstrap' {
@@ -252,5 +269,51 @@ Describe 'Private completer registration helpers' {
         $result.EnumeratedParameter | Should -BeTrue
         $result.RemovedKey | Should -Be 'completeractionsnativeruntimetest'
         $result.WasRemoved | Should -BeTrue
+    }
+
+    It 'supports IDictionary-based runtime completer dictionary helpers' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $dictionary = [System.Collections.Specialized.OrderedDictionary]::new()
+            $scriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+            }
+
+            Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key 'Git:Checkout' -Value $scriptBlock
+
+            $containsAfterSet = Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key 'Git:Checkout'
+            $stored = Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key 'Git:Checkout'
+            $removed = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key 'Git:Checkout'
+            $containsAfterRemove = Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key 'Git:Checkout'
+
+            [pscustomobject]@{
+                ContainsAfterSet    = $containsAfterSet
+                StoredScriptText    = $stored.ToString()
+                RemovedScriptText   = $removed.ToString()
+                ContainsAfterRemove = $containsAfterRemove
+                RemainingCount      = $dictionary.Count
+            }
+        }
+
+        $result.ContainsAfterSet | Should -BeTrue
+        $result.StoredScriptText | Should -Match 'param'
+        $result.RemovedScriptText | Should -Match 'param'
+        $result.ContainsAfterRemove | Should -BeFalse
+        $result.RemainingCount | Should -Be 0
+    }
+
+    It 'throws a clear error when runtime execution context internals are unavailable' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        {
+            & $module {
+                Resolve-CompleterRuntimeExecutionContext -EngineIntrinsicsType ([pscustomobject]) -EngineIntrinsics ([pscustomobject]@{})
+            }
+        } | Should -Throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
     }
 }
