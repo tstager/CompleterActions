@@ -206,9 +206,8 @@ task Publish_build {
         Import-Module -Name Microsoft.PowerShell.PSResourceGet -Force
     }
 
-    Unlock-SecretVault -Name Microsoft.PowerShell.SecretStore -Password (Read-Host -Prompt "Enter the password to unlock the secret vault" -AsSecureString)
-    $APIKey = Get-Secret -Name "tstager1428PS" -Vault Microsoft.PowerShell.SecretStore -AsPlainText
-    Publish-PSResource -ApiKey $APIKey -Repository PSGallery -Path $buildpath\$modulename
+
+    Publish-PSResource -ApiKey $env:GalleryAPI -Repository PSGallery -Path $buildpath\$modulename
 
 }
 
