@@ -197,15 +197,6 @@ task external_help {
 
 task Publish_build {
 
-    if (-not(Get-module -Name Microsoft.PowerShell.SecretManagement -ErrorAction SilentlyContinue)) {
-
-        Import-Module -Name Microsoft.PowerShell.SecretManagement -Force
-    }
-    if (-not(Get-module -Name Microsoft.PowerShell.PSResourceGet -ErrorAction SilentlyContinue)) {
-
-        Import-Module -Name Microsoft.PowerShell.PSResourceGet -Force
-    }
-
 
     Publish-PSResource -ApiKey $env:GalleryAPI -Repository PSGallery -Path $buildpath\$modulename
 
