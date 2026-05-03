@@ -1,109 +1,78 @@
 # CompleterActions
 
-`CompleterActions` is a PowerShell module for registering, discovering, querying, and removing PowerShell argument completers in a consistent way.
+<p align="center">
+  <img src="src/Assets/CompleterActions.png" alt="CompleterActions logo" width="560" />
+</p>
 
-It wraps `Register-ArgumentCompleter` with module-managed registration tracking, while also discovering completers that were registered directly in the current PowerShell runtime.
+<p align="center"><strong>PowerShell completion scripts for managed registrations, runtime discovery, and safe removal.</strong></p>
+
+<p align="center">
+    <a href="https://learn.microsoft.com/powershell/"> <img src="https://img.shields.io/badge/PowerShell-7%2B-012456?logo=powershell&logoColor=white" alt="PowerShell 7+" /> </a>
+    <a href="https://learn.microsoft.com/powershell/scripting/install/powershell-core-support"> <img src="https://img.shields.io/badge/Edition-Core-0078D4?logo=powershell&logoColor=white" alt="PowerShell Core only" /> </a>
+    <a href="LICENSE.md"> <img src="https://img.shields.io/badge/License-MIT-2da44e.svg" alt="MIT License" /> </a>
+</p>
+
+`CompleterActions` is a PowerShell 7+ / Core-only module for registering, discovering, querying, and removing PowerShell argument completers in a consistent way.
 
 > [!IMPORTANT]
 > This module targets **PowerShell 7+ / PowerShell Core only**. The manifest declares `CompatiblePSEditions = @('Core')` and `PowerShellVersion = '7.0'`.
 
-## Features
+## At a glance
 
-- Manage both **parameter completers** and **native command completers**
-- Import supported completer scripts into **managed registration input objects**
-- Query **module-managed** registrations and **runtime-discovered** registrations
+- Manage both parameter completers and native command completers
+- Import supported completer scripts into managed registration input objects
+- Query module-managed registrations and runtime-discovered registrations
 - Remove managed registrations cleanly from both runtime and module state
 - Require explicit opt-in before removing unmanaged runtime registrations
 - Return rich registration objects with default table formatting
 - Support property-name pipeline binding and paging for discovery scenarios
 
-## Public commands
+## Command map
 
-### `Get-CompleterRegistration`
+| Command | What it does |
+| --- | --- |
+| `Get-CompleterRegistration` | Lists completer registrations known to the module or discovered from the current runtime |
+| `Import-CompleterScript` | Converts supported standalone completer scripts into objects that can be piped to `Register-CompleterRegistration -InputObject` |
+| `Register-CompleterRegistration` | Registers a managed completer and records it in module state |
+| `Unregister-CompleterRegistration` | Removes completer registrations from runtime and, when applicable, from module state |
 
-Lists completer registrations known to the module or discovered from the current runtime.
+## Start here
 
-Use it to:
-
-- list all registrations
-- query by registration key
-- query native completers by command name
-- query parameter completers by command + parameter
-- limit results to managed-only or discovered-only entries
-
-### `Import-CompleterScript`
-
-Imports supported completer scripts into objects that can be piped directly to
-`Register-CompleterRegistration -InputObject`.
-
-Use it to:
-
-- import self-contained completer scripts without mutating the live runtime
-- preserve helper functions and script-scope state captured by the imported script block
-- reject unsupported script shapes before execution
-- bridge existing standalone completer scripts into this module's managed workflow
-
-### `Register-CompleterRegistration`
-
-Registers a managed completer and records it in module state.
-
-Use it to:
-
-- register parameter completers
-- register native completers
-- replace an existing runtime or managed registration with `-Force`
-- return the created registration record with `-PassThru`
-
-### `Unregister-CompleterRegistration`
-
-Removes completer registrations from runtime and, when applicable, from module-managed state.
-
-Use it to:
-
-- remove managed registrations
-- remove runtime-only registrations with `-AllowUnmanaged`
-- work by key, by command target, or from pipeline input
-- return removed records with `-PassThru`
-
-## Install / import
-
-After the module is published, install it from the gallery:
+### Install from the gallery
 
 ```powershell
 Install-PSResource -Name CompleterActions
 Import-Module CompleterActions
 ```
 
-If you are using Windows PowerShell's older PowerShellGet tooling:
-
-```powershell
-Install-Module -Name CompleterActions
-Import-Module CompleterActions
-```
-
-For development, clone the repository and import the module from the repository root:
+### Import from the repository during development
 
 ```powershell
 Import-Module .\CompleterActions.psd1
 ```
 
-Or import the built module output after running the build:
+### Import the built module output
 
 ```powershell
 Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```
 
-For the conceptual import guide, run:
+### Read the conceptual import guide
 
 ```powershell
 Get-Help about_Import_Completers
 ```
 
-Runtime registration discovery and unmanaged-registration removal depend on
-PowerShell runtime internals. The module is tested on PowerShell 7, but future
-engine changes may require maintenance in that discovery path.
+Runtime registration discovery and unmanaged-registration removal depend on PowerShell runtime internals. The module is tested on PowerShell 7, but future engine changes may require maintenance in that discovery path.
 
-## Quick start
+## Typical flow
+
+1. Register a completer directly, or import an existing completer script into managed input objects.
+2. Inspect registrations with `Get-CompleterRegistration`.
+3. Replace or remove registrations when the target changes.
+4. Use `-AllowUnmanaged` only when removing runtime registrations that were not created by the module.
+
+## Examples
 
 ### Register a parameter completer
 
@@ -151,9 +120,7 @@ Import-CompleterScript -Path .\7z_completer.ps1 |
     Register-CompleterRegistration -PassThru
 ```
 
-## Common flows
-
-### Get registrations
+### Query registrations
 
 ```powershell
 # All known registrations
@@ -172,19 +139,6 @@ Get-CompleterRegistration -ManagedOnly
 Get-CompleterRegistration -DiscoveredOnly
 ```
 
-### Register and inspect
-
-```powershell
-$registration = Register-CompleterRegistration `
-    -CommandName Invoke-DemoTool `
-    -ParameterName Name `
-    -ScriptBlock $scriptBlock `
-    -PassThru
-
-$registration | Format-List *
-Get-CompleterRegistration -Key $registration.RegistrationKey
-```
-
 ### Replace an existing registration
 
 ```powershell
@@ -195,7 +149,7 @@ Register-CompleterRegistration `
     -Force
 ```
 
-### Unregister
+### Unregister registrations
 
 ```powershell
 # Remove a managed registration
@@ -231,7 +185,7 @@ Get-CompleterRegistration -Skip 10 -First 10 -IncludeTotalCount
 
 Pipeline highlights:
 
-- `Get-CompleterRegistration` supports property-name binding for key/command/parameter lookups
+- `Get-CompleterRegistration` supports property-name binding for key, command, and parameter lookups
 - `Import-CompleterScript` emits input objects that are ready for `Register-CompleterRegistration -InputObject`
 - `Register-CompleterRegistration` can accept input objects that describe a target and expose a `ScriptBlock`
 - `Unregister-CompleterRegistration` can accept pipeline input directly from `Get-CompleterRegistration`
@@ -283,11 +237,11 @@ Invoke-ScriptAnalyzer -Path .\CompleterActions.psm1 -Settings .\PSScriptAnalyzer
   - `Import-CompleterScript`
   - `Register-CompleterRegistration`
   - `Unregister-CompleterRegistration`
-- `src\Private` contains the runtime/state helpers that resolve targets, manage the module registration table, and inspect/remove runtime registrations.
+- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations.
 
 ### Runtime internals caveat
 
-The module currently discovers live completer registrations by reflecting into PowerShell runtime internals to access the underlying completer dictionaries. That makes the current implementation practical and useful, but it also means runtime discovery depends on non-public engine details and may need maintenance if PowerShell internals change in a future release.
+The module discovers live completer registrations by reflecting into PowerShell runtime internals to access the underlying completer dictionaries. That makes the current implementation practical and useful, but it also means runtime discovery depends on non-public engine details and may need maintenance if PowerShell internals change in a future release.
 
 ## Development notes
 
