@@ -1,15 +1,15 @@
 # CompleterActions
 
 <p align="center">
-  <img src="src/Assets/CompleterActions.png" alt="CompleterActions logo" width="560" />
+    <img src="src/Assets/CompleterActions.png" alt="CompleterActions logo" width="560" />
 </p>
 
 <p align="center"><strong>PowerShell completion scripts for managed registrations, runtime discovery, and safe removal.</strong></p>
 
 <p align="center">
-    <a href="https://learn.microsoft.com/powershell/"> <img src="https://img.shields.io/badge/PowerShell-7%2B-012456?logo=powershell&logoColor=white" alt="PowerShell 7+" /> </a>
-    <a href="https://learn.microsoft.com/powershell/scripting/install/powershell-core-support"> <img src="https://img.shields.io/badge/Edition-Core-0078D4?logo=powershell&logoColor=white" alt="PowerShell Core only" /> </a>
-    <a href="LICENSE.md"> <img src="https://img.shields.io/badge/License-MIT-2da44e.svg" alt="MIT License" /> </a>
+    <a href="https://learn.microsoft.com/powershell/"><img src="https://img.shields.io/badge/PowerShell-7%2B-012456?logo=powershell&logoColor=white" alt="PowerShell 7+" /></a>
+    <a href="https://learn.microsoft.com/powershell/scripting/install/powershell-core-support"><img src="https://img.shields.io/badge/Edition-Core-0078D4?logo=powershell&logoColor=white" alt="PowerShell Core only" /></a>
+    <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-MIT-2da44e.svg" alt="MIT License" /></a>
 </p>
 
 `CompleterActions` is a PowerShell 7+ / Core-only module for registering, discovering, querying, and removing PowerShell argument completers in a consistent way.
