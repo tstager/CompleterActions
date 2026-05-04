@@ -18,6 +18,7 @@ $sourceManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psd1
 $sourceManifestData = Import-PowerShellDataFile -Path $sourceManifestPath
 $resolvedAuthor = if ([string]::IsNullOrWhiteSpace($author)) { $sourceManifestData.Author } else { $author }
 $resolvedProjectUri = $sourceManifestData.PrivateData.PSData.ProjectUri
+$resolvedIconUri = $sourceManifestData.PrivateData.PSData.IconUri
 $resolvedCopyright = if (-not [string]::IsNullOrWhiteSpace($sourceManifestData.Copyright)) {
     $sourceManifestData.Copyright
 }
@@ -156,6 +157,10 @@ task build clean, external_help, {
 
     if (-not [string]::IsNullOrWhiteSpace($resolvedProjectUri)) {
         $Data['ProjectUri'] = $resolvedProjectUri
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($resolvedIconUri)) {
+        $Data['IconUri'] = $resolvedIconUri
     }
 
     Update-ModuleManifest @Data

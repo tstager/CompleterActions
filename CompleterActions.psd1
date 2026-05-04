@@ -12,7 +12,7 @@
 RootModule = 'CompleterActions.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.1.1'
+ModuleVersion = '1.1.2'
 
 # Supported PSEditions
 CompatiblePSEditions = @('Core')
@@ -112,7 +112,7 @@ PrivateData = @{
         ProjectUri = 'https://github.com/tstager/CompleterActions'
 
         # A URL to an icon representing this module.
-        # IconUri = ''
+        IconUri = 'https://raw.githubusercontent.com/tstager/CompleterActions/main/src/Assets/CompleterActions.png'
 
         # ReleaseNotes of this module
         # ReleaseNotes = ''
