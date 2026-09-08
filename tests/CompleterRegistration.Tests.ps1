@@ -6,7 +6,6 @@ Describe 'Module Manifest Tests' {
         Test-Path -Path $moduleManifestPath | Should -Be $true
         $moduleManifest | Should -Not -BeNullOrEmpty
         $moduleManifest.Name | Should -Be $moduleName
-        $moduleManifest.Version.ToString() | Should -Be '1.0.0'
         $moduleManifest.RootModule | Should -Be 'CompleterActions.psm1'
         $moduleManifest.CompatiblePSEditions | Should -Be @('Core')
         $moduleManifest.PowerShellVersion | Should -Be '7.0'
@@ -35,16 +34,50 @@ Describe 'Module Manifest Tests' {
         @($manifestData.FormatsToProcess) | Should -Be @('CompleterActions.Format.ps1xml')
     }
 
+    It 'declares a module version that satisfies the release policy' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
+        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
+
+        $sourceManifest = Import-PowerShellDataFile -Path $sourceManifestPath
+        $builtManifest = Import-PowerShellDataFile -Path $builtManifestPath
+
+        $sourceVersion = $null
+        [version]::TryParse($sourceManifest.ModuleVersion, [ref] $sourceVersion) | Should -BeTrue
+        $builtManifest.ModuleVersion | Should -Be $sourceManifest.ModuleVersion
+
+        $gitCommand = Get-Command -Name 'git' -ErrorAction SilentlyContinue
+        if ($null -eq $gitCommand)
+        {
+            Set-ItResult -Skipped -Because 'git is not available to enumerate release tags'
+        }
+
+        $tagVersions = @(
+            & $gitCommand -C $repoRoot tag -l 'v*' 2>$null |
+                ForEach-Object {
+                    $tagVersion = $null
+                    if ([version]::TryParse($_.Substring(1), [ref] $tagVersion))
+                    {
+                        $tagVersion
+                    }
+                }
+        )
+
+        if ($tagVersions.Count -eq 0)
+        {
+            Set-ItResult -Skipped -Because 'no v* release tags are reachable locally'
+        }
+
+        $highestTagVersion = $tagVersions | Sort-Object | Select-Object -Last 1
+        $sourceVersion | Should -BeGreaterOrEqual $highestTagVersion
+    }
+
     It 'keeps publish metadata populated in the built manifest' {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
-        $buildScriptPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'
-        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build\CompleterActions\CompleterActions.psd1'
+        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
 
         $sourceManifest = Import-PowerShellDataFile -Path $sourceManifestPath
-
-        Invoke-Build -File $buildScriptPath build
-
         $builtManifest = Import-PowerShellDataFile -Path $builtManifestPath
 
         $sourceManifest.PrivateData.PSData.ProjectUri | Should -Not -BeNullOrEmpty

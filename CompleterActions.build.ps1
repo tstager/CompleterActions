@@ -10,10 +10,11 @@ param (
 )
 
 
-$modulename = $PSScriptRoot.Split("\")[-1]
-$buildpath = "$PSScriptRoot\build"
-$modulepath = "$buildpath\$modulename"
-$docPath = "$PSScriptRoot\src\docs\$modulename"
+$modulename = Split-Path -Path $PSScriptRoot -Leaf
+$buildpath = Join-Path -Path $PSScriptRoot -ChildPath 'build'
+$modulepath = Join-Path -Path $buildpath -ChildPath $modulename
+$sourceRoot = Join-Path -Path $PSScriptRoot -ChildPath 'src'
+$docPath = Join-Path -Path (Join-Path -Path $sourceRoot -ChildPath 'docs') -ChildPath $modulename
 $sourceManifestPath = Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psd1"
 $sourceManifestData = Import-PowerShellDataFile -Path $sourceManifestPath
 $resolvedAuthor = if ([string]::IsNullOrWhiteSpace($author)) { $sourceManifestData.Author } else { $author }
@@ -34,7 +35,7 @@ task clean {
         Remove-Module -Name $modulename -Force
     }
 
-    if (Test-Path -Path "$buildpath\$modulename") {
+    if (Test-Path -Path $modulepath) {
 
         Remove-item -Path $modulepath -Recurse -Force
 
@@ -43,18 +44,24 @@ task clean {
 }
 task build clean, external_help, {
 
-    $public = Get-childitem -Path "$PSScriptRoot\src\Public" -Filter *.ps1 -File
-    $files = Get-ChildItem -Path "$PSScriptRoot\src\Public", "$PSScriptRoot\src\Private", "$PSScriptRoot\src\Classes" -Filter *.ps1 -File
-    $moduleFilePath = "$modulepath\$modulename.psm1"
+    $sourceFolders = @(
+        @('Public', 'Private', 'Classes') |
+            ForEach-Object { Join-Path -Path $sourceRoot -ChildPath $_ } |
+            Where-Object { Test-Path -Path $_ -PathType Container }
+    )
+    $public = Get-childitem -Path (Join-Path -Path $sourceRoot -ChildPath 'Public') -Filter *.ps1 -File
+    $files = Get-ChildItem -Path $sourceFolders -Filter *.ps1 -File
+    $moduleFilePath = Join-Path -Path $modulepath -ChildPath "$modulename.psm1"
+    $moduleHelpPath = Join-Path -Path $modulepath -ChildPath 'en-US'
     $formatFiles = @($sourceManifestData.FormatsToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $typeFiles = @($sourceManifestData.TypesToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $usingStatements = [System.Collections.Generic.List[string]]::new()
     $sourceDotSourcingPattern = '^\s*\.\s+[''\"]?(?:\.\\|\.\/)?src[\\/].+\.ps1[''\"]?\s*$'
 
 
-    if (-not(Test-Path -Path "$modulepath\en-US")) {
+    if (-not(Test-Path -Path $moduleHelpPath)) {
 
-        new-item -Path "$modulepath\en-US" -ItemType Directory
+        new-item -Path $moduleHelpPath -ItemType Directory
 
     }
 
@@ -123,25 +130,25 @@ task build clean, external_help, {
 
     }
 
-    Copy-Item -Path "$PSScriptRoot\$modulename.psd1" -Destination $modulepath
+    Copy-Item -Path $sourceManifestPath -Destination $modulepath
 
     foreach ($supportFile in @($formatFiles + $typeFiles)) {
 
         Copy-Item -Path (Join-Path -Path $PSScriptRoot -ChildPath $supportFile) -Destination (Join-Path -Path $modulepath -ChildPath $supportFile) -Force
     }
 
-    if (-not(Test-Path -Path $buildpath\"en-US")) {
+    if (-not(Test-Path -Path (Join-Path -Path $buildpath -ChildPath 'en-US'))) {
 
         New-Item -Path $buildpath -ItemType Directory -Value "en-US" -Force
     }
 
-    Copy-Item -Path "$docPath\$modulename\$modulename-help.xml" -Destination "$modulepath\en-US\$modulename-help.xml" -Force
+    Copy-Item -Path (Join-Path -Path (Join-Path -Path $docPath -ChildPath $modulename) -ChildPath "$modulename-help.xml") -Destination (Join-Path -Path $moduleHelpPath -ChildPath "$modulename-help.xml") -Force
 
     $aboutHelpSourcePath = Join-Path -Path $PSScriptRoot -ChildPath 'en-US'
     if (Test-Path -Path $aboutHelpSourcePath) {
         Get-ChildItem -Path $aboutHelpSourcePath -Filter 'about_*.help.txt' -File |
             ForEach-Object {
-                Copy-Item -Path $_.FullName -Destination (Join-Path -Path "$modulepath\en-US" -ChildPath $_.Name) -Force
+                Copy-Item -Path $_.FullName -Destination (Join-Path -Path $moduleHelpPath -ChildPath $_.Name) -Force
             }
     }
 
@@ -151,7 +158,7 @@ task build clean, external_help, {
         CompatiblePSEditions = @($sourceManifestData.CompatiblePSEditions)
         PowerShellVersion    = $sourceManifestData.PowerShellVersion
         Copyright            = $resolvedCopyright
-        Path                 = "$modulePath\$moduleName.psd1"
+        Path                 = Join-Path -Path $modulePath -ChildPath "$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
     }
 
@@ -168,7 +175,7 @@ task build clean, external_help, {
 
 task Markdown_templates {
 
-    $templatePath = "$PSScriptRoot\src\Docs"
+    $templatePath = Join-Path -Path $sourceRoot -ChildPath 'docs'
 
     # Ensure the template directory exists
     if (-not (Test-Path -Path $templatePath)) {
@@ -182,7 +189,7 @@ task Markdown_templates {
 
     # Import the module if not already loaded
     if (-not (Get-Module -Name $modulename -ErrorAction SilentlyContinue)) {
-        Import-Module -Name "$PSScriptRoot\$modulename.psm1" -Force
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psm1") -Force
     }
 
     # Create markdown templates for all commands in the module using the new PlatyPS 1.0 API
@@ -194,16 +201,39 @@ task Markdown_templates {
 # Synopsis: Updates external help documentation
 task external_help {
 
-    Measure-PlatyPSMarkdown -Path "$docPath\*.md" |
+    Measure-PlatyPSMarkdown -Path (Join-Path -Path $docPath -ChildPath '*.md') |
         Where-Object Filetype -match 'CommandHelp' |
         Import-MarkdownCommandHelp -Path { $_.FilePath } |
         Export-MamlCommandHelp -OutputFolder $docPath -Force
 }
 
+# Synopsis: Asserts that the tag on HEAD (if any) matches the source manifest ModuleVersion
+task release_check {
+
+    if (-not (Get-Command -Name git -ErrorAction SilentlyContinue)) {
+        throw "release_check: git is not available, so the HEAD tag cannot be compared with ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+    }
+
+    $headTag = git -C $PSScriptRoot describe --tags --exact-match 2>$null
+
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headTag)) {
+        Write-Build Yellow "release_check: HEAD is not tagged; ModuleVersion '$($sourceManifestData.ModuleVersion)' was not compared with a tag."
+        return
+    }
+
+    $expectedTag = "v$($sourceManifestData.ModuleVersion)"
+
+    if ($headTag -ne $expectedTag) {
+        throw "release_check: HEAD tag '$headTag' does not match the source manifest ModuleVersion '$($sourceManifestData.ModuleVersion)' (expected tag '$expectedTag')."
+    }
+
+    Write-Build Green "release_check: HEAD tag '$headTag' matches ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+}
+
 task Publish_build {
 
 
-    Publish-PSResource -ApiKey $env:GalleryAPI -Repository PSGallery -Path $buildpath\$modulename
+    Publish-PSResource -ApiKey $env:GalleryAPI -Repository PSGallery -Path $modulepath
 
 }
 
