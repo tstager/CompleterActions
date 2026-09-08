@@ -537,6 +537,19 @@ function Test-CompleterScriptAst
         }
     }
 
+    if ($null -ne $Ast.ScriptRequirements)
+    {
+        if ($Ast.ScriptRequirements.RequiredModules.Count -gt 0)
+        {
+            throw "Completer script '$LiteralPath' uses a '#requires -Modules' directive. Import-CompleterScript does not support '#requires -Modules' because the required modules are imported, and their top-level code executes, when the script is dot-sourced."
+        }
+
+        if ($Ast.ScriptRequirements.RequiredAssemblies.Count -gt 0)
+        {
+            throw "Completer script '$LiteralPath' uses a '#requires -Assembly' directive. Import-CompleterScript does not support '#requires -Assembly' because the required assemblies are loaded when the script is dot-sourced."
+        }
+    }
+
     foreach ($namedBlock in @($Ast.ParamBlock, $Ast.BeginBlock, $Ast.ProcessBlock, $Ast.DynamicParamBlock, $Ast.CleanBlock))
     {
         if ($null -ne $namedBlock)

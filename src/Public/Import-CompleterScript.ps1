@@ -27,6 +27,8 @@ argument splatting, custom Register-ArgumentCompleter wrappers, dot-sourcing,
 top-level assignments, loops, try/catch blocks, alias bootstrap, cache
 initialization, and external command execution are not import-compatible and
 should be moved into lazy helper paths reached from the registered script block.
+'#requires -Modules', '#requires -Assembly', 'using module', and 'using
+assembly' are rejected because they load code when the script is dot-sourced.
 
 .PARAMETER Path
 One or more paths to completer script files. Wildcards are supported.

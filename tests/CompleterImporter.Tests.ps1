@@ -540,4 +540,62 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
         $imported.Count | Should -Be 2
         @($imported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
     }
+
+    Context 'script requirements' {
+        BeforeEach {
+            $script:RequiresProbeModulePath = Join-Path -Path $TestDrive -ChildPath 'CompleterActionsRequiresProbe.psm1'
+            Set-Content -LiteralPath $script:RequiresProbeModulePath -Value '$env:COMPLETERACTIONS_IMPORT_PROBE = ''executed''' -Encoding utf8
+        }
+
+        AfterEach {
+            Remove-Module -Name 'CompleterActionsRequiresProbe' -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'rejects a #requires -Modules directive before the required module executes' {
+            $adversarial = Write-AdversarialImportScript -Name 'requires modules directive' -Script (
+                "#requires -Modules '{0}'`n`n{{Registration}}" -f $script:RequiresProbeModulePath
+            )
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+
+            {
+                Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+            } | Should -Throw '*uses a ''#requires -Modules'' directive*'
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+            Get-Module -Name 'CompleterActionsRequiresProbe' | Should -BeNullOrEmpty
+            Get-CompleterRegistration -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'confirms the #requires -Modules probe fires when the script runs without validation' {
+            $adversarial = Write-AdversarialImportScript -Name 'requires modules directive' -Script (
+                "#requires -Modules '{0}'`n`n{{Registration}}" -f $script:RequiresProbeModulePath
+            )
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+
+            $null = @(& { . $adversarial.ScriptPath })
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeTrue
+        }
+
+        It 'rejects a #requires -Assembly directive' {
+            $adversarial = Write-AdversarialImportScript -Name 'requires assembly directive' -Script (
+                "#requires -Assembly '{0}'`n`n{{Registration}}" -f (Join-Path -Path $TestDrive -ChildPath 'CompleterActionsRequiresProbe.dll')
+            )
+
+            {
+                Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+            } | Should -Throw '*uses a ''#requires -Assembly'' directive*'
+        }
+
+        It 'still imports a script with a #requires -Version directive' {
+            $supported = Write-AdversarialImportScript -Name 'requires version directive' -Script "#requires -Version 7.0`n`n{Registration}"
+
+            $imported = @(Import-CompleterScript -LiteralPath $supported.ScriptPath)
+
+            $imported.Count | Should -Be 1
+            $imported[0].Key | Should -Be 'test-importprobetool:name'
+        }
+    }
 }
