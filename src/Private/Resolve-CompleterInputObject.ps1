@@ -134,13 +134,13 @@ function Resolve-CompleterInputObject
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
                 }
-                elseif ($runtimeKey -match ':')
+                elseif (Test-CompleterNativeKeyShape -Key $runtimeKey)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
                 }
                 else
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
                 }
             }
             elseif (-not [string]::IsNullOrWhiteSpace($keyValue))
@@ -153,13 +153,13 @@ function Resolve-CompleterInputObject
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue
                 }
-                elseif ($keyValue -match ':')
+                elseif (Test-CompleterNativeKeyShape -Key $keyValue)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
                 else
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
                 }
             }
             else

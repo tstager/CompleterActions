@@ -51,13 +51,13 @@ function Resolve-CompleterTargetList
         {
             foreach ($keyItem in $Key)
             {
-                if ($keyItem -match ':')
+                if (Test-CompleterNativeKeyShape -Key $keyItem)
                 {
-                    Resolve-CompleterTarget -RuntimeKey $keyItem
+                    Resolve-CompleterTarget -RuntimeKey $keyItem -Native
                     continue
                 }
 
-                Resolve-CompleterTarget -RuntimeKey $keyItem -Native
+                Resolve-CompleterTarget -RuntimeKey $keyItem
             }
 
             break

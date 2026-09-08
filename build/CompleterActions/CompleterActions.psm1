@@ -7,12 +7,22 @@ Returns completer registration records for all registrations, specific
 registration keys, native command completers, or command parameter completers.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
-to the same target. The command accepts arrays for key, command, and parameter
-lookup scenarios and supports property-name pipeline binding for key-based and
-target-based lookups.
+to the same target and the managed record still matches the live runtime value.
+When the runtime registration was replaced outside this module, the live
+discovered value is returned with State 'Conflicted' instead; -ManagedOnly
+returns the managed record with State 'Stale'. When the runtime registration
+was removed outside this module, the managed record is returned with State
+'Stale' and IsRuntimeRegistered false. The command accepts arrays for key,
+command, and parameter lookup scenarios and supports property-name pipeline
+binding for key-based and target-based lookups.
 
 .PARAMETER Key
-Gets the registrations that match one or more registration keys.
+Gets the registrations that match one or more registration keys. A key without
+a colon is treated as a native command. A key with a colon is treated as a
+'Command:Parameter' target unless the text after its last colon contains a
+path separator, in which case it is treated as a native command path such as
+'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
+the key shape is ambiguous.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter
@@ -33,7 +43,10 @@ Returns only registrations discovered from the current PowerShell runtime.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-Returns CompleterActions.CompleterRegistration records.
+Returns CompleterActions.CompleterRegistration records. The State property is
+'Active' for records that describe the live runtime value, 'Stale' for managed
+records that no longer match the runtime, and 'Conflicted' for live runtime
+values that replaced a managed registration outside this module.
 
 .EXAMPLE
 PS> Get-CompleterRegistration -CommandName 'git' -Native
@@ -164,7 +177,20 @@ function Get-CompleterRegistration
                     continue
                 }
 
-                $registrationsByKey[[string] $registration.Key] = $registration
+                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
+
+                if ($registrationState.ManagedState -eq 'Active')
+                {
+                    $registrationsByKey[[string] $registration.Key] = $registration
+                }
+                elseif ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration)
+                {
+                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale'
+                }
+                else
+                {
+                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                }
             }
 
             foreach ($registration in $discoveredRegistrations)
@@ -174,24 +200,28 @@ function Get-CompleterRegistration
                     continue
                 }
 
+                if ($registrationsByKey.Contains([string] $registration.Key))
+                {
+                    continue
+                }
+
                 if ($DiscoveredOnly)
                 {
-                    if ($registrationsByKey.Contains([string] $registration.Key))
+                    $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
+
+                    if ($registrationState.ManagedState -eq 'Active')
                     {
                         continue
                     }
 
-                    $managedMatch = Find-ManagedCompleterRegistration -Key $registration.Key
-                    if ($null -ne $managedMatch)
+                    if ($registrationState.ManagedState -eq 'Stale')
                     {
+                        $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                         continue
                     }
                 }
 
-                if (-not $registrationsByKey.Contains([string] $registration.Key))
-                {
-                    $registrationsByKey[[string] $registration.Key] = $registration
-                }
+                $registrationsByKey[[string] $registration.Key] = $registration
             }
         }
         catch
@@ -277,6 +307,8 @@ argument splatting, custom Register-ArgumentCompleter wrappers, dot-sourcing,
 top-level assignments, loops, try/catch blocks, alias bootstrap, cache
 initialization, and external command execution are not import-compatible and
 should be moved into lazy helper paths reached from the registered script block.
+'#requires -Modules', '#requires -Assembly', 'using module', and 'using
+assembly' are rejected because they load code when the script is dot-sourced.
 
 .PARAMETER Path
 One or more paths to completer script files. Wildcards are supported.
@@ -416,15 +448,27 @@ Registers a managed PowerShell argument completer.
 Registers native or command-parameter argument completers with
 Register-ArgumentCompleter and records the registrations in the module's managed
 state. Existing managed or runtime registrations are preserved unless you use
--Force to replace them. The command supports array inputs for command and
-parameter targets, and it can also accept pipeline InputObject values that
-describe the target and expose a ScriptBlock property.
+-Force to replace them. Registering the same script for a target that is already
+managed is idempotent only while the managed record still matches the live
+runtime value; when the runtime registration was replaced or removed outside
+this module, the managed record is stale and the command fails until you
+reconcile it with -Force. Each target is updated transactionally: if the
+runtime or managed write fails, the previous runtime and managed state are
+restored and any rollback failure is reported alongside the original error. The
+command supports array inputs for command and parameter targets, and it can
+also accept pipeline InputObject values that describe the target and expose a
+ScriptBlock property.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
 expose target metadata through Key, RegistrationKey, RuntimeKey, or
 CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
-property whose value is a script block.
+property whose value is a script block. When only a key is supplied and no
+IsNative/Native property is present, a key without a colon is treated as a
+native command, and a key with a colon is treated as a 'Command:Parameter'
+target unless the text after its last colon contains a path separator, in which
+case it is treated as a native command path such as 'C:\tools\example.exe'. An
+explicit IsNative/Native property always wins.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be registered.
@@ -441,8 +485,9 @@ Provides the completer script block to register. When multiple targets are
 supplied through arrays, the same script block is reused for each target.
 
 .PARAMETER Force
-Removes an existing managed or runtime registration for the same target before
-registering the new completer.
+Replaces an existing managed or runtime registration for the same target with
+the new completer, including a stale managed record whose live runtime value was
+changed outside this module.
 
 .PARAMETER PassThru
 Returns the managed registration records that were created or reused.
@@ -535,16 +580,22 @@ function Register-CompleterRegistration
                 $targetImportModule = $resolvedInput.ImportModule
                 $existingManagedRegistration = $null
                 $existingRuntimeRegistration = $null
-                $removedManagedRegistration = $null
-                $removedRuntimeRegistration = $null
+                $registration = $null
+                $rollbackError = $null
 
                 try
                 {
-                    $existingManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-                    $existingRuntimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                    $existingManagedRegistration = $registrationState.ManagedRegistration
+                    $existingRuntimeRegistration = $registrationState.RuntimeRegistration
 
                     if ($null -ne $existingManagedRegistration -and -not $Force)
                     {
+                        if ($registrationState.ManagedState -eq 'Stale')
+                        {
+                            throw "The module-managed completer registration for '$($target.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
+                        }
+
                         if ($existingManagedRegistration.ScriptText -eq $targetScriptBlock.ToString())
                         {
                             if ($PassThru)
@@ -568,23 +619,42 @@ function Register-CompleterRegistration
                         continue
                     }
 
-                    if ($Force)
-                    {
-                        if ($null -ne $existingManagedRegistration)
-                        {
-                            $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $target.Key
-                        }
-
-                        if ($null -ne $existingRuntimeRegistration)
-                        {
-                            $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $target.Key
-                        }
-                    }
-
-                    $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
-
                     $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed' -ImportModule $targetImportModule
-                    $registration = Add-ManagedCompleterRegistration -Registration $registration
+
+                    try
+                    {
+                        $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
+                        $registration = Add-ManagedCompleterRegistration -Registration $registration
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            if ($null -ne $existingRuntimeRegistration)
+                            {
+                                $null = Add-RuntimeCompleterRegistration -Target $existingRuntimeRegistration -ScriptBlock $existingRuntimeRegistration.ScriptBlock
+                            }
+                            else
+                            {
+                                $null = Remove-RuntimeCompleterRegistration -Key $target.Key
+                            }
+
+                            if ($null -ne $existingManagedRegistration)
+                            {
+                                $null = Add-ManagedCompleterRegistration -Registration $existingManagedRegistration
+                            }
+                            else
+                            {
+                                $null = Remove-ManagedCompleterRegistration -Key $target.Key
+                            }
+                        }
+                        catch
+                        {
+                            $rollbackError = $_
+                        }
+
+                        throw
+                    }
 
                     if ($PassThru)
                     {
@@ -593,26 +663,9 @@ function Register-CompleterRegistration
                 }
                 catch
                 {
-                    if ($Force)
+                    if ($null -ne $rollbackError)
                     {
-                        $currentManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-                        if ($null -ne $currentManagedRegistration)
-                        {
-                            $null = Remove-ManagedCompleterRegistration -Key $target.Key
-                        }
-
-                        if ($null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
-                        {
-                            if ($null -ne $removedRuntimeRegistration)
-                            {
-                                $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                            }
-
-                            if ($null -ne $removedManagedRegistration)
-                            {
-                                $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
-                            }
-                        }
+                        throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message) Rollback of the previous runtime and managed state also failed, so the target may be inconsistent: $($rollbackError.Exception.Message)"
                     }
 
                     throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
@@ -621,8 +674,8 @@ function Register-CompleterRegistration
                 {
                     $existingManagedRegistration = $null
                     $existingRuntimeRegistration = $null
-                    $removedManagedRegistration = $null
-                    $removedRuntimeRegistration = $null
+                    $registration = $null
+                    $rollbackError = $null
                     $targetImportModule = $null
                 }
             }
@@ -642,8 +695,13 @@ Removes completer registrations identified by registration key, native command,
 command parameter target, or pipeline InputObject values. Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table. Runtime-only registrations require -AllowUnmanaged before they can be
-removed. The command supports array inputs for keys and target fields, plus
-pipeline input from Get-CompleterRegistration output.
+removed. The same gate applies when a managed record is stale because the
+runtime registration was replaced outside this module: the live value is only
+removed with -AllowUnmanaged, and the stale managed record is dropped with it.
+When the runtime registration was already removed outside this module, only
+the stale managed record remains and it is removed without the gate. The
+command supports array inputs for keys and target fields, plus pipeline input
+from Get-CompleterRegistration output.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
@@ -651,7 +709,12 @@ objects can expose Key, RegistrationKey, RuntimeKey, or
 CommandName/ParameterName plus IsNative/Native.
 
 .PARAMETER Key
-Removes the registrations that match one or more registration keys.
+Removes the registrations that match one or more registration keys. A key
+without a colon is treated as a native command. A key with a colon is treated
+as a 'Command:Parameter' target unless the text after its last colon contains
+a path separator, in which case it is treated as a native command path such as
+'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
+the key shape is ambiguous.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.
@@ -664,7 +727,9 @@ targets.
 Targets native completer registrations instead of command parameter completers.
 
 .PARAMETER AllowUnmanaged
-Allows removal of runtime registrations that are not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.
 
 .PARAMETER PassThru
 Returns the registration records that were removed.
@@ -761,10 +826,24 @@ function Unregister-CompleterRegistration
 
                 try
                 {
-                    $managedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                    $managedRegistration = $registrationState.ManagedRegistration
+                    $runtimeRegistration = $registrationState.RuntimeRegistration
 
-                    if ($null -ne $managedRegistration)
+                    if ($registrationState.ManagedState -eq 'Active')
+                    {
+                        $registrationToRemove = $managedRegistration
+                    }
+                    elseif ($registrationState.ManagedState -eq 'Stale' -and $null -ne $runtimeRegistration)
+                    {
+                        if (-not $AllowUnmanaged)
+                        {
+                            throw "The module-managed completer registration for '$($runtimeRegistration.RuntimeKey)' is stale: the runtime registration was replaced outside this module. Re-run with -AllowUnmanaged to remove the live runtime registration and the stale managed record."
+                        }
+
+                        $registrationToRemove = $runtimeRegistration
+                    }
+                    elseif ($registrationState.ManagedState -eq 'Stale')
                     {
                         $registrationToRemove = $managedRegistration
                     }
@@ -799,7 +878,7 @@ function Unregister-CompleterRegistration
 
                     if ($PassThru)
                     {
-                        if ($null -ne $removedManagedRegistration)
+                        if ($registrationToRemove.IsManaged -and $null -ne $removedManagedRegistration)
                         {
                             $PSCmdlet.WriteObject($removedManagedRegistration)
                         }
@@ -1689,6 +1768,13 @@ runtime discovery.
 Preserves a reference to an imported helper module when a registration originated
 from Import-CompleterScript.
 
+.PARAMETER State
+Describes how the record relates to the live runtime. 'Active' records describe
+the value PowerShell is currently using. 'Stale' marks a managed record whose
+stored script no longer matches the runtime because the target was replaced or
+removed outside this module. 'Conflicted' marks a discovered runtime value that
+shadows a stale managed record for the same target.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
@@ -1721,7 +1807,11 @@ function New-CompleterRegistrationRecord
         [string] $Source = 'Managed',
 
         [Parameter()]
-        [System.Management.Automation.PSModuleInfo] $ImportModule
+        [System.Management.Automation.PSModuleInfo] $ImportModule,
+
+        [Parameter()]
+        [ValidateSet('Active', 'Stale', 'Conflicted')]
+        [string] $State = 'Active'
     )
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
@@ -1743,8 +1833,9 @@ function New-CompleterRegistrationRecord
         CompleterType       = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
         TargetType          = [string] $Target.TargetType
         Source              = $Source
+        State               = $State
         IsManaged           = $Source -eq 'Managed'
-        IsRuntimeRegistered = $true
+        IsRuntimeRegistered = $State -ne 'Stale'
         ImportModule        = $ImportModule
         ScriptBlock         = $ScriptBlock
         ScriptText          = $ScriptBlock.ToString()
@@ -2227,13 +2318,13 @@ function Resolve-CompleterInputObject
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
                 }
-                elseif ($runtimeKey -match ':')
+                elseif (Test-CompleterNativeKeyShape -Key $runtimeKey)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
                 }
                 else
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
+                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
                 }
             }
             elseif (-not [string]::IsNullOrWhiteSpace($keyValue))
@@ -2246,13 +2337,13 @@ function Resolve-CompleterInputObject
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue
                 }
-                elseif ($keyValue -match ':')
+                elseif (Test-CompleterNativeKeyShape -Key $keyValue)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
                 else
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
                 }
             }
             else
@@ -2282,6 +2373,72 @@ function Resolve-CompleterInputObject
             $importModule = $null
             $target = $null
         }
+    }
+}
+<#
+.SYNOPSIS
+Reconciles a managed registration record with the live runtime value for a target.
+
+.DESCRIPTION
+Looks up both the module-managed record and the live runtime registration for a
+normalized key and reports whether the managed record still describes what
+PowerShell is actually using. A managed record is authoritative only while the
+runtime holds the same script block, or a script block with identical text.
+When the runtime value was replaced or removed outside this module, the managed
+record is reported as stale so public commands can surface the live value,
+refuse silent reuse, and apply the unmanaged-removal gate.
+
+.PARAMETER Key
+The normalized or runtime key for the completer target to reconcile.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns an object with ManagedRegistration, RuntimeRegistration, and
+ManagedState ('None', 'Active', or 'Stale') properties. The registration
+properties hold the exact stored objects so callers can restore them unchanged.
+
+.EXAMPLE
+PS> $state = Resolve-CompleterRegistrationState -Key 'get-item:path'
+
+Retrieves the managed and runtime records for a target and reports whether the
+managed record still matches the live runtime registration.
+#>
+function Resolve-CompleterRegistrationState
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key
+    )
+
+    $managedRegistration = Find-ManagedCompleterRegistration -Key $Key
+    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $Key
+
+    $managedState = if ($null -eq $managedRegistration)
+    {
+        'None'
+    }
+    elseif ($null -ne $runtimeRegistration -and
+        ([object]::ReferenceEquals($managedRegistration.ScriptBlock, $runtimeRegistration.ScriptBlock) -or
+            $managedRegistration.ScriptText -eq $runtimeRegistration.ScriptText))
+    {
+        'Active'
+    }
+    else
+    {
+        'Stale'
+    }
+
+    return [pscustomobject] [ordered] @{
+        Key                 = $Key
+        ManagedRegistration = $managedRegistration
+        RuntimeRegistration = $runtimeRegistration
+        ManagedState        = $managedState
     }
 }
 <#
@@ -2538,13 +2695,13 @@ function Resolve-CompleterTargetList
         {
             foreach ($keyItem in $Key)
             {
-                if ($keyItem -match ':')
+                if (Test-CompleterNativeKeyShape -Key $keyItem)
                 {
-                    Resolve-CompleterTarget -RuntimeKey $keyItem
+                    Resolve-CompleterTarget -RuntimeKey $keyItem -Native
                     continue
                 }
 
-                Resolve-CompleterTarget -RuntimeKey $keyItem -Native
+                Resolve-CompleterTarget -RuntimeKey $keyItem
             }
 
             break
@@ -2618,6 +2775,63 @@ function Set-CompleterRuntimeDictionaryValue
     $Dictionary[$Key] = $Value
 
     return $Dictionary[$Key]
+}
+<#
+.SYNOPSIS
+Determines whether a key-only input should be treated as a native completer target.
+
+.DESCRIPTION
+Applies the module's shared rule for classifying a key when no explicit native
+indicator is available. A key without a colon is a native command name. A key
+with a colon is still native when the text after its last colon contains a path
+separator, because a 'Command:Parameter' key never contains a path separator in
+its parameter part; this covers drive-qualified paths such as
+'C:\tools\example.exe' with either separator. Every other colon-bearing key,
+including a drive-qualified path followed by ':Parameter', is a
+command-parameter target.
+
+.PARAMETER Key
+The registration or runtime key to classify.
+
+.OUTPUTS
+System.Boolean
+Returns $true when the key should be resolved as a native completer target.
+
+.EXAMPLE
+Test-CompleterNativeKeyShape -Key 'C:\tools\example.exe'
+
+Returns $true because the key is a drive-qualified native path.
+
+.EXAMPLE
+Test-CompleterNativeKeyShape -Key 'Get-Item:Path'
+
+Returns $false because the key is a command-parameter key.
+
+.NOTES
+Resolve-CompleterTargetList and Resolve-CompleterInputObject both use this
+helper so key-only inputs classify identically on every public path.
+#>
+function Test-CompleterNativeKeyShape
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key
+    )
+
+    if ($Key -notmatch ':')
+    {
+        return $true
+    }
+
+    $parameterPart = $Key.Substring($Key.LastIndexOf(':') + 1)
+
+    return $parameterPart.IndexOfAny([char[]] @('\', '/')) -ge 0
 }
 <#
 .SYNOPSIS
@@ -2820,61 +3034,404 @@ function Test-CompleterScriptAst
         }
     }
 
-    foreach ($statement in @($Ast.EndBlock.Statements))
-    {
-        if ($statement -isnot [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $statement -isnot [System.Management.Automation.Language.IfStatementAst] -and
-            $statement -isnot [System.Management.Automation.Language.PipelineAst])
-        {
-            throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($statement.GetType().Name)' at line $($statement.Extent.StartLineNumber)."
-        }
-    }
-
     $allowedImportCommands = @(
         'Get-Variable',
         'Register-ArgumentCompleter',
         'Set-StrictMode'
     )
 
-    foreach ($commandAst in @($Ast.FindAll(
-                {
-                    param($node)
+    $allowedTopLevelOperators = @(
+        [System.Management.Automation.Language.TokenKind]::And,
+        [System.Management.Automation.Language.TokenKind]::Or,
+        [System.Management.Automation.Language.TokenKind]::Xor,
+        [System.Management.Automation.Language.TokenKind]::Ieq,
+        [System.Management.Automation.Language.TokenKind]::Ine,
+        [System.Management.Automation.Language.TokenKind]::Ige,
+        [System.Management.Automation.Language.TokenKind]::Igt,
+        [System.Management.Automation.Language.TokenKind]::Ilt,
+        [System.Management.Automation.Language.TokenKind]::Ile,
+        [System.Management.Automation.Language.TokenKind]::Ilike,
+        [System.Management.Automation.Language.TokenKind]::Inotlike,
+        [System.Management.Automation.Language.TokenKind]::Imatch,
+        [System.Management.Automation.Language.TokenKind]::Inotmatch,
+        [System.Management.Automation.Language.TokenKind]::Icontains,
+        [System.Management.Automation.Language.TokenKind]::Inotcontains,
+        [System.Management.Automation.Language.TokenKind]::Iin,
+        [System.Management.Automation.Language.TokenKind]::Inotin,
+        [System.Management.Automation.Language.TokenKind]::Ceq,
+        [System.Management.Automation.Language.TokenKind]::Cne,
+        [System.Management.Automation.Language.TokenKind]::Cge,
+        [System.Management.Automation.Language.TokenKind]::Cgt,
+        [System.Management.Automation.Language.TokenKind]::Clt,
+        [System.Management.Automation.Language.TokenKind]::Cle,
+        [System.Management.Automation.Language.TokenKind]::Clike,
+        [System.Management.Automation.Language.TokenKind]::Cnotlike,
+        [System.Management.Automation.Language.TokenKind]::Cmatch,
+        [System.Management.Automation.Language.TokenKind]::Cnotmatch,
+        [System.Management.Automation.Language.TokenKind]::Ccontains,
+        [System.Management.Automation.Language.TokenKind]::Cnotcontains,
+        [System.Management.Automation.Language.TokenKind]::Cin,
+        [System.Management.Automation.Language.TokenKind]::Cnotin
+    )
 
-                    $node -is [System.Management.Automation.Language.CommandAst]
-                },
-                $true
-            )))
+    # The nested validators below define the closed top-level grammar. Everything
+    # outside function bodies and literal -ScriptBlock arguments must be reachable
+    # through them, so anything they do not recognize is rejected before the
+    # script is executed.
+    function Test-ImportSafeExpressionAst
     {
-        $isTopLevelCommand = $true
-        $ancestor = $commandAst.Parent
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.ExpressionAst] $ExpressionAst
+        )
 
-        while ($null -ne $ancestor -and $ancestor -ne $Ast)
+        if ($ExpressionAst -is [System.Management.Automation.Language.ConstantExpressionAst])
         {
-            if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
-                $ancestor -is [System.Management.Automation.Language.ScriptBlockExpressionAst])
+            return
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.VariableExpressionAst])
+        {
+            if ($ExpressionAst.Splatted)
             {
-                $isTopLevelCommand = $false
-                break
+                throw "Completer script '$LiteralPath' uses argument splatting at line $($ExpressionAst.Extent.StartLineNumber). Import-CompleterScript requires explicit top-level command arguments."
             }
 
-            $ancestor = $ancestor.Parent
+            return
         }
 
-        if (-not $isTopLevelCommand)
+        if ($ExpressionAst -is [System.Management.Automation.Language.ExpandableStringExpressionAst])
         {
-            continue
+            foreach ($nestedExpression in $ExpressionAst.NestedExpressions)
+            {
+                if ($nestedExpression -isnot [System.Management.Automation.Language.VariableExpressionAst] -or $nestedExpression.Splatted)
+                {
+                    throw "Completer script '$LiteralPath' contains unsupported top-level expression '$($nestedExpression.GetType().Name)' at line $($nestedExpression.Extent.StartLineNumber)."
+                }
+            }
+
+            return
         }
 
-        $commandName = $commandAst.GetCommandName()
+        if ($ExpressionAst -is [System.Management.Automation.Language.ArrayLiteralAst])
+        {
+            foreach ($element in $ExpressionAst.Elements)
+            {
+                Test-ImportSafeExpressionAst -ExpressionAst $element
+            }
+
+            return
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.ArrayExpressionAst])
+        {
+            if ($ExpressionAst.SubExpression.Traps.Count -ne 0)
+            {
+                throw "Completer script '$LiteralPath' contains unsupported top-level syntax 'TrapStatementAst' at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            foreach ($statement in $ExpressionAst.SubExpression.Statements)
+            {
+                Test-ImportSafeValueStatementAst -StatementAst $statement
+            }
+
+            return
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.HashtableAst])
+        {
+            foreach ($keyValuePair in $ExpressionAst.KeyValuePairs)
+            {
+                Test-ImportSafeExpressionAst -ExpressionAst $keyValuePair.Item1
+                Test-ImportSafeValueStatementAst -StatementAst $keyValuePair.Item2
+            }
+
+            return
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.ParenExpressionAst])
+        {
+            Test-ImportSafeValueStatementAst -StatementAst $ExpressionAst.Pipeline
+            return
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.UnaryExpressionAst])
+        {
+            if ($ExpressionAst.TokenKind -notin [System.Management.Automation.Language.TokenKind]::Not, [System.Management.Automation.Language.TokenKind]::Exclaim)
+            {
+                throw "Completer script '$LiteralPath' uses unsupported top-level operator '$($ExpressionAst.TokenKind)' at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            Test-ImportSafeExpressionAst -ExpressionAst $ExpressionAst.Child
+            return
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.BinaryExpressionAst])
+        {
+            if ($ExpressionAst.Operator -notin $allowedTopLevelOperators)
+            {
+                throw "Completer script '$LiteralPath' uses unsupported top-level operator '$($ExpressionAst.Operator)' at line $($ExpressionAst.Extent.StartLineNumber)."
+            }
+
+            Test-ImportSafeExpressionAst -ExpressionAst $ExpressionAst.Left
+            Test-ImportSafeExpressionAst -ExpressionAst $ExpressionAst.Right
+            return
+        }
+
+        throw "Completer script '$LiteralPath' contains unsupported top-level expression '$($ExpressionAst.GetType().Name)' at line $($ExpressionAst.Extent.StartLineNumber). Import-CompleterScript only supports literal values, variables, and simple comparisons outside function bodies and registered script blocks."
+    }
+
+    function Test-ImportSafeCommandExpressionAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.CommandExpressionAst] $CommandExpressionAst
+        )
+
+        if ($CommandExpressionAst.Redirections.Count -ne 0)
+        {
+            throw "Completer script '$LiteralPath' uses redirection at line $($CommandExpressionAst.Extent.StartLineNumber). Import-CompleterScript does not support top-level redirection."
+        }
+
+        Test-ImportSafeExpressionAst -ExpressionAst $CommandExpressionAst.Expression
+    }
+
+    function Test-ImportSafeCommandAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.CommandAst] $CommandAst
+        )
+
+        if ($CommandAst.Redirections.Count -ne 0)
+        {
+            throw "Completer script '$LiteralPath' uses redirection at line $($CommandAst.Extent.StartLineNumber). Import-CompleterScript does not support top-level redirection."
+        }
+
+        $commandName = $CommandAst.GetCommandName()
         if ([string]::IsNullOrWhiteSpace($commandName))
         {
-            throw "Completer script '$LiteralPath' uses a non-literal top-level command at line $($commandAst.Extent.StartLineNumber)."
+            throw "Completer script '$LiteralPath' uses a non-literal top-level command at line $($CommandAst.Extent.StartLineNumber)."
         }
 
         if ($allowedImportCommands -notcontains $commandName)
         {
-            throw "Completer script '$LiteralPath' uses unsupported top-level command '$commandName' at line $($commandAst.Extent.StartLineNumber)."
+            throw "Completer script '$LiteralPath' uses unsupported top-level command '$commandName' at line $($CommandAst.Extent.StartLineNumber)."
         }
+
+        if ($commandName -eq 'Register-ArgumentCompleter')
+        {
+            # Register-ArgumentCompleter arguments are validated separately below.
+            return
+        }
+
+        foreach ($commandElement in ($CommandAst.CommandElements | Select-Object -Skip 1))
+        {
+            if ($commandElement -is [System.Management.Automation.Language.CommandParameterAst])
+            {
+                if ($null -ne $commandElement.Argument)
+                {
+                    Test-ImportSafeExpressionAst -ExpressionAst $commandElement.Argument
+                }
+
+                continue
+            }
+
+            Test-ImportSafeExpressionAst -ExpressionAst $commandElement
+        }
+    }
+
+    function Test-ImportSafePipelineAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.PipelineAst] $PipelineAst,
+
+            [Parameter()]
+            [switch] $AllowExpression
+        )
+
+        if ($PipelineAst.Background)
+        {
+            throw "Completer script '$LiteralPath' starts a background pipeline at line $($PipelineAst.Extent.StartLineNumber). Import-CompleterScript does not support background execution."
+        }
+
+        foreach ($pipelineElement in $PipelineAst.PipelineElements)
+        {
+            if ($pipelineElement -is [System.Management.Automation.Language.CommandAst])
+            {
+                Test-ImportSafeCommandAst -CommandAst $pipelineElement
+                continue
+            }
+
+            if ($pipelineElement -is [System.Management.Automation.Language.CommandExpressionAst])
+            {
+                if ($AllowExpression)
+                {
+                    Test-ImportSafeCommandExpressionAst -CommandExpressionAst $pipelineElement
+                    continue
+                }
+
+                throw "Completer script '$LiteralPath' contains unsupported top-level expression '$($pipelineElement.Expression.GetType().Name)' at line $($pipelineElement.Extent.StartLineNumber). Import-CompleterScript only supports Set-StrictMode, Get-Variable, and Register-ArgumentCompleter commands at script scope."
+            }
+
+            throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($pipelineElement.GetType().Name)' at line $($pipelineElement.Extent.StartLineNumber)."
+        }
+    }
+
+    function Test-ImportSafeValueStatementAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.StatementAst] $StatementAst
+        )
+
+        if ($StatementAst -is [System.Management.Automation.Language.PipelineAst])
+        {
+            Test-ImportSafePipelineAst -PipelineAst $StatementAst -AllowExpression
+            return
+        }
+
+        if ($StatementAst -is [System.Management.Automation.Language.CommandExpressionAst])
+        {
+            Test-ImportSafeCommandExpressionAst -CommandExpressionAst $StatementAst
+            return
+        }
+
+        throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($StatementAst.GetType().Name)' at line $($StatementAst.Extent.StartLineNumber)."
+    }
+
+    function Test-ImportSafeStatementAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.StatementAst] $StatementAst,
+
+            [Parameter()]
+            [switch] $AllowAssignment
+        )
+
+        if ($StatementAst -is [System.Management.Automation.Language.FunctionDefinitionAst])
+        {
+            return
+        }
+
+        if ($StatementAst -is [System.Management.Automation.Language.IfStatementAst])
+        {
+            foreach ($clause in $StatementAst.Clauses)
+            {
+                if ($clause.Item1 -isnot [System.Management.Automation.Language.PipelineAst])
+                {
+                    throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($clause.Item1.GetType().Name)' at line $($clause.Item1.Extent.StartLineNumber)."
+                }
+
+                Test-ImportSafePipelineAst -PipelineAst $clause.Item1 -AllowExpression
+                Test-ImportSafeStatementBlockAst -StatementBlockAst $clause.Item2
+            }
+
+            if ($null -ne $StatementAst.ElseClause)
+            {
+                Test-ImportSafeStatementBlockAst -StatementBlockAst $StatementAst.ElseClause
+            }
+
+            return
+        }
+
+        if ($StatementAst -is [System.Management.Automation.Language.PipelineAst])
+        {
+            Test-ImportSafePipelineAst -PipelineAst $StatementAst
+            return
+        }
+
+        if ($StatementAst -is [System.Management.Automation.Language.AssignmentStatementAst])
+        {
+            if (-not $AllowAssignment)
+            {
+                throw "Completer script '$LiteralPath' uses a top-level assignment at line $($StatementAst.Extent.StartLineNumber). Import-CompleterScript only supports assignments inside importer-safe if statements."
+            }
+
+            if ($StatementAst.Operator -ne [System.Management.Automation.Language.TokenKind]::Equals)
+            {
+                throw "Completer script '$LiteralPath' uses unsupported top-level operator '$($StatementAst.Operator)' at line $($StatementAst.Extent.StartLineNumber)."
+            }
+
+            $target = $StatementAst.Left
+            if ($target -isnot [System.Management.Automation.Language.VariableExpressionAst] -or
+                $target.Splatted -or
+                -not ($target.VariablePath.IsUnqualified -or $target.VariablePath.IsScript))
+            {
+                throw "Completer script '$LiteralPath' assigns to unsupported target '$($target.Extent.Text)' at line $($target.Extent.StartLineNumber). Import-CompleterScript only supports assignments to unqualified or script-scope variables."
+            }
+
+            Test-ImportSafeValueStatementAst -StatementAst $StatementAst.Right
+            return
+        }
+
+        throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($StatementAst.GetType().Name)' at line $($StatementAst.Extent.StartLineNumber)."
+    }
+
+    function Test-ImportSafeStatementBlockAst
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.StatementBlockAst] $StatementBlockAst
+        )
+
+        if ($StatementBlockAst.Traps.Count -ne 0)
+        {
+            throw "Completer script '$LiteralPath' contains unsupported top-level syntax 'TrapStatementAst' at line $($StatementBlockAst.Traps[0].Extent.StartLineNumber)."
+        }
+
+        foreach ($statement in $StatementBlockAst.Statements)
+        {
+            Test-ImportSafeStatementAst -StatementAst $statement -AllowAssignment
+        }
+    }
+
+    foreach ($usingStatement in @($Ast.UsingStatements))
+    {
+        if ($usingStatement.UsingStatementKind -ne [System.Management.Automation.Language.UsingStatementKind]::Namespace)
+        {
+            throw "Completer script '$LiteralPath' uses a 'using $($usingStatement.UsingStatementKind.ToString().ToLowerInvariant())' statement at line $($usingStatement.Extent.StartLineNumber). Import-CompleterScript only supports 'using namespace' statements."
+        }
+    }
+
+    if ($null -ne $Ast.ScriptRequirements)
+    {
+        if ($Ast.ScriptRequirements.RequiredModules.Count -gt 0)
+        {
+            throw "Completer script '$LiteralPath' uses a '#requires -Modules' directive. Import-CompleterScript does not support '#requires -Modules' because the required modules are imported, and their top-level code executes, when the script is dot-sourced."
+        }
+
+        if ($Ast.ScriptRequirements.RequiredAssemblies.Count -gt 0)
+        {
+            throw "Completer script '$LiteralPath' uses a '#requires -Assembly' directive. Import-CompleterScript does not support '#requires -Assembly' because the required assemblies are loaded when the script is dot-sourced."
+        }
+    }
+
+    foreach ($namedBlock in @($Ast.ParamBlock, $Ast.BeginBlock, $Ast.ProcessBlock, $Ast.DynamicParamBlock, $Ast.CleanBlock))
+    {
+        if ($null -ne $namedBlock)
+        {
+            throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($namedBlock.GetType().Name)' at line $($namedBlock.Extent.StartLineNumber)."
+        }
+    }
+
+    if ($Ast.EndBlock.Traps.Count -ne 0)
+    {
+        throw "Completer script '$LiteralPath' contains unsupported top-level syntax 'TrapStatementAst' at line $($Ast.EndBlock.Traps[0].Extent.StartLineNumber)."
+    }
+
+    foreach ($statement in @($Ast.EndBlock.Statements))
+    {
+        Test-ImportSafeStatementAst -StatementAst $statement
     }
 
     $functionOverrides = @($Ast.FindAll(
@@ -2882,7 +3439,7 @@ function Test-CompleterScriptAst
                 param($node)
 
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                $node.Name -eq 'Register-ArgumentCompleter'
+                $node.Name -in $allowedImportCommands
             },
             $true
         ))
@@ -2890,7 +3447,7 @@ function Test-CompleterScriptAst
     if ($functionOverrides.Count -gt 0)
     {
         $lineNumber = $functionOverrides[0].Extent.StartLineNumber
-        throw "Completer script '$LiteralPath' defines its own Register-ArgumentCompleter function at line $lineNumber. Import-CompleterScript only supports scripts that call the built-in command name directly."
+        throw "Completer script '$LiteralPath' defines its own $($functionOverrides[0].Name) function at line $lineNumber. Import-CompleterScript only supports scripts that call the built-in command name directly."
     }
 
     $dotSourcedCommands = @($Ast.FindAll(

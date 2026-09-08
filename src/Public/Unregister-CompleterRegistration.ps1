@@ -7,8 +7,13 @@ Removes completer registrations identified by registration key, native command,
 command parameter target, or pipeline InputObject values. Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table. Runtime-only registrations require -AllowUnmanaged before they can be
-removed. The command supports array inputs for keys and target fields, plus
-pipeline input from Get-CompleterRegistration output.
+removed. The same gate applies when a managed record is stale because the
+runtime registration was replaced outside this module: the live value is only
+removed with -AllowUnmanaged, and the stale managed record is dropped with it.
+When the runtime registration was already removed outside this module, only
+the stale managed record remains and it is removed without the gate. The
+command supports array inputs for keys and target fields, plus pipeline input
+from Get-CompleterRegistration output.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
@@ -16,7 +21,12 @@ objects can expose Key, RegistrationKey, RuntimeKey, or
 CommandName/ParameterName plus IsNative/Native.
 
 .PARAMETER Key
-Removes the registrations that match one or more registration keys.
+Removes the registrations that match one or more registration keys. A key
+without a colon is treated as a native command. A key with a colon is treated
+as a 'Command:Parameter' target unless the text after its last colon contains
+a path separator, in which case it is treated as a native command path such as
+'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
+the key shape is ambiguous.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.
@@ -29,7 +39,9 @@ targets.
 Targets native completer registrations instead of command parameter completers.
 
 .PARAMETER AllowUnmanaged
-Allows removal of runtime registrations that are not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.
 
 .PARAMETER PassThru
 Returns the registration records that were removed.
@@ -123,10 +135,24 @@ function Unregister-CompleterRegistration
 
                 try
                 {
-                    $managedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                    $managedRegistration = $registrationState.ManagedRegistration
+                    $runtimeRegistration = $registrationState.RuntimeRegistration
 
-                    if ($null -ne $managedRegistration)
+                    if ($registrationState.ManagedState -eq 'Active')
+                    {
+                        $registrationToRemove = $managedRegistration
+                    }
+                    elseif ($registrationState.ManagedState -eq 'Stale' -and $null -ne $runtimeRegistration)
+                    {
+                        if (-not $AllowUnmanaged)
+                        {
+                            throw "The module-managed completer registration for '$($runtimeRegistration.RuntimeKey)' is stale: the runtime registration was replaced outside this module. Re-run with -AllowUnmanaged to remove the live runtime registration and the stale managed record."
+                        }
+
+                        $registrationToRemove = $runtimeRegistration
+                    }
+                    elseif ($registrationState.ManagedState -eq 'Stale')
                     {
                         $registrationToRemove = $managedRegistration
                     }
@@ -161,7 +187,7 @@ function Unregister-CompleterRegistration
 
                     if ($PassThru)
                     {
-                        if ($null -ne $removedManagedRegistration)
+                        if ($registrationToRemove.IsManaged -and $null -ne $removedManagedRegistration)
                         {
                             $PSCmdlet.WriteObject($removedManagedRegistration)
                         }

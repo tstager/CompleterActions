@@ -6,7 +6,6 @@ Describe 'Module Manifest Tests' {
         Test-Path -Path $moduleManifestPath | Should -Be $true
         $moduleManifest | Should -Not -BeNullOrEmpty
         $moduleManifest.Name | Should -Be $moduleName
-        $moduleManifest.Version.ToString() | Should -Be '1.0.0'
         $moduleManifest.RootModule | Should -Be 'CompleterActions.psm1'
         $moduleManifest.CompatiblePSEditions | Should -Be @('Core')
         $moduleManifest.PowerShellVersion | Should -Be '7.0'
@@ -35,21 +34,97 @@ Describe 'Module Manifest Tests' {
         @($manifestData.FormatsToProcess) | Should -Be @('CompleterActions.Format.ps1xml')
     }
 
+    It 'declares a module version that satisfies the release policy' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
+        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
+
+        $sourceManifest = Import-PowerShellDataFile -Path $sourceManifestPath
+        $builtManifest = Import-PowerShellDataFile -Path $builtManifestPath
+
+        $sourceVersion = $null
+        [version]::TryParse($sourceManifest.ModuleVersion, [ref] $sourceVersion) | Should -BeTrue
+        $builtManifest.ModuleVersion | Should -Be $sourceManifest.ModuleVersion
+
+        $gitCommand = Get-Command -Name 'git' -ErrorAction SilentlyContinue
+        if ($null -eq $gitCommand)
+        {
+            Set-ItResult -Skipped -Because 'git is not available to enumerate release tags'
+        }
+
+        $tagVersions = @(
+            & $gitCommand -C $repoRoot tag -l 'v*' 2>$null |
+                ForEach-Object {
+                    $tagVersion = $null
+                    if ([version]::TryParse($_.Substring(1), [ref] $tagVersion))
+                    {
+                        $tagVersion
+                    }
+                }
+        )
+
+        if ($tagVersions.Count -eq 0)
+        {
+            Set-ItResult -Skipped -Because 'no v* release tags are reachable locally'
+        }
+
+        $highestTagVersion = $tagVersions | Sort-Object | Select-Object -Last 1
+        $sourceVersion | Should -BeGreaterOrEqual $highestTagVersion
+    }
+
     It 'keeps publish metadata populated in the built manifest' {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
-        $buildScriptPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'
-        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build\CompleterActions\CompleterActions.psd1'
+        $builtManifestPath = Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
 
         $sourceManifest = Import-PowerShellDataFile -Path $sourceManifestPath
-
-        Invoke-Build -File $buildScriptPath build
-
         $builtManifest = Import-PowerShellDataFile -Path $builtManifestPath
 
         $sourceManifest.PrivateData.PSData.ProjectUri | Should -Not -BeNullOrEmpty
         $builtManifest.PrivateData.PSData.ProjectUri | Should -Be $sourceManifest.PrivateData.PSData.ProjectUri
         $builtManifest.Copyright | Should -Match ([regex]::Escape($sourceManifest.Author))
+    }
+
+    It 'keeps the tracked build output in sync with the module sources' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to reproduce the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to reproduce the packaged module'
+        }
+
+        # The build derives the module name from its folder, so stage the build inputs
+        # under a folder with the module name and build there instead of in the repo.
+        $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'CompleterActions'
+        New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+        foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
+        {
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+        }
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+
+        foreach ($relativePath in 'CompleterActions.psm1', 'CompleterActions.Format.ps1xml', 'en-US/about_Import_Completers.help.txt')
+        {
+            $trackedPath = Join-Path -Path $repoRoot -ChildPath "build/CompleterActions/$relativePath"
+            $freshPath = Join-Path -Path $stagingRoot -ChildPath "build/CompleterActions/$relativePath"
+
+            @(Get-Content -LiteralPath $trackedPath) | Should -Be @(Get-Content -LiteralPath $freshPath) -Because "build/CompleterActions/$relativePath must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
+        }
+
+        $manifestContentFilter = { $_ -notmatch '^\s*#\s*Generated on:' }
+        $trackedManifestLines = @(Get-Content -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') | Where-Object -FilterScript $manifestContentFilter)
+        $freshManifestLines = @(Get-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') | Where-Object -FilterScript $manifestContentFilter)
+
+        $trackedManifestLines | Should -Be $freshManifestLines -Because "build/CompleterActions/CompleterActions.psd1 must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
     }
 }
 

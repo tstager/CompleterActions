@@ -286,3 +286,316 @@ Describe 'Completer script importer public API' {
         } | Should -Throw $Message
     }
 }
+
+Describe 'Completer script importer top-level validation' {
+    $adversarialImportCases = @(
+        @{
+            Name    = 'static method call'
+            Message = '*unsupported top-level expression ''InvokeMemberExpressionAst''*'
+            Script  = @'
+[System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'instance method call'
+            Message = '*unsupported top-level expression ''InvokeMemberExpressionAst''*'
+            Script  = @'
+$ExecutionContext.InvokeCommand.InvokeScript('$env:COMPLETERACTIONS_IMPORT_PROBE = ''executed''')
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'subexpression'
+            Message = '*unsupported top-level expression ''SubExpressionAst''*'
+            Script  = @'
+$(Set-Item -Path 'Env:COMPLETERACTIONS_IMPORT_PROBE' -Value 'executed')
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'type conversion expression'
+            Message = '*unsupported top-level expression ''ConvertExpressionAst''*'
+            Script  = @'
+[System.IO.StreamWriter] '{ProbePath}'
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'top-level assignment'
+            Message = '*uses a top-level assignment*'
+            Script  = @'
+$env:COMPLETERACTIONS_IMPORT_PROBE = 'executed'
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'side effect inside an if condition'
+            Message = '*unsupported top-level expression ''InvokeMemberExpressionAst''*'
+            Script  = @'
+if ($null -eq [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process'))
+{
+    {Registration}
+}
+'@
+        },
+        @{
+            Name    = 'side effect inside an if body'
+            Message = '*unsupported top-level expression ''InvokeMemberExpressionAst''*'
+            Script  = @'
+if ($null -eq (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue))
+{
+    [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+}
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'drive-qualified assignment inside an if body'
+            Message = '*assigns to unsupported target ''$env:COMPLETERACTIONS_IMPORT_PROBE''*'
+            Script  = @'
+if ($null -eq (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue))
+{
+    $env:COMPLETERACTIONS_IMPORT_PROBE = 'executed'
+}
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'method call as an if body assignment value'
+            Message = '*unsupported top-level expression ''InvokeMemberExpressionAst''*'
+            Script  = @'
+if ($null -eq (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue))
+{
+    $script:ImportProbeState = [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+}
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'shadowed allow-listed command'
+            Message = '*defines its own Get-Variable function*'
+            Script  = @'
+function Get-Variable
+{
+    [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+}
+
+if (-not (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue))
+{
+    $script:ImportProbeState = @{}
+}
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'redirection'
+            Message = '*uses redirection*'
+            Script  = @'
+Get-Variable -Name 'PSScriptRoot' > '{ProbePath}'
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'param block default value'
+            Message = '*unsupported top-level syntax ''ParamBlockAst''*'
+            Script  = @'
+param(
+    $ImportProbe = [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+)
+
+{Registration}
+'@
+        },
+        @{
+            Name    = 'begin block'
+            Message = '*unsupported top-level syntax ''NamedBlockAst''*'
+            Script  = @'
+begin
+{
+    [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+}
+
+end
+{
+    {Registration}
+}
+'@
+        }
+    )
+
+    BeforeAll {
+        $script:ProbeRegistration = @'
+Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+}
+'@
+
+        function Write-AdversarialImportScript
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name,
+
+                [Parameter(Mandatory)]
+                [string] $Script
+            )
+
+            $fileBaseName = $Name -replace '[^A-Za-z0-9]+', '-'
+            $probePath = Join-Path -Path $TestDrive -ChildPath ('{0}.probe' -f $fileBaseName)
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath ('{0}.ps1' -f $fileBaseName)
+            $content = $Script.Replace('{ProbePath}', $probePath).Replace('{Registration}', $script:ProbeRegistration)
+
+            Set-Content -LiteralPath $scriptPath -Value $content -Encoding utf8
+
+            [pscustomobject] @{
+                ScriptPath = $scriptPath
+                ProbePath  = $probePath
+            }
+        }
+
+        function Test-ImportProbeFired
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $ProbePath
+            )
+
+            return ($null -ne $env:COMPLETERACTIONS_IMPORT_PROBE) -or (Test-Path -LiteralPath $ProbePath)
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        $env:COMPLETERACTIONS_IMPORT_PROBE = $null
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' -CompleterType 'Parameter'
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+    }
+
+    AfterEach {
+        $env:COMPLETERACTIONS_IMPORT_PROBE = $null
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'rejects a <Name> before the script executes' -TestCases $adversarialImportCases {
+        param(
+            [string] $Name,
+            [string] $Message,
+            [string] $Script
+        )
+
+        $adversarial = Write-AdversarialImportScript -Name $Name -Script $Script
+
+        Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+
+        {
+            Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+        } | Should -Throw $Message
+
+        Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+        Get-CompleterRegistration -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
+    It 'confirms the <Name> probe fires when the script runs without validation' -TestCases $adversarialImportCases {
+        param(
+            [string] $Name,
+            [string] $Script
+        )
+
+        $adversarial = Write-AdversarialImportScript -Name $Name -Script $Script
+
+        Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+
+        $output = @(& { . $adversarial.ScriptPath })
+        foreach ($item in $output)
+        {
+            if ($item -is [System.IDisposable])
+            {
+                $item.Dispose()
+            }
+        }
+
+        Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeTrue
+    }
+
+    It 'still imports the guarded script-state initialization shape' {
+        $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\ImportableNativeCompleter.ps1'
+
+        $imported = @(Import-CompleterScript -LiteralPath $fixturePath)
+
+        $imported.Count | Should -Be 2
+        @($imported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+    }
+
+    Context 'script requirements' {
+        BeforeEach {
+            $script:RequiresProbeModulePath = Join-Path -Path $TestDrive -ChildPath 'CompleterActionsRequiresProbe.psm1'
+            Set-Content -LiteralPath $script:RequiresProbeModulePath -Value '$env:COMPLETERACTIONS_IMPORT_PROBE = ''executed''' -Encoding utf8
+        }
+
+        AfterEach {
+            Remove-Module -Name 'CompleterActionsRequiresProbe' -Force -ErrorAction SilentlyContinue
+        }
+
+        It 'rejects a #requires -Modules directive before the required module executes' {
+            $adversarial = Write-AdversarialImportScript -Name 'requires modules directive' -Script (
+                "#requires -Modules '{0}'`n`n{{Registration}}" -f $script:RequiresProbeModulePath
+            )
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+
+            {
+                Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+            } | Should -Throw '*uses a ''#requires -Modules'' directive*'
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+            Get-Module -Name 'CompleterActionsRequiresProbe' | Should -BeNullOrEmpty
+            Get-CompleterRegistration -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'confirms the #requires -Modules probe fires when the script runs without validation' {
+            $adversarial = Write-AdversarialImportScript -Name 'requires modules directive' -Script (
+                "#requires -Modules '{0}'`n`n{{Registration}}" -f $script:RequiresProbeModulePath
+            )
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
+
+            $null = @(& { . $adversarial.ScriptPath })
+
+            Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeTrue
+        }
+
+        It 'rejects a #requires -Assembly directive' {
+            $adversarial = Write-AdversarialImportScript -Name 'requires assembly directive' -Script (
+                "#requires -Assembly '{0}'`n`n{{Registration}}" -f (Join-Path -Path $TestDrive -ChildPath 'CompleterActionsRequiresProbe.dll')
+            )
+
+            {
+                Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+            } | Should -Throw '*uses a ''#requires -Assembly'' directive*'
+        }
+
+        It 'still imports a script with a #requires -Version directive' {
+            $supported = Write-AdversarialImportScript -Name 'requires version directive' -Script "#requires -Version 7.0`n`n{Registration}"
+
+            $imported = @(Import-CompleterScript -LiteralPath $supported.ScriptPath)
+
+            $imported.Count | Should -Be 1
+            $imported[0].Key | Should -Be 'test-importprobetool:name'
+        }
+    }
+}

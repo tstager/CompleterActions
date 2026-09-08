@@ -175,6 +175,9 @@ Registration records use the `CompleterActions.CompleterRegistration` type and h
 - `Parameter`
 - `Type`
 - `Source`
+- `State`
+
+`State` is `Active` for records that describe the live runtime value. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-CompleterRegistration` returns the live value as `Conflicted`, `Register-CompleterRegistration` requires `-Force` to reconcile, and `Unregister-CompleterRegistration` requires `-AllowUnmanaged` before it removes the live value together with the stale record.
 
 `Get-CompleterRegistration` supports PowerShell paging parameters, so you can do things like:
 

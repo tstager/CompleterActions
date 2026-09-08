@@ -45,7 +45,9 @@ helper functions and script-scope state defined by the source script.
 Write standalone completer scripts to this specification if you want them to
 remain importable through `Import-CompleterScript` without redesign:
 
-- Keep the script self-contained. Do not dot-source other scripts.
+- Keep the script self-contained. Do not dot-source other scripts, and do not
+  use `#requires -Modules`, `#requires -Assembly`, `using module`, or
+  `using assembly`; they load code when the script is dot-sourced.
 - Keep script scope limited to:
   - `Set-StrictMode`
   - function definitions

@@ -23,6 +23,13 @@ runtime discovery.
 Preserves a reference to an imported helper module when a registration originated
 from Import-CompleterScript.
 
+.PARAMETER State
+Describes how the record relates to the live runtime. 'Active' records describe
+the value PowerShell is currently using. 'Stale' marks a managed record whose
+stored script no longer matches the runtime because the target was replaced or
+removed outside this module. 'Conflicted' marks a discovered runtime value that
+shadows a stale managed record for the same target.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
@@ -52,7 +59,11 @@ function New-CompleterRegistrationRecord
         [string] $Source = 'Managed',
 
         [Parameter()]
-        [System.Management.Automation.PSModuleInfo] $ImportModule
+        [System.Management.Automation.PSModuleInfo] $ImportModule,
+
+        [Parameter()]
+        [ValidateSet('Active', 'Stale', 'Conflicted')]
+        [string] $State = 'Active'
     )
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
@@ -74,8 +85,9 @@ function New-CompleterRegistrationRecord
         CompleterType       = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
         TargetType          = [string] $Target.TargetType
         Source              = $Source
+        State               = $State
         IsManaged           = $Source -eq 'Managed'
-        IsRuntimeRegistered = $true
+        IsRuntimeRegistered = $State -ne 'Stale'
         ImportModule        = $ImportModule
         ScriptBlock         = $ScriptBlock
         ScriptText          = $ScriptBlock.ToString()

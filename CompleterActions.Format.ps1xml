@@ -21,6 +21,9 @@
                     <TableColumnHeader>
                         <Label>Source</Label>
                     </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>State</Label>
+                    </TableColumnHeader>
                 </TableHeaders>
                 <TableRowEntries>
                     <TableRowEntry>
@@ -36,6 +39,9 @@
                             </TableColumnItem>
                             <TableColumnItem>
                                 <PropertyName>Source</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>State</PropertyName>
                             </TableColumnItem>
                         </TableColumnItems>
                     </TableRowEntry>

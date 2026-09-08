@@ -13,7 +13,8 @@
 - `Import-CompleterScript` converts supported standalone completer scripts into `Register-CompleterRegistration -InputObject` payloads without mutating the live runtime during import.
 - Managed registrations are tracked in module-owned state; runtime-only registrations can also be discovered from the live session.
 - Runtime discovery and removal rely on PowerShell runtime internals, not a public API. Keep any related changes aligned across discovery, reconciliation, and tests.
-- `Get-CompleterRegistration` merges managed and discovered registrations, prefers managed records for duplicate targets, and supports `SupportsPaging`.
+- `Get-CompleterRegistration` merges managed and discovered registrations, prefers managed records for duplicate targets only while they still match the live runtime value (otherwise records carry a `Stale`/`Conflicted` `State`), and supports `SupportsPaging`.
+- `Register-CompleterRegistration` updates each target transactionally and restores the previous runtime and managed state when a write fails; a stale managed record requires `-Force`, and `Unregister-CompleterRegistration` requires `-AllowUnmanaged` before removing a live value that replaced a managed registration.
 - Public commands support array inputs; `Get-*` supports pipeline-by-property-name target lookup; `Import-*` supports path input; `Register-*` and `Unregister-*` support `InputObject` pipeline input where appropriate.
 - `Register-CompleterRegistration` and `Unregister-CompleterRegistration` are state-changing commands with `ShouldProcess` semantics.
 

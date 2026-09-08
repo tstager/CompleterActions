@@ -58,6 +58,11 @@ are removed from both the PowerShell runtime and the module's registration
 table.
 Runtime-only registrations require -AllowUnmanaged before they can be
 removed.
+The same gate applies when a managed record is stale because the runtime
+registration was replaced outside this module: the live value is only removed
+with -AllowUnmanaged, and the stale managed record is dropped with it.
+When the runtime registration was already removed outside this module, only the
+stale managed record remains and it is removed without the gate.
 The command supports array inputs for keys and target fields, plus
 pipeline input from Get-CompleterRegistration output.
 
