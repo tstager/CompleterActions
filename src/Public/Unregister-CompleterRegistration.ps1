@@ -23,11 +23,10 @@ CommandName/ParameterName plus IsNative/Native.
 .PARAMETER Key
 Removes the registrations that match one or more registration keys. A key
 without a colon is treated as a native command. A key with a colon is treated
-as a 'Command:Parameter' target unless it has the Windows drive-qualified path
-shape (a single letter, a colon, then a path separator) or the text after its
-last colon contains a path separator, in which case it is treated as a native
-command path such as 'C:\tools\example.exe'. Use -CommandName with -Native or
--ParameterName when the key shape is ambiguous.
+as a 'Command:Parameter' target unless the text after its last colon contains
+a path separator, in which case it is treated as a native command path such as
+'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
+the key shape is ambiguous.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.

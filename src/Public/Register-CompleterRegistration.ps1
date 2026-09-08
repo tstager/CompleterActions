@@ -24,10 +24,9 @@ CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
 property whose value is a script block. When only a key is supplied and no
 IsNative/Native property is present, a key without a colon is treated as a
 native command, and a key with a colon is treated as a 'Command:Parameter'
-target unless it has the Windows drive-qualified path shape (a single letter, a
-colon, then a path separator) or the text after its last colon contains a path
-separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. An explicit IsNative/Native property always wins.
+target unless the text after its last colon contains a path separator, in which
+case it is treated as a native command path such as 'C:\tools\example.exe'. An
+explicit IsNative/Native property always wins.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be registered.
