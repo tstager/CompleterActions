@@ -7,9 +7,14 @@ Returns completer registration records for all registrations, specific
 registration keys, native command completers, or command parameter completers.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
-to the same target. The command accepts arrays for key, command, and parameter
-lookup scenarios and supports property-name pipeline binding for key-based and
-target-based lookups.
+to the same target and the managed record still matches the live runtime value.
+When the runtime registration was replaced outside this module, the live
+discovered value is returned with State 'Conflicted' instead; -ManagedOnly
+returns the managed record with State 'Stale'. When the runtime registration
+was removed outside this module, the managed record is returned with State
+'Stale' and IsRuntimeRegistered false. The command accepts arrays for key,
+command, and parameter lookup scenarios and supports property-name pipeline
+binding for key-based and target-based lookups.
 
 .PARAMETER Key
 Gets the registrations that match one or more registration keys.
@@ -33,7 +38,10 @@ Returns only registrations discovered from the current PowerShell runtime.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-Returns CompleterActions.CompleterRegistration records.
+Returns CompleterActions.CompleterRegistration records. The State property is
+'Active' for records that describe the live runtime value, 'Stale' for managed
+records that no longer match the runtime, and 'Conflicted' for live runtime
+values that replaced a managed registration outside this module.
 
 .EXAMPLE
 PS> Get-CompleterRegistration -CommandName 'git' -Native
@@ -161,7 +169,20 @@ function Get-CompleterRegistration
                     continue
                 }
 
-                $registrationsByKey[[string] $registration.Key] = $registration
+                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
+
+                if ($registrationState.ManagedState -eq 'Active')
+                {
+                    $registrationsByKey[[string] $registration.Key] = $registration
+                }
+                elseif ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration)
+                {
+                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale'
+                }
+                else
+                {
+                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                }
             }
 
             foreach ($registration in $discoveredRegistrations)
@@ -171,24 +192,28 @@ function Get-CompleterRegistration
                     continue
                 }
 
+                if ($registrationsByKey.Contains([string] $registration.Key))
+                {
+                    continue
+                }
+
                 if ($DiscoveredOnly)
                 {
-                    if ($registrationsByKey.Contains([string] $registration.Key))
+                    $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
+
+                    if ($registrationState.ManagedState -eq 'Active')
                     {
                         continue
                     }
 
-                    $managedMatch = Find-ManagedCompleterRegistration -Key $registration.Key
-                    if ($null -ne $managedMatch)
+                    if ($registrationState.ManagedState -eq 'Stale')
                     {
+                        $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                         continue
                     }
                 }
 
-                if (-not $registrationsByKey.Contains([string] $registration.Key))
-                {
-                    $registrationsByKey[[string] $registration.Key] = $registration
-                }
+                $registrationsByKey[[string] $registration.Key] = $registration
             }
         }
         catch

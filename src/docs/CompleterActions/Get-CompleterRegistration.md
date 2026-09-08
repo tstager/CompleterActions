@@ -55,7 +55,12 @@ Returns completer registration records for all registrations, specific
 registration keys, native command completers, or command parameter completers.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
-to the same target.
+to the same target and the managed record still matches the live runtime value.
+When the runtime registration was replaced outside this module, the live
+discovered value is returned with State 'Conflicted' instead; -ManagedOnly
+returns the managed record with State 'Stale'.
+When the runtime registration was removed outside this module, the managed
+record is returned with State 'Stale' and IsRuntimeRegistered false.
 The command accepts arrays for key, command, and parameter
 lookup scenarios and supports property-name pipeline binding for key-based and
 target-based lookups.

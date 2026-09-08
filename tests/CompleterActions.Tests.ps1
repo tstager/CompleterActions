@@ -293,7 +293,7 @@ Describe 'Completer registration public API' {
         $registration.ScriptBlock | Should -Not -BeNullOrEmpty
         $registration.ScriptText | Should -Match 'eta'
 
-        $defaultOutput | Should -Match '(?m)^\s*Command\s+Parameter\s+Type\s+Source\s*$'
+        $defaultOutput | Should -Match '(?m)^\s*Command\s+Parameter\s+Type\s+Source\s+State\s*$'
         $defaultOutput | Should -Match 'Test-ManagedTool'
         $defaultOutput | Should -Not -Match '(?m)^\s*ScriptBlock\s*:'
         $defaultOutput | Should -Not -Match '(?m)^\s*ScriptText\s*:'
@@ -325,7 +325,7 @@ Describe 'Completer registration public API' {
         $pagedRegistrations[0].Source | Should -Be 'Discovered'
     }
 
-    It 'keeps managed registrations preferred when paging is used' {
+    It 'reports the live conflicted registration once when paging is used' {
         $managedScriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
 
@@ -341,11 +341,14 @@ Describe 'Completer registration public API' {
         $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $discoveredScriptBlock
 
+        $registrations = @(Get-CompleterRegistration -IncludeTotalCount)
         $registration = @(Get-CompleterRegistration -First 1)[0]
 
+        $registrations[0] | Should -Be ([uint64] 1)
         $registration.Key | Should -Be 'test-managedtool:name'
-        $registration.Source | Should -Be 'Managed'
-        $registration.ScriptText | Should -Match 'managed'
+        $registration.Source | Should -Be 'Discovered'
+        $registration.State | Should -Be 'Conflicted'
+        $registration.ScriptText | Should -Match 'discovered'
     }
 
     It 'applies paging after filtering by source' {
@@ -572,5 +575,292 @@ Describe 'Completer registration public API' {
             Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' |
                 Unregister-CompleterRegistration -Confirm:$false
         } | Should -Throw '*-AllowUnmanaged*'
+    }
+
+    It 'rolls back a fresh registration when the managed store write fails' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
+        }
+
+        & (Get-Module -Name 'CompleterActions') {
+            function script:Add-ManagedCompleterRegistration { throw 'forced managed-state failure' }
+        }
+
+        {
+            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+        } | Should -Throw '*forced managed-state failure*'
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 0
+        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
+    It 'restores the previous registration when a forced replacement fails to update the managed store' {
+        function Test-ManagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $oldScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('old', 'old', 'ParameterValue', 'old')
+        }
+
+        $newScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
+        }
+
+        $original = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+
+        & (Get-Module -Name 'CompleterActions') {
+            function script:Add-ManagedCompleterRegistration { throw 'forced managed-state failure' }
+        }
+
+        {
+            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force
+        } | Should -Throw '*forced managed-state failure*'
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 1
+        [object]::ReferenceEquals($state['Registrations']['test-managedtool:name'], $original) | Should -BeTrue
+
+        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration.Source | Should -Be 'Managed'
+        $registration.State | Should -Be 'Active'
+        $registration.ScriptText | Should -Match 'old'
+
+        $inputScript = 'Test-ManagedTool -Name o'
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('old')
+    }
+
+    It 'leaves the previous registration untouched when a forced replacement fails to write the runtime' {
+        $oldScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('old', 'old', 'ParameterValue', 'old')
+        }
+
+        $newScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
+        }
+
+        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+
+        & (Get-Module -Name 'CompleterActions') {
+            function script:Add-RuntimeCompleterRegistration { throw 'forced runtime-write failure' }
+        }
+
+        {
+            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force
+        } | Should -Throw '*forced runtime-write failure*'
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 1
+        $state['Registrations']['test-managedtool:name'].ScriptText | Should -Match 'old'
+
+        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration.Source | Should -Be 'Managed'
+        $registration.State | Should -Be 'Active'
+        $registration.ScriptText | Should -Match 'old'
+    }
+
+    It 'reports a rollback failure separately from the registration failure' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
+        }
+
+        & (Get-Module -Name 'CompleterActions') {
+            function script:Add-ManagedCompleterRegistration { throw 'forced managed-state failure' }
+            function script:Remove-RuntimeCompleterRegistration { throw 'forced rollback failure' }
+        }
+
+        $thrown = $null
+        try
+        {
+            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+        }
+        catch
+        {
+            $thrown = $_
+        }
+
+        $thrown | Should -Not -BeNullOrEmpty
+        $thrown.Exception.Message | Should -Match 'forced managed-state failure'
+        $thrown.Exception.Message | Should -Match 'Rollback of the previous runtime and managed state also failed'
+        $thrown.Exception.Message | Should -Match 'forced rollback failure'
+    }
+
+    It 'treats a managed record as stale after the runtime is overwritten outside the module' {
+        function Test-ManagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $oldScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('old', 'old', 'ParameterValue', 'old')
+        }
+
+        $externalScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
+        }
+
+        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
+
+        $inputScript = 'Test-ManagedTool -Name '
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('external')
+
+        $liveRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $liveRegistration.Source | Should -Be 'Discovered'
+        $liveRegistration.State | Should -Be 'Conflicted'
+        $liveRegistration.IsManaged | Should -BeFalse
+        $liveRegistration.ScriptText | Should -Match 'external'
+
+        $managedRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ManagedOnly
+        $managedRegistration.Source | Should -Be 'Managed'
+        $managedRegistration.State | Should -Be 'Stale'
+        $managedRegistration.IsRuntimeRegistered | Should -BeFalse
+        $managedRegistration.ScriptText | Should -Match 'old'
+
+        $discoveredRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -DiscoveredOnly
+        $discoveredRegistration.State | Should -Be 'Conflicted'
+        $discoveredRegistration.ScriptText | Should -Match 'external'
+
+        {
+            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock
+        } | Should -Throw '*is stale*Use -Force*'
+
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('external')
+
+        {
+            Unregister-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false
+        } | Should -Throw '*is stale*-AllowUnmanaged*'
+
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('external')
+
+        $removed = Unregister-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+        $removed.Source | Should -Be 'Discovered'
+        $removed.ScriptText | Should -Match 'external'
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 0
+        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
+    It 'reconciles a stale managed record with a forced registration' {
+        function Test-ManagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $oldScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('old', 'old', 'ParameterValue', 'old')
+        }
+
+        $externalScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
+        }
+
+        $newScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
+        }
+
+        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
+
+        $registration = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force -PassThru
+
+        $registration.State | Should -Be 'Active'
+
+        $resolved = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $resolved.Source | Should -Be 'Managed'
+        $resolved.State | Should -Be 'Active'
+        $resolved.ScriptText | Should -Match 'new'
+
+        $inputScript = 'Test-ManagedTool -Name '
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('new')
+    }
+
+    It 'treats a managed record as stale after the runtime entry is removed outside the module' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('old', 'old', 'ParameterValue', 'old')
+        }
+
+        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
+
+        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration.Source | Should -Be 'Managed'
+        $registration.State | Should -Be 'Stale'
+        $registration.IsRuntimeRegistered | Should -BeFalse
+
+        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+
+        {
+            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+        } | Should -Throw '*is stale*Use -Force*'
+
+        $reregistered = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -Force -PassThru
+        $reregistered.State | Should -Be 'Active'
+        (Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name').State | Should -Be 'Active'
+
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
+
+        $removed = Unregister-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru
+        $removed.Source | Should -Be 'Managed'
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 0
+        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 }

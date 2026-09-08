@@ -50,6 +50,13 @@ Register-ArgumentCompleter and records the registrations in the module's managed
 state.
 Existing managed or runtime registrations are preserved unless you use
 -Force to replace them.
+Registering the same script for a target that is already managed is idempotent
+only while the managed record still matches the live runtime value; when the
+runtime registration was replaced or removed outside this module, the managed
+record is stale and the command fails until you reconcile it with -Force.
+Each target is updated transactionally: if the runtime or managed write fails,
+the previous runtime and managed state are restored and any rollback failure is
+reported alongside the original error.
 The command supports array inputs for command and
 parameter targets, and it can also accept pipeline InputObject values that
 describe the target and expose a ScriptBlock property.

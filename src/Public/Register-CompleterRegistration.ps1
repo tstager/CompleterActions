@@ -6,9 +6,16 @@ Registers a managed PowerShell argument completer.
 Registers native or command-parameter argument completers with
 Register-ArgumentCompleter and records the registrations in the module's managed
 state. Existing managed or runtime registrations are preserved unless you use
--Force to replace them. The command supports array inputs for command and
-parameter targets, and it can also accept pipeline InputObject values that
-describe the target and expose a ScriptBlock property.
+-Force to replace them. Registering the same script for a target that is already
+managed is idempotent only while the managed record still matches the live
+runtime value; when the runtime registration was replaced or removed outside
+this module, the managed record is stale and the command fails until you
+reconcile it with -Force. Each target is updated transactionally: if the
+runtime or managed write fails, the previous runtime and managed state are
+restored and any rollback failure is reported alongside the original error. The
+command supports array inputs for command and parameter targets, and it can
+also accept pipeline InputObject values that describe the target and expose a
+ScriptBlock property.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
@@ -31,8 +38,9 @@ Provides the completer script block to register. When multiple targets are
 supplied through arrays, the same script block is reused for each target.
 
 .PARAMETER Force
-Removes an existing managed or runtime registration for the same target before
-registering the new completer.
+Replaces an existing managed or runtime registration for the same target with
+the new completer, including a stale managed record whose live runtime value was
+changed outside this module.
 
 .PARAMETER PassThru
 Returns the managed registration records that were created or reused.
@@ -122,16 +130,22 @@ function Register-CompleterRegistration
                 $targetImportModule = $resolvedInput.ImportModule
                 $existingManagedRegistration = $null
                 $existingRuntimeRegistration = $null
-                $removedManagedRegistration = $null
-                $removedRuntimeRegistration = $null
+                $registration = $null
+                $rollbackError = $null
 
                 try
                 {
-                    $existingManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-                    $existingRuntimeRegistration = Find-RuntimeCompleterRegistration -Key $target.Key
+                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                    $existingManagedRegistration = $registrationState.ManagedRegistration
+                    $existingRuntimeRegistration = $registrationState.RuntimeRegistration
 
                     if ($null -ne $existingManagedRegistration -and -not $Force)
                     {
+                        if ($registrationState.ManagedState -eq 'Stale')
+                        {
+                            throw "The module-managed completer registration for '$($target.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
+                        }
+
                         if ($existingManagedRegistration.ScriptText -eq $targetScriptBlock.ToString())
                         {
                             if ($PassThru)
@@ -155,23 +169,42 @@ function Register-CompleterRegistration
                         continue
                     }
 
-                    if ($Force)
-                    {
-                        if ($null -ne $existingManagedRegistration)
-                        {
-                            $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $target.Key
-                        }
-
-                        if ($null -ne $existingRuntimeRegistration)
-                        {
-                            $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $target.Key
-                        }
-                    }
-
-                    $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
-
                     $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed' -ImportModule $targetImportModule
-                    $registration = Add-ManagedCompleterRegistration -Registration $registration
+
+                    try
+                    {
+                        $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
+                        $registration = Add-ManagedCompleterRegistration -Registration $registration
+                    }
+                    catch
+                    {
+                        try
+                        {
+                            if ($null -ne $existingRuntimeRegistration)
+                            {
+                                $null = Add-RuntimeCompleterRegistration -Target $existingRuntimeRegistration -ScriptBlock $existingRuntimeRegistration.ScriptBlock
+                            }
+                            else
+                            {
+                                $null = Remove-RuntimeCompleterRegistration -Key $target.Key
+                            }
+
+                            if ($null -ne $existingManagedRegistration)
+                            {
+                                $null = Add-ManagedCompleterRegistration -Registration $existingManagedRegistration
+                            }
+                            else
+                            {
+                                $null = Remove-ManagedCompleterRegistration -Key $target.Key
+                            }
+                        }
+                        catch
+                        {
+                            $rollbackError = $_
+                        }
+
+                        throw
+                    }
 
                     if ($PassThru)
                     {
@@ -180,26 +213,9 @@ function Register-CompleterRegistration
                 }
                 catch
                 {
-                    if ($Force)
+                    if ($null -ne $rollbackError)
                     {
-                        $currentManagedRegistration = Find-ManagedCompleterRegistration -Key $target.Key
-                        if ($null -ne $currentManagedRegistration)
-                        {
-                            $null = Remove-ManagedCompleterRegistration -Key $target.Key
-                        }
-
-                        if ($null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
-                        {
-                            if ($null -ne $removedRuntimeRegistration)
-                            {
-                                $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
-                            }
-
-                            if ($null -ne $removedManagedRegistration)
-                            {
-                                $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
-                            }
-                        }
+                        throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message) Rollback of the previous runtime and managed state also failed, so the target may be inconsistent: $($rollbackError.Exception.Message)"
                     }
 
                     throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
@@ -208,8 +224,8 @@ function Register-CompleterRegistration
                 {
                     $existingManagedRegistration = $null
                     $existingRuntimeRegistration = $null
-                    $removedManagedRegistration = $null
-                    $removedRuntimeRegistration = $null
+                    $registration = $null
+                    $rollbackError = $null
                     $targetImportModule = $null
                 }
             }
