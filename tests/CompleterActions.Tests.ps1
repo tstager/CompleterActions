@@ -72,6 +72,7 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture.exe' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'C:\completeractions-tests\drive-tool.exe' -CompleterType 'Native'
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
     }
@@ -91,6 +92,7 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture.exe' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'C:\completeractions-tests\drive-tool.exe' -CompleterType 'Native'
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -525,6 +527,99 @@ Describe 'Completer registration public API' {
         {
             [pscustomobject] @{ CommandName = 'Test-ArrayOne' } | Register-CompleterRegistration -PassThru
         } | Should -Throw '*Failed to resolve a completer target from InputObject*'
+    }
+
+    It 'registers, finds, and removes a drive-qualified native path supplied as a key' {
+        $nativePath = 'C:\completeractions-tests\drive-tool.exe'
+        $scriptBlock = {
+            param($wordToComplete, $commandAst, $cursorPosition)
+
+            [System.Management.Automation.CompletionResult]::new('drivealpha', 'drivealpha', 'ParameterValue', 'drivealpha')
+        }
+
+        $registration = [pscustomobject] @{ Key = $nativePath; ScriptBlock = $scriptBlock } | Register-CompleterRegistration -PassThru
+
+        $registration.Key | Should -Be $nativePath.ToLowerInvariant()
+        $registration.CommandName | Should -Be $nativePath
+        $registration.ParameterName | Should -BeNullOrEmpty
+        $registration.CompleterType | Should -Be 'Native'
+        $registration.IsRuntimeRegistered | Should -BeTrue
+
+        $inputScript = '{0} d' -f $nativePath
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Contain 'drivealpha'
+
+        $found = Get-CompleterRegistration -Key $nativePath
+        $found.CompleterType | Should -Be 'Native'
+        $found.CommandName | Should -Be $nativePath
+        $found.Source | Should -Be 'Managed'
+        (Get-CompleterRegistration -CommandName $nativePath -Native).Key | Should -Be $found.Key
+
+        $removed = @(Unregister-CompleterRegistration -Key $nativePath -Confirm:$false -PassThru)
+
+        $removed.Count | Should -Be 1
+        $removed[0].CompleterType | Should -Be 'Native'
+        Get-CompleterRegistration -Key $nativePath | Should -BeNullOrEmpty
+
+        $completionAfterRemoval = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completionAfterRemoval.CompletionMatches.CompletionText | Should -Not -Contain 'drivealpha'
+    }
+
+    It 'still resolves ordinary command:parameter keys as parameter targets' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('omicron', 'omicron', 'ParameterValue', 'omicron')
+        }
+
+        $registration = [pscustomobject] @{ Key = 'Test-ArrayOne:Name'; ScriptBlock = $scriptBlock } | Register-CompleterRegistration -PassThru
+
+        $registration.CompleterType | Should -Be 'Parameter'
+        $registration.CommandName | Should -Be 'Test-ArrayOne'
+        $registration.ParameterName | Should -Be 'Name'
+
+        $found = Get-CompleterRegistration -Key 'Test-ArrayOne:Name'
+        $found.CompleterType | Should -Be 'Parameter'
+        $found.CommandName | Should -Be 'Test-ArrayOne'
+        $found.ParameterName | Should -Be 'Name'
+
+        $removed = @(Unregister-CompleterRegistration -Key 'Test-ArrayOne:Name' -Confirm:$false -PassThru)
+
+        $removed.Count | Should -Be 1
+        $removed[0].CompleterType | Should -Be 'Parameter'
+        Get-CompleterRegistration -Key 'Test-ArrayOne:Name' | Should -BeNullOrEmpty
+    }
+
+    It 'classifies key-only input identically for target lists and input objects' {
+        $results = InModuleScope CompleterActions {
+            foreach ($key in 'Get-Item:Path', 'git', 'C:\tools\example.exe', 'C:/tools/example.exe', 'tool:/opt/example')
+            {
+                [pscustomobject] @{
+                    Key = $key
+                    ListType = (Resolve-CompleterTargetList -Key $key).TargetType
+                    InputType = ([pscustomobject] @{ Key = $key } | Resolve-CompleterInputObject).Target.TargetType
+                    RuntimeKeyType = ([pscustomobject] @{ RuntimeKey = $key } | Resolve-CompleterInputObject).Target.TargetType
+                }
+            }
+        }
+
+        foreach ($result in $results)
+        {
+            $result.InputType | Should -Be $result.ListType
+            $result.RuntimeKeyType | Should -Be $result.ListType
+        }
+
+        ($results | Where-Object Key -eq 'Get-Item:Path').ListType | Should -Be 'CommandParameter'
+        ($results | Where-Object Key -eq 'git').ListType | Should -Be 'Native'
+        ($results | Where-Object Key -eq 'C:\tools\example.exe').ListType | Should -Be 'Native'
+        ($results | Where-Object Key -eq 'C:/tools/example.exe').ListType | Should -Be 'Native'
+        ($results | Where-Object Key -eq 'tool:/opt/example').ListType | Should -Be 'Native'
+
+        $explicit = InModuleScope CompleterActions {
+            ([pscustomobject] @{ Key = 'C:\tools\example.exe'; IsNative = $false } | Resolve-CompleterInputObject).Target.TargetType
+        }
+
+        $explicit | Should -Be 'CommandParameter'
     }
 
     It 'imports supported completer scripts without mutating runtime and produces register-compatible objects' {
