@@ -289,6 +289,8 @@ COMMON FAILURES
     - top-level assignments or loops
     - `try`/`catch` blocks at script scope
     - dot-sourcing another script
+    - `#requires -Modules`, `#requires -Assembly`, `using module`, or
+      `using assembly`
     - a variable instead of a literal `-ScriptBlock`
     - dynamic expressions for `-CommandName` or `-ParameterName`
     - positional `Register-ArgumentCompleter` arguments

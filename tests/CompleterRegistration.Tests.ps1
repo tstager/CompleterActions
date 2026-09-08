@@ -84,6 +84,48 @@ Describe 'Module Manifest Tests' {
         $builtManifest.PrivateData.PSData.ProjectUri | Should -Be $sourceManifest.PrivateData.PSData.ProjectUri
         $builtManifest.Copyright | Should -Match ([regex]::Escape($sourceManifest.Author))
     }
+
+    It 'keeps the tracked build output in sync with the module sources' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to reproduce the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to reproduce the packaged module'
+        }
+
+        # The build derives the module name from its folder, so stage the build inputs
+        # under a folder with the module name and build there instead of in the repo.
+        $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'CompleterActions'
+        New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+        foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
+        {
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+        }
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+
+        foreach ($relativePath in 'CompleterActions.psm1', 'CompleterActions.Format.ps1xml', 'en-US/about_Import_Completers.help.txt')
+        {
+            $trackedPath = Join-Path -Path $repoRoot -ChildPath "build/CompleterActions/$relativePath"
+            $freshPath = Join-Path -Path $stagingRoot -ChildPath "build/CompleterActions/$relativePath"
+
+            @(Get-Content -LiteralPath $trackedPath) | Should -Be @(Get-Content -LiteralPath $freshPath) -Because "build/CompleterActions/$relativePath must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
+        }
+
+        $manifestContentFilter = { $_ -notmatch '^\s*#\s*Generated on:' }
+        $trackedManifestLines = @(Get-Content -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') | Where-Object -FilterScript $manifestContentFilter)
+        $freshManifestLines = @(Get-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') | Where-Object -FilterScript $manifestContentFilter)
+
+        $trackedManifestLines | Should -Be $freshManifestLines -Because "build/CompleterActions/CompleterActions.psd1 must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
+    }
 }
 
 Describe 'Module state bootstrap' {
