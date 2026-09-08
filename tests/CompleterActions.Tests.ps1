@@ -73,6 +73,7 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture.exe' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'C:\completeractions-tests\drive-tool.exe' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name' -CompleterType 'Parameter'
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
     }
@@ -93,6 +94,7 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'importfixture.exe' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'C:\completeractions-tests\drive-tool.exe' -CompleterType 'Native'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name' -CompleterType 'Parameter'
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -565,6 +567,45 @@ Describe 'Completer registration public API' {
         $completionAfterRemoval.CompletionMatches.CompletionText | Should -Not -Contain 'drivealpha'
     }
 
+    It 'resolves a forward-slash drive-qualified script path with a parameter suffix as a parameter target' {
+        $key = 'C:/completeractions-tests/drive-script.ps1:Name'
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('drivescript', 'drivescript', 'ParameterValue', 'drivescript')
+        }
+
+        $registration = [pscustomobject] @{ Key = $key; ScriptBlock = $scriptBlock } | Register-CompleterRegistration -PassThru
+
+        $registration.CompleterType | Should -Be 'Parameter'
+        $registration.CommandName | Should -Be 'C:/completeractions-tests/drive-script.ps1'
+        $registration.ParameterName | Should -Be 'Name'
+        $registration.Key | Should -Be $key.ToLowerInvariant()
+        $registration.IsRuntimeRegistered | Should -BeTrue
+
+        $runtimeTables = InModuleScope CompleterActions {
+            $runtime = Get-CompleterRuntime
+
+            [pscustomobject] @{
+                InParameterTable = Test-CompleterRuntimeDictionaryKey -Dictionary $runtime.CustomArgumentCompleters -Key 'C:/completeractions-tests/drive-script.ps1:Name'
+                InNativeTable    = Test-CompleterRuntimeDictionaryKey -Dictionary $runtime.NativeArgumentCompleters -Key 'C:/completeractions-tests/drive-script.ps1:Name'
+            }
+        }
+
+        $runtimeTables.InParameterTable | Should -BeTrue
+        $runtimeTables.InNativeTable | Should -BeFalse
+
+        $found = Get-CompleterRegistration -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name'
+        $found.Source | Should -Be 'Managed'
+        $found.Key | Should -Be $key.ToLowerInvariant()
+
+        $removed = @(Unregister-CompleterRegistration -Key $key -Confirm:$false -PassThru)
+
+        $removed.Count | Should -Be 1
+        $removed[0].CompleterType | Should -Be 'Parameter'
+        Get-CompleterRegistration -Key $key | Should -BeNullOrEmpty
+    }
+
     It 'still resolves ordinary command:parameter keys as parameter targets' {
         $scriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
@@ -592,7 +633,7 @@ Describe 'Completer registration public API' {
 
     It 'classifies key-only input identically for target lists and input objects' {
         $results = InModuleScope CompleterActions {
-            foreach ($key in 'Get-Item:Path', 'git', 'C:\tools\example.exe', 'C:/tools/example.exe', 'tool:/opt/example')
+            foreach ($key in 'Get-Item:Path', 'git', 'C:\tools\example.exe', 'C:/tools/example.exe', 'tool:/opt/example', 'C:\scripts\Do-Thing.ps1:Name', 'C:/scripts/Do-Thing.ps1:Name')
             {
                 [pscustomobject] @{
                     Key = $key
@@ -614,6 +655,8 @@ Describe 'Completer registration public API' {
         ($results | Where-Object Key -eq 'C:\tools\example.exe').ListType | Should -Be 'Native'
         ($results | Where-Object Key -eq 'C:/tools/example.exe').ListType | Should -Be 'Native'
         ($results | Where-Object Key -eq 'tool:/opt/example').ListType | Should -Be 'Native'
+        ($results | Where-Object Key -eq 'C:\scripts\Do-Thing.ps1:Name').ListType | Should -Be 'CommandParameter'
+        ($results | Where-Object Key -eq 'C:/scripts/Do-Thing.ps1:Name').ListType | Should -Be 'CommandParameter'
 
         $explicit = InModuleScope CompleterActions {
             ([pscustomobject] @{ Key = 'C:\tools\example.exe'; IsNative = $false } | Resolve-CompleterInputObject).Target.TargetType

@@ -5,11 +5,12 @@ Determines whether a key-only input should be treated as a native completer targ
 .DESCRIPTION
 Applies the module's shared rule for classifying a key when no explicit native
 indicator is available. A key without a colon is a native command name. A key
-with a colon is still native when it has the Windows drive-qualified path shape
-(a single letter, a colon, then a path separator) or when the text after its
-last colon contains a path separator, because a 'Command:Parameter' key never
-contains a path separator in its parameter part. Every other colon-bearing key
-is a command-parameter target.
+with a colon is still native when the text after its last colon contains a path
+separator, because a 'Command:Parameter' key never contains a path separator in
+its parameter part; this covers drive-qualified paths such as
+'C:\tools\example.exe' with either separator. Every other colon-bearing key,
+including a drive-qualified path followed by ':Parameter', is a
+command-parameter target.
 
 .PARAMETER Key
 The registration or runtime key to classify.
@@ -43,11 +44,6 @@ function Test-CompleterNativeKeyShape
     )
 
     if ($Key -notmatch ':')
-    {
-        return $true
-    }
-
-    if ($Key -match '^[A-Za-z]:[\/]')
     {
         return $true
     }
