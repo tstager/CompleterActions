@@ -34,13 +34,17 @@ jobs:
         shell: pwsh
         run: Invoke-Build -Task release_check
 
-      - name: Build
-        shell: pwsh
-        run: Invoke-Build -Task build
-
+      # Runs before Build on purpose: the build task cleans and regenerates
+      # build/CompleterActions inside the checkout, so building first would replace
+      # the committed package that the source-drift guard compares against, and the
+      # tag would publish from a package no test ever checked.
       - name: Test
         shell: pwsh
         run: Invoke-Pester -Path ./tests -CI
+
+      - name: Build
+        shell: pwsh
+        run: Invoke-Build -Task build
 
       # The build script reads $env:GalleryAPI, and environment variable names are
       # case-sensitive on Linux, so this name must keep that exact casing.

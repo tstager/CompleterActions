@@ -95,10 +95,6 @@ jobs:
           Install-PSResource -Name PSScriptAnalyzer -Version '1.25.0' -Repository PSGallery -TrustRepository -Scope CurrentUser
           Install-PSResource -Name Microsoft.PowerShell.PlatyPS -Version '1.0.3' -Repository PSGallery -TrustRepository -Scope CurrentUser
 
-      - name: Build
-        shell: pwsh
-        run: Invoke-Build -Task build
-
       - name: Lint
         shell: pwsh
         run: |
@@ -119,6 +115,10 @@ jobs:
       # Kept separate from Lint on purpose: importing PSScriptAnalyzer registers an
       # argument completer that changes the discovered registration order the paging
       # tests assert on, so the two must not share a process.
+      #
+      # Runs before Build on purpose: the build task cleans and regenerates
+      # build/CompleterActions inside the checkout, so building first would replace
+      # the committed package that the source-drift guard compares against.
       - name: Test
         shell: pwsh
         run: Invoke-Pester -Path ./tests -CI
@@ -130,3 +130,9 @@ jobs:
           name: test-results-${{ matrix.os }}-${{ matrix.channel }}
           path: testResults.xml
           if-no-files-found: ignore
+
+      # Last because it overwrites the checked-out build/CompleterActions. This step
+      # proves the build script itself runs on this OS and channel.
+      - name: Build
+        shell: pwsh
+        run: Invoke-Build -Task build
