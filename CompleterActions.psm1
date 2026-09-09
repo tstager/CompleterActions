@@ -16,7 +16,7 @@ ForEach ($folder in $functionFolders)
     }
 }
 
-$null = Get-CompleterActionState
+. (Join-Path -Path $sourceRoot -ChildPath 'Bootstrap.ps1')
 
 $publicFunctions = Get-ChildItem -Path (Join-Path -Path $sourceRoot -ChildPath 'Public') -Filter '*.ps1' |
     Sort-Object -Property BaseName |

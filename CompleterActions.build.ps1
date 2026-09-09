@@ -120,6 +120,9 @@ task build clean, external_help, {
 
     }
 
+    Get-Content -Path (Join-Path -Path $sourceRoot -ChildPath 'Bootstrap.ps1') |
+        Out-File -FilePath $moduleFilePath -Append -Encoding utf8
+
     if ($usingStatements.Count -gt 0) {
 
         @(

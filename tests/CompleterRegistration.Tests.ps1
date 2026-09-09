@@ -392,3 +392,58 @@ Describe 'Private completer registration helpers' {
         } | Should -Throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
     }
 }
+
+Describe 'Runtime capability probe' {
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'resolves every reflected runtime member on the current PowerShell engine' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        {
+            & $module {
+                Assert-CompleterRuntimeCapability
+            }
+        } | Should -Not -Throw
+    }
+
+    It 'throws one error naming the engine version and the context field when it is missing' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $errorRecord = {
+            & $module {
+                Assert-CompleterRuntimeCapability -EngineIntrinsicsType ([pscustomobject]) -EngineIntrinsics ([pscustomobject]@{})
+            }
+        } | Should -Throw -PassThru
+
+        $errorRecord.Exception.Message | Should -Match ([regex]::Escape($PSVersionTable.PSVersion.ToString()))
+        $errorRecord.Exception.Message | Should -Match '_context'
+    }
+
+    It 'throws one error naming the engine version and both completer dictionaries when they are missing' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $errorRecord = {
+            & $module {
+                Assert-CompleterRuntimeCapability -RuntimeExecutionContext ([pscustomobject]@{})
+            }
+        } | Should -Throw -PassThru
+
+        $errorRecord.Exception.Message | Should -Match ([regex]::Escape($PSVersionTable.PSVersion.ToString()))
+        $errorRecord.Exception.Message | Should -Match 'CustomArgumentCompleters'
+        $errorRecord.Exception.Message | Should -Match 'NativeArgumentCompleters'
+    }
+
+    It 'runs the capability probe from the tracked build output' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $bootstrapLines = @(Get-Content -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'src/Bootstrap.ps1'))
+        $builtModuleLines = @(Get-Content -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psm1'))
+
+        $bootstrapLines | Should -Contain 'Assert-CompleterRuntimeCapability'
+        @($builtModuleLines | Select-Object -Last $bootstrapLines.Count) | Should -Be $bootstrapLines -Because 'the packaged module must call the import bootstrap after every function definition'
+    }
+}
