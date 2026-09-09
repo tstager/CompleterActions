@@ -220,16 +220,18 @@ Invoke-Build -Task ?
 The repository uses `Pester`.
 
 ```powershell
-Invoke-Pester
+Invoke-Pester -Path .\tests
 ```
+
+Run the tests in their own `pwsh -NoProfile` process. Importing PSScriptAnalyzer into the same session registers an argument completer that changes the discovered registration order the paging tests assert on. The tests also compare the tracked `build\CompleterActions` package against the sources, so run them before `Invoke-Build -Task build`, which regenerates that package.
 
 ### Linting
 
-The repository includes `PSScriptAnalyzerSettings.psd1`.
+The repository includes `PSScriptAnalyzerSettings.psd1`. CI runs the same two commands.
 
 ```powershell
-Invoke-ScriptAnalyzer -Path .\src -Settings .\PSScriptAnalyzerSettings.psd1
-Invoke-ScriptAnalyzer -Path .\CompleterActions.psm1 -Settings .\PSScriptAnalyzerSettings.psd1
+Invoke-ScriptAnalyzer -Path .\src -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
+Invoke-ScriptAnalyzer -Path .\tests -Recurse -Settings .\PSScriptAnalyzerSettings.psd1
 ```
 
 ## Releasing
@@ -244,7 +246,7 @@ Each release is then a tag push:
 Invoke-Build -Task build
 git commit -am 'chore(release): bump module version to X.Y.Z'
 git tag vX.Y.Z
-git push origin vX.Y.Z
+git push origin main vX.Y.Z
 ```
 
 The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, and finally creates the GitHub release. The tag must equal `v` plus `ModuleVersion` or `release_check` throws before anything is published.
@@ -252,7 +254,8 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
 ## Architecture notes
 
 - `CompleterActions.psd1` is the root manifest and defines the exported public functions, formatting file, and PowerShell/Core compatibility.
-- `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Private` and `src\Public`, initializes module state, and exports the public function set.
+- `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Private` and `src\Public`, runs `src\Bootstrap.ps1`, and exports the public function set.
+- `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe and module state initialization. The build appends it to the packaged `.psm1` after the function definitions.
 - `src\Public` contains the user-facing command surface:
   - `Get-CompleterRegistration`
   - `Import-CompleterScript`
@@ -263,6 +266,8 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
 ### Runtime internals caveat
 
 The module discovers live completer registrations by reflecting into PowerShell runtime internals to access the underlying completer dictionaries. That makes the current implementation practical and useful, but it also means runtime discovery depends on non-public engine details and may need maintenance if PowerShell internals change in a future release.
+
+`Assert-CompleterRuntimeCapability` resolves every reflected member once during import. On an engine whose internals have changed, `Import-Module` fails with a single error that names the running PowerShell version and the members that could not be resolved, instead of a later `Get` or `Register` call failing deep inside the module.
 
 ## Development notes
 
