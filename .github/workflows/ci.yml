@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }} pwsh ${{ matrix.channel }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        channel: ['7.4', '7.5', '7.6', 'preview']
+
+    steps:
+      # The build derives the module name from the checkout folder leaf, so the
+      # default checkout layout (.../CompleterActions) is required. Full history
+      # keeps the tag-dependent release policy test from silently self-skipping.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install PowerShell ${{ matrix.channel }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $channel = '${{ matrix.channel }}'
+
+          $releases = Invoke-RestMethod -Uri 'https://api.github.com/repos/PowerShell/PowerShell/releases?per_page=100' -Headers @{
+              Authorization = "Bearer $env:GH_TOKEN"
+              Accept        = 'application/vnd.github+json'
+          }
+
+          $release = if ($channel -eq 'preview')
+          {
+              $releases | Where-Object prerelease -eq $true | Select-Object -First 1
+          }
+          else
+          {
+              $releases | Where-Object { -not $_.prerelease -and $_.tag_name -like "v$channel.*" } | Select-Object -First 1
+          }
+
+          if ($null -eq $release)
+          {
+              throw "No PowerShell release found for channel '$channel'."
+          }
+
+          $version = $release.tag_name -replace '^v', ''
+          $target = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'pwsh'
+          Write-Host "Installing PowerShell $version from $($release.tag_name)"
+
+          if ($IsWindows)
+          {
+              $asset = "PowerShell-$version-win-x64.zip"
+              $archive = Join-Path -Path $env:RUNNER_TEMP -ChildPath $asset
+              Invoke-WebRequest -Uri "https://github.com/PowerShell/PowerShell/releases/download/$($release.tag_name)/$asset" -OutFile $archive
+              Expand-Archive -Path $archive -DestinationPath $target -Force
+          }
+          else
+          {
+              $asset = "powershell-$version-linux-x64.tar.gz"
+              $archive = Join-Path -Path $env:RUNNER_TEMP -ChildPath $asset
+              Invoke-WebRequest -Uri "https://github.com/PowerShell/PowerShell/releases/download/$($release.tag_name)/$asset" -OutFile $archive
+              New-Item -Path $target -ItemType Directory -Force | Out-Null
+              tar -xzf $archive -C $target
+              chmod +x (Join-Path -Path $target -ChildPath 'pwsh')
+          }
+
+          # GITHUB_PATH entries are prepended, so later 'shell: pwsh' steps use this build.
+          $target | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Show version
+        shell: pwsh
+        run: $PSVersionTable | Out-String
+
+      - name: Install modules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-PSResource -Name InvokeBuild -Version '5.14.23' -Repository PSGallery -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name Pester -Version '6.1.0' -Repository PSGallery -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name PSScriptAnalyzer -Version '1.25.0' -Repository PSGallery -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name Microsoft.PowerShell.PlatyPS -Version '1.0.3' -Repository PSGallery -TrustRepository -Scope CurrentUser
+
+      - name: Build
+        shell: pwsh
+        run: Invoke-Build -Task build
+
+      - name: Lint
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $findings = @(
+              Invoke-ScriptAnalyzer -Path ./src -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+              Invoke-ScriptAnalyzer -Path ./tests -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          )
+
+          if ($findings.Count -gt 0)
+          {
+              $findings | Format-Table -AutoSize | Out-String | Write-Host
+              exit 1
+          }
+
+          Write-Host 'PSScriptAnalyzer reported no findings.'
+
+      # Kept separate from Lint on purpose: importing PSScriptAnalyzer registers an
+      # argument completer that changes the discovered registration order the paging
+      # tests assert on, so the two must not share a process.
+      - name: Test
+        shell: pwsh
+        run: Invoke-Pester -Path ./tests -CI
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results-${{ matrix.os }}-${{ matrix.channel }}
+          path: testResults.xml
+          if-no-files-found: ignore

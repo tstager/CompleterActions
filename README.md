@@ -7,6 +7,7 @@
 <p align="center"><strong>PowerShell completion scripts for managed registrations, runtime discovery, and safe removal.</strong></p>
 
 <p align="center">
+    <a href="https://github.com/tstager/CompleterActions/actions/workflows/ci.yml"><img src="https://github.com/tstager/CompleterActions/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://learn.microsoft.com/powershell/"><img src="https://img.shields.io/badge/PowerShell-7%2B-012456?logo=powershell&logoColor=white" alt="PowerShell 7+" /></a>
     <a href="https://learn.microsoft.com/powershell/scripting/install/powershell-core-support"><img src="https://img.shields.io/badge/Edition-Core-0078D4?logo=powershell&logoColor=white" alt="PowerShell Core only" /></a>
     <a href="LICENSE.md"><img src="https://img.shields.io/badge/License-MIT-2da44e.svg" alt="MIT License" /></a>
