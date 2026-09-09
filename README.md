@@ -232,6 +232,23 @@ Invoke-ScriptAnalyzer -Path .\src -Settings .\PSScriptAnalyzerSettings.psd1
 Invoke-ScriptAnalyzer -Path .\CompleterActions.psm1 -Settings .\PSScriptAnalyzerSettings.psd1
 ```
 
+## Releasing
+
+Once per repository, add a PowerShell Gallery API key as the `GALLERY_API_KEY` secret under Settings > Secrets and variables > Actions.
+
+Each release is then a tag push:
+
+```powershell
+# bump ModuleVersion in CompleterActions.psd1, move the Unreleased CHANGELOG entries
+# under the new version heading, then regenerate and commit the packaged build
+Invoke-Build -Task build
+git commit -am 'chore(release): bump module version to X.Y.Z'
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, and finally creates the GitHub release. The tag must equal `v` plus `ModuleVersion` or `release_check` throws before anything is published.
+
 ## Architecture notes
 
 - `CompleterActions.psd1` is the root manifest and defines the exported public functions, formatting file, and PowerShell/Core compatibility.

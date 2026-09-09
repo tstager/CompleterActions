@@ -1,0 +1,112 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish and release
+    runs-on: ubuntu-latest
+
+    steps:
+      # Full history including the tag object is load-bearing: release_check only
+      # compares HEAD's tag with ModuleVersion when HEAD is actually tagged, and
+      # warns instead of throwing when it is not.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install modules
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Install-PSResource -Name InvokeBuild -Version '5.14.23' -Repository PSGallery -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name Pester -Version '6.1.0' -Repository PSGallery -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name PSScriptAnalyzer -Version '1.25.0' -Repository PSGallery -TrustRepository -Scope CurrentUser
+          Install-PSResource -Name Microsoft.PowerShell.PlatyPS -Version '1.0.3' -Repository PSGallery -TrustRepository -Scope CurrentUser
+
+      - name: Verify tag matches ModuleVersion
+        shell: pwsh
+        run: Invoke-Build -Task release_check
+
+      - name: Build
+        shell: pwsh
+        run: Invoke-Build -Task build
+
+      - name: Test
+        shell: pwsh
+        run: Invoke-Pester -Path ./tests -CI
+
+      # The build script reads $env:GalleryAPI, and environment variable names are
+      # case-sensitive on Linux, so this name must keep that exact casing.
+      - name: Publish to the PowerShell Gallery
+        shell: pwsh
+        env:
+          GalleryAPI: ${{ secrets.GALLERY_API_KEY }}
+        run: Invoke-Build -Task Publish_build
+
+      - name: Prepare release assets and notes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Compress-Archive -Path ./build/CompleterActions -DestinationPath (Join-Path -Path $env:RUNNER_TEMP -ChildPath 'CompleterActions.zip') -Force
+
+          if (-not (Test-Path -Path ./CHANGELOG.md))
+          {
+              Write-Host 'No CHANGELOG.md; the release will use generated notes only.'
+              return
+          }
+
+          $version = $env:GITHUB_REF_NAME -replace '^v', ''
+          $heading = "^##\s+\[?$([regex]::Escape($version))\]?"
+          $section = [System.Collections.Generic.List[string]]::new()
+          $capture = $false
+
+          foreach ($line in (Get-Content -Path ./CHANGELOG.md))
+          {
+              if ($line -match '^##\s')
+              {
+                  if ($capture)
+                  {
+                      break
+                  }
+
+                  $capture = $line -match $heading
+                  continue
+              }
+
+              if ($capture)
+              {
+                  $section.Add($line)
+              }
+          }
+
+          if ($section.Count -eq 0)
+          {
+              Write-Host "CHANGELOG.md has no section for $version; the release will use generated notes only."
+              return
+          }
+
+          $section | Set-Content -Path (Join-Path -Path $env:RUNNER_TEMP -ChildPath 'notes.md') -Encoding utf8
+
+      - name: Create the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $notes = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'notes.md'
+          $asset = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'CompleterActions.zip'
+          $arguments = @($env:GITHUB_REF_NAME, '--title', $env:GITHUB_REF_NAME, '--verify-tag', '--generate-notes')
+
+          if (Test-Path -Path $notes)
+          {
+              $arguments += @('--notes-file', $notes)
+          }
+
+          gh release create @arguments $asset
