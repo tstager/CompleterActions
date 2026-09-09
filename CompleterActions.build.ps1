@@ -145,7 +145,7 @@ task build clean, external_help, {
         New-Item -Path $buildpath -ItemType Directory -Value "en-US" -Force
     }
 
-    Copy-Item -Path (Join-Path -Path (Join-Path -Path $docPath -ChildPath $modulename) -ChildPath "$modulename-help.xml") -Destination (Join-Path -Path $moduleHelpPath -ChildPath "$modulename-help.xml") -Force
+    Copy-Item -Path (Join-Path -Path (Join-Path -Path $docPath -ChildPath $modulename) -ChildPath "$modulename-Help.xml") -Destination (Join-Path -Path $moduleHelpPath -ChildPath "$modulename-help.xml") -Force
 
     $aboutHelpSourcePath = Join-Path -Path $PSScriptRoot -ChildPath 'en-US'
     if (Test-Path -Path $aboutHelpSourcePath) {
