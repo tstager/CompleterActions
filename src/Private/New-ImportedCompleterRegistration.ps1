@@ -20,6 +20,10 @@ The source completer script path.
 .PARAMETER ImportModule
 The temporary module that owns the imported script block context.
 
+.PARAMETER Trusted
+Indicates that the script was imported through the trusted tier, which
+dot-sources it without validating it against the strict import grammar.
+
 .OUTPUTS
 CompleterActions.ImportedCompleterRegistration
 #>
@@ -43,7 +47,10 @@ function New-ImportedCompleterRegistration
 
         [Parameter(Mandatory)]
         [ValidateNotNull()]
-        [System.Management.Automation.PSModuleInfo] $ImportModule
+        [System.Management.Automation.PSModuleInfo] $ImportModule,
+
+        [Parameter()]
+        [switch] $Trusted
     )
 
     [pscustomobject] [ordered] @{
@@ -58,6 +65,7 @@ function New-ImportedCompleterRegistration
         CompleterType   = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
         TargetType      = [string] $Target.TargetType
         Source          = 'Imported'
+        Trusted         = [bool] $Trusted
         Path            = $SourcePath
         SourcePath      = $SourcePath
         ImportModule    = $ImportModule

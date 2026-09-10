@@ -7,14 +7,17 @@ Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows Register-ArgumentCompleter, and emits objects that
 can be piped directly to Register-CompleterRegistration -InputObject.
 
-Import-CompleterScript is safe by default for supported script shapes: it
+Import-CompleterScript has two tiers. The strict tier is the default: it
 validates the script against a closed grammar before executing it, rejects
 every unsupported construct with the same findings Test-CompleterScript
 reports, and avoids mutating the live runtime completer tables during import.
-Imported ScriptBlock objects keep the temporary module context that contains
-helper functions and script-scope state defined by the source script.
+The trusted tier, selected with -Trusted, skips the grammar and dot-sources the
+script as-is inside the same capture module, so use it only for scripts you
+wrote or reviewed. Imported ScriptBlock objects keep the temporary module
+context that contains helper functions and script-scope state defined by the
+source script under either tier.
 
-Compatible completer scripts must be self-contained and must keep script scope
+Compatible strict-tier completer scripts must be self-contained and must keep script scope
 limited to Set-StrictMode, function definitions, importer-safe if statements,
 and script-scope Register-ArgumentCompleter calls. Register-ArgumentCompleter
 usage must use explicit parameter names and only the supported import-time
@@ -37,16 +40,29 @@ One or more paths to completer script files. Wildcards are supported.
 .PARAMETER LiteralPath
 One or more literal paths to completer script files. Wildcards are not expanded.
 
+.PARAMETER Trusted
+Skips the strict grammar validation and dot-sources the script as-is inside the
+capture module. Everything at script scope runs at import time, exactly as it
+would when the script is dot-sourced from a profile. The emitted records carry
+Trusted set to true.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns CompleterActions.ImportedCompleterRegistration records compatible with
-Register-CompleterRegistration -InputObject.
+Register-CompleterRegistration -InputObject. The Trusted property records which
+tier produced the record.
 
 .EXAMPLE
 PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-CompleterRegistration -PassThru
 
 Imports a supported completer script and immediately registers the imported
 completer definitions through the module's managed registration API.
+
+.EXAMPLE
+PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-CompleterRegistration
+
+Imports a completer script you own without validating it against the strict
+grammar, then registers it.
 
 .NOTES
 Use this compatibility specification when authoring future standalone completer
@@ -75,7 +91,10 @@ function Import-CompleterScript
         [Parameter(Mandatory, ParameterSetName = 'LiteralPath', ValueFromPipelineByPropertyName)]
         [Alias('PSPath')]
         [ValidateNotNullOrEmpty()]
-        [string[]] $LiteralPath
+        [string[]] $LiteralPath,
+
+        [Parameter()]
+        [switch] $Trusted
     )
 
     process
@@ -86,16 +105,19 @@ function Import-CompleterScript
 
             foreach ($resolvedPath in @(Resolve-CompleterScriptPath @pathParameters))
             {
-                $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
-
-                if ($findings.Count -gt 0)
+                if (-not $Trusted)
                 {
-                    $findingLines = foreach ($finding in $findings)
-                    {
-                        'Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint
-                    }
+                    $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
 
-                    throw "Completer script '$resolvedPath' does not conform to the strict import grammar. Run Test-CompleterScript to work through the findings.$([Environment]::NewLine)$($findingLines -join [Environment]::NewLine)"
+                    if ($findings.Count -gt 0)
+                    {
+                        $findingLines = foreach ($finding in $findings)
+                        {
+                            'Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint
+                        }
+
+                        throw "Completer script '$resolvedPath' does not conform to the strict import grammar. Run Test-CompleterScript to work through the findings, or import with -Trusted to run the script as-is.$([Environment]::NewLine)$($findingLines -join [Environment]::NewLine)"
+                    }
                 }
 
                 $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath
@@ -118,7 +140,7 @@ function Import-CompleterScript
                     foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
                     {
                         $PSCmdlet.WriteObject(
-                            (New-ImportedCompleterRegistration -Target $target -ScriptBlock $definition.ScriptBlock -SourcePath $resolvedPath -ImportModule $importSession.Module)
+                            (New-ImportedCompleterRegistration -Target $target -ScriptBlock $definition.ScriptBlock -SourcePath $resolvedPath -ImportModule $importSession.Module -Trusted:$Trusted)
                         )
                     }
                 }

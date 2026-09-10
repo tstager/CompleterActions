@@ -154,3 +154,66 @@ Describe 'Test-CompleterScript' {
         { Test-CompleterScript -Path $textPath } | Should -Throw '*must be .ps1 files*'
     }
 }
+
+Describe 'Import-CompleterScript trusted tier' {
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+
+        function global:Test-TrustedFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+    }
+
+    AfterEach {
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'still rejects the trusted-only fixture under the strict tier' {
+        $fixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'TrustedOnlyCompleter.ps1'
+
+        { Import-CompleterScript -Path $fixturePath } | Should -Throw '*does not conform to the strict import grammar*'
+        Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
+    It 'imports the trusted-only fixture with -Trusted and registers a working completer' {
+        $fixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'TrustedOnlyCompleter.ps1'
+
+        $imported = @(Import-CompleterScript -Path $fixturePath -Trusted)
+
+        $imported.Count | Should -Be 1
+        $imported[0].PSTypeNames | Should -Contain 'CompleterActions.ImportedCompleterRegistration'
+        $imported[0].Key | Should -Be 'test-trustedfixturetool:name'
+        $imported[0].Trusted | Should -BeTrue
+        $imported[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
+        Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+
+        $registered = @($imported | Register-CompleterRegistration -PassThru)
+
+        $registered.Count | Should -Be 1
+        $registered[0].Key | Should -Be 'test-trustedfixturetool:name'
+
+        $inputScript = 'Test-TrustedFixtureTool -Name trusted'
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Contain 'trusted-alpha'
+        $completion.CompletionMatches.CompletionText | Should -Contain 'trusted-beta'
+    }
+
+    It 'marks strict imports as not trusted' {
+        $fixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'ParameterCompleter.ps1'
+
+        $imported = @(Import-CompleterScript -Path $fixturePath)
+
+        $imported.Count | Should -Be 1
+        $imported[0].Trusted | Should -BeFalse
+    }
+}
