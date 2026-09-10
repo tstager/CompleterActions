@@ -28,6 +28,14 @@ Imports self-contained completer scripts into registration input objects.
 
 Registers a managed PowerShell argument completer.
 
+### [Test-CompleterRegistration](Test-CompleterRegistration.md)
+
+Runs tab completion for an input against a registered completer target.
+
+### [Test-CompleterScript](Test-CompleterScript.md)
+
+Checks completer scripts against the strict import grammar and reports findings.
+
 ### [Unregister-CompleterRegistration](Unregister-CompleterRegistration.md)
 
 Removes completer registrations from runtime and, when applicable, module state.

@@ -7,6 +7,46 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- `Test-CompleterScript`. Runs the strict import grammar over completer scripts
+  without executing them and returns one
+  `CompleterActions.CompleterScriptFinding` per unsupported construct, with
+  `Path`, `Line`, `Column`, `Severity`, `Construct`, `Message`, and a `Hint`
+  that says how to fix it. A conforming script produces no output, so
+  `Get-ChildItem | Test-CompleterScript` doubles as a conformance test for a
+  completer repository.
+- `Test-CompleterRegistration`. Runs `TabExpansion2` for an `-InputText`
+  against a registered target and returns `CompleterActions.CompletionMatch`
+  records carrying `CompletionText`, `ListItemText`, `ResultType`, and
+  `ToolTip`, so completion behaviour can be asserted on instead of checked by
+  hand. Targets follow the `Get-CompleterRegistration` contract, including
+  piped registration records; `-CursorPosition` defaults to the end of the
+  input. The command never touches PSReadLine.
+- `Import-CompleterScript -Trusted`. Skips the grammar and dot-sources the
+  script as-is inside the same capture module, for completer repositories you
+  own. Strict stays the default. Imported records carry a `Trusted` property
+  that records the tier.
+- Default views for findings (a list grouped by script path) and completion
+  matches (a table grouped by target key).
+
+### Changed
+
+- `Import-CompleterScript` reports every strict-grammar finding, each with its
+  line, column, construct, and hint, instead of the first one only. The error
+  text is built from the same findings `Test-CompleterScript` returns, so the
+  two cannot drift.
+- A single-element `@('name')` array expression is accepted for `-CommandName`
+  and `-ParameterName`; the previous shape check rejected it.
+
+### Documentation
+
+- `about_Import_Completers` rewritten around the two tiers, with the three
+  import-safe shapes as worked examples, `Test-CompleterScript` as the
+  conformance step, and `Test-CompleterRegistration` as the verification step.
+- README command map, examples, and architecture notes cover the two new
+  commands and the trusted switch.
+
 ## [1.3.0] - 2026-09-09
 
 ### Added

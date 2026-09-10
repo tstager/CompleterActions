@@ -21,7 +21,9 @@
 ## At a glance
 
 - Manage both parameter completers and native command completers
-- Import supported completer scripts into managed registration input objects
+- Import completer scripts into managed registration input objects through a strict grammar or, for scripts you own, a trusted tier
+- Check completer scripts against the strict grammar and get findings with line numbers and fix hints
+- Verify a registration by running tab completion for an input and getting the matches back as objects
 - Query module-managed registrations and runtime-discovered registrations
 - Remove managed registrations cleanly from both runtime and module state
 - Require explicit opt-in before removing unmanaged runtime registrations
@@ -33,8 +35,10 @@
 | Command | What it does |
 | --- | --- |
 | `Get-CompleterRegistration` | Lists completer registrations known to the module or discovered from the current runtime |
-| `Import-CompleterScript` | Converts supported standalone completer scripts into objects that can be piped to `Register-CompleterRegistration -InputObject` |
+| `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-CompleterRegistration -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
 | `Register-CompleterRegistration` | Registers a managed completer and records it in module state |
+| `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches |
+| `Test-CompleterScript` | Checks completer scripts against the strict import grammar and returns findings with line, column, construct, and a fix hint |
 | `Unregister-CompleterRegistration` | Removes completer registrations from runtime and, when applicable, from module state |
 
 ## Start here
@@ -68,10 +72,11 @@ Runtime registration discovery and unmanaged-registration removal depend on Powe
 
 ## Typical flow
 
-1. Register a completer directly, or import an existing completer script into managed input objects.
-2. Inspect registrations with `Get-CompleterRegistration`.
-3. Replace or remove registrations when the target changes.
-4. Use `-AllowUnmanaged` only when removing runtime registrations that were not created by the module.
+1. Check an existing completer script with `Test-CompleterScript`, or decide to import it with `-Trusted`.
+2. Register a completer directly, or import the script into managed input objects.
+3. Verify the registration with `Test-CompleterRegistration` and inspect it with `Get-CompleterRegistration`.
+4. Replace or remove registrations when the target changes.
+5. Use `-AllowUnmanaged` only when removing runtime registrations that were not created by the module.
 
 ## Examples
 
@@ -119,6 +124,34 @@ Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $native
 ```powershell
 Import-CompleterScript -Path .\7z_completer.ps1 |
     Register-CompleterRegistration -PassThru
+```
+
+### Check a completer script before importing it
+
+```powershell
+# One script: findings with line, column, construct, message, and hint
+Test-CompleterScript -Path .\7z_completer.ps1
+
+# A whole repository: empty when every script conforms
+Get-ChildItem -Path ~\Completers -Recurse -Filter *.ps1 |
+    Test-CompleterScript |
+    Where-Object Severity -eq Error
+```
+
+### Import a script you own with the trusted tier
+
+```powershell
+Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
+    Register-CompleterRegistration
+```
+
+### Verify a registration
+
+```powershell
+Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
+
+Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name |
+    Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 ```
 
 ### Query registrations
@@ -180,6 +213,8 @@ Registration records use the `CompleterActions.CompleterRegistration` type and h
 
 `State` is `Active` for records that describe the live runtime value. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-CompleterRegistration` returns the live value as `Conflicted`, `Register-CompleterRegistration` requires `-Force` to reconcile, and `Unregister-CompleterRegistration` requires `-AllowUnmanaged` before it removes the live value together with the stale record.
 
+`Test-CompleterScript` returns `CompleterActions.CompleterScriptFinding` records shown as a list grouped by script path, with `Line`, `Column`, `Severity`, `Construct`, `Message`, and `Hint`. A conforming script returns nothing. `Test-CompleterRegistration` returns `CompleterActions.CompletionMatch` records shown as a table grouped by target key, with `CompletionText`, `ListItemText`, `ResultType`, and `ToolTip`.
+
 `Get-CompleterRegistration` supports PowerShell paging parameters, so you can do things like:
 
 ```powershell
@@ -191,6 +226,8 @@ Pipeline highlights:
 
 - `Get-CompleterRegistration` supports property-name binding for key, command, and parameter lookups
 - `Import-CompleterScript` emits input objects that are ready for `Register-CompleterRegistration -InputObject`
+- `Test-CompleterScript` accepts `Get-ChildItem` output directly through `FullName` binding
+- `Test-CompleterRegistration` accepts registration records from `Get-CompleterRegistration` and `Import-CompleterScript`
 - `Register-CompleterRegistration` can accept input objects that describe a target and expose a `ScriptBlock`
 - `Unregister-CompleterRegistration` can accept pipeline input directly from `Get-CompleterRegistration`
 
@@ -260,8 +297,10 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
   - `Get-CompleterRegistration`
   - `Import-CompleterScript`
   - `Register-CompleterRegistration`
+  - `Test-CompleterRegistration`
+  - `Test-CompleterScript`
   - `Unregister-CompleterRegistration`
-- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations.
+- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar lives in `Test-CompleterScriptAst`, which returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume.
 
 ### Runtime internals caveat
 
