@@ -955,12 +955,17 @@ supplied through arrays, the same script block is reused for each target.</maml:
       <command:noun>CompleterRegistration</command:noun>
     </command:details>
     <maml:description>
-      <maml:para>Resolves one or more completer targets, confirms that each one has a live
-runtime registration, and runs `TabExpansion2` for the supplied input text. The
-completion matches are returned as `CompleterActions.CompletionMatch` records
-that carry the target key alongside `CompletionText`, `ListItemText`,
-`ResultType`, and `ToolTip`, so the same check that used to be done by hand
-after every registration can be scripted and asserted on.
+      <maml:para>Resolves a completer target, confirms that it has a live runtime registration,
+and runs `TabExpansion2` for the supplied input text. The completion matches
+are returned as `CompleterActions.CompletionMatch` records that carry the
+target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
+`ToolTip`, so the same check that used to be done by hand after every
+registration can be scripted and asserted on.
+
+One input text invokes one completer, so each call tests exactly one target.
+The target parameters accept the same shapes as `Get-CompleterRegistration` so
+registration records and property-bound values pipe in, but the command throws
+when more than one target resolves in a single call.
 
 The command only reads the completion engine. It does not change any
 registration, and it never touches PSReadLine.</maml:para>
@@ -1094,8 +1099,8 @@ registration, and it never touches PSReadLine.</maml:para>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
         <maml:name>CommandName</maml:name>
         <maml:description>
-          <maml:para>Specifies one or more command names for native or command-parameter completer
-targets.</maml:para>
+          <maml:para>Specifies the command name of the native or command-parameter completer
+target.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         <dev:type>
@@ -1116,10 +1121,10 @@ default is the end of the input.</maml:para>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="Named" aliases="none">
         <maml:name>InputObject</maml:name>
         <maml:description>
-          <maml:para>Supplies one or more objects that describe completer targets, such as the
-records returned by `Get-CompleterRegistration` or `Import-CompleterScript`.
-Input objects must expose target metadata through `Key`, `RegistrationKey`,
-`RuntimeKey`, or `CommandName`/`ParameterName` plus `IsNative`/`Native`.</maml:para>
+          <maml:para>Supplies an object that describes the completer target, such as a record
+returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
+must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
+`CommandName`/`ParameterName` plus `IsNative`/`Native`.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
         <dev:type>
@@ -1129,7 +1134,9 @@ Input objects must expose target metadata through `Key`, `RegistrationKey`,
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>InputText</maml:name>
         <maml:description>
-          <maml:para>The command line to complete, exactly as it would be typed at the prompt.</maml:para>
+          <maml:para>The command line to complete, exactly as it would be typed at the prompt. It
+must invoke the target's command, because the matches come from whatever
+command the text names.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
         <dev:type>
@@ -1139,7 +1146,7 @@ Input objects must expose target metadata through `Key`, `RegistrationKey`,
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="RegistrationKey">
         <maml:name>Key</maml:name>
         <maml:description>
-          <maml:para>Identifies the targets by registration key. A key without a colon is treated
+          <maml:para>Identifies the target by registration key. A key without a colon is treated
 as a native command. A key with a colon is treated as a `Command:Parameter`
 target unless the text after its last colon contains a path separator, in which
 case it is treated as a native command path such as `C:\tools\example.exe`.</maml:para>
@@ -1152,8 +1159,8 @@ case it is treated as a native command path such as `C:\tools\example.exe`.</mam
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="IsNative">
         <maml:name>Native</maml:name>
         <maml:description>
-          <maml:para>Indicates that the targets are native command completers instead of command
-parameter completers.</maml:para>
+          <maml:para>Indicates that the target is a native command completer instead of a command
+parameter completer.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -1162,7 +1169,7 @@ parameter completers.</maml:para>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
         <maml:name>ParameterName</maml:name>
         <maml:description>
-          <maml:para>Specifies one or more parameter names for command-parameter completer targets.</maml:para>
+          <maml:para>Specifies the parameter name of the command-parameter completer target.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         <dev:type>
@@ -1176,7 +1183,7 @@ parameter completers.</maml:para>
           <maml:name>System.Management.Automation.PSObject[]</maml:name>
         </dev:type>
         <maml:description>
-          <maml:para>Registration records, or any object that describes a completer target.</maml:para>
+          <maml:para>A registration record, or any object that describes a completer target.</maml:para>
         </maml:description>
       </command:inputType>
       <command:inputType>
@@ -1184,7 +1191,7 @@ parameter completers.</maml:para>
           <maml:name>System.String[]</maml:name>
         </dev:type>
         <maml:description>
-          <maml:para>Registration keys and command or parameter names bound by property name.</maml:para>
+          <maml:para>A registration key or command and parameter names bound by property name.</maml:para>
         </maml:description>
       </command:inputType>
     </command:inputTypes>

@@ -568,9 +568,12 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
         Test-CompleterRegistration -CommandName demo -Native `
             -InputText 'demo a --verbose' -CursorPosition 6
 
-    The command throws when the target has no runtime registration, returns
-    nothing when the completer yields no matches, and never changes any
-    registration or PSReadLine state. Completion runs from the module's
+    One input text invokes one completer, so each call tests exactly one
+    target: the command throws, naming the targets, when an array or a piped
+    set of records resolves to more than one. The command also throws when the
+    target has no runtime registration, returns nothing when the completer
+    yields no matches, and never changes any registration or PSReadLine
+    state. Completion runs from the module's
     scope, so the commands in `-InputText` must be visible from the global
     scope, as they are in an interactive session.
 
