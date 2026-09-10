@@ -21,8 +21,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   records carrying `CompletionText`, `ListItemText`, `ResultType`, and
   `ToolTip`, so completion behaviour can be asserted on instead of checked by
   hand. Targets follow the `Get-CompleterRegistration` contract, including
-  piped registration records; `-CursorPosition` defaults to the end of the
-  input. The command never touches PSReadLine.
+  piped registration records, and exactly one target must resolve per call
+  because one input text invokes one completer; `-CursorPosition` defaults to
+  the end of the input. The command never touches PSReadLine.
 - `Import-CompleterScript -Trusted`. Skips the grammar and dot-sources the
   script as-is inside the same capture module, for completer repositories you
   own. Strict stays the default. Imported records carry a `Trusted` property

@@ -313,6 +313,21 @@ Describe 'Test-CompleterRegistration' {
         } | Should -Throw '*No runtime completer registration exists*'
     }
 
+    It 'refuses more than one target per call instead of stamping one completion onto every target (<Name>)' -TestCases @(
+        @{ Name = 'array key'; Run = { Test-CompleterRegistration -Key 'importfixture', 'Test-ImportedFixtureTool:Name' -InputText 'importfixture a' } },
+        @{ Name = 'array command name'; Run = { Test-CompleterRegistration -CommandName 'importfixture', 'Test-ImportedFixtureTool' -Native -InputText 'importfixture a' } },
+        @{ Name = 'piped records'; Run = { Get-CompleterRegistration -Key 'importfixture', 'Test-ImportedFixtureTool:Name' | Test-CompleterRegistration -InputText 'importfixture a' } }
+    ) {
+        param($Run)
+
+        $caught = $null
+        $output = @(try { & $Run } catch { $caught = $_ })
+
+        $caught | Should -Not -BeNullOrEmpty
+        $caught.Exception.Message | Should -BeLike "*one completer target per call*2 targets resolved: 'importfixture', 'Test-ImportedFixtureTool*'*"
+        $output | Should -BeNullOrEmpty
+    }
+
     It 'rejects a cursor position past the end of the input' {
         {
             Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a' -CursorPosition 99

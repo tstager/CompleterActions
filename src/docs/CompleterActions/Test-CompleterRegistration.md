@@ -47,12 +47,17 @@ Test-CompleterRegistration -CommandName <string[]> -Native -InputText <string>
 
 ## DESCRIPTION
 
-Resolves one or more completer targets, confirms that each one has a live
-runtime registration, and runs `TabExpansion2` for the supplied input text. The
-completion matches are returned as `CompleterActions.CompletionMatch` records
-that carry the target key alongside `CompletionText`, `ListItemText`,
-`ResultType`, and `ToolTip`, so the same check that used to be done by hand
-after every registration can be scripted and asserted on.
+Resolves a completer target, confirms that it has a live runtime registration,
+and runs `TabExpansion2` for the supplied input text. The completion matches
+are returned as `CompleterActions.CompletionMatch` records that carry the
+target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
+`ToolTip`, so the same check that used to be done by hand after every
+registration can be scripted and asserted on.
+
+One input text invokes one completer, so each call tests exactly one target.
+The target parameters accept the same shapes as `Get-CompleterRegistration` so
+registration records and property-bound values pipe in, but the command throws
+when more than one target resolves in a single call.
 
 The command only reads the completion engine. It does not change any
 registration, and it never touches PSReadLine.
@@ -91,8 +96,8 @@ Asserts on the matches inside a Pester test.
 
 ### -CommandName
 
-Specifies one or more command names for native or command-parameter completer
-targets.
+Specifies the command name of the native or command-parameter completer
+target.
 
 ```yaml
 Type: System.String[]
@@ -141,10 +146,10 @@ HelpMessage: ''
 
 ### -InputObject
 
-Supplies one or more objects that describe completer targets, such as the
-records returned by `Get-CompleterRegistration` or `Import-CompleterScript`.
-Input objects must expose target metadata through `Key`, `RegistrationKey`,
-`RuntimeKey`, or `CommandName`/`ParameterName` plus `IsNative`/`Native`.
+Supplies an object that describes the completer target, such as a record
+returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
+must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
+`CommandName`/`ParameterName` plus `IsNative`/`Native`.
 
 ```yaml
 Type: System.Management.Automation.PSObject[]
@@ -165,7 +170,9 @@ HelpMessage: ''
 
 ### -InputText
 
-The command line to complete, exactly as it would be typed at the prompt.
+The command line to complete, exactly as it would be typed at the prompt. It
+must invoke the target's command, because the matches come from whatever
+command the text names.
 
 ```yaml
 Type: System.String
@@ -186,7 +193,7 @@ HelpMessage: ''
 
 ### -Key
 
-Identifies the targets by registration key. A key without a colon is treated
+Identifies the target by registration key. A key without a colon is treated
 as a native command. A key with a colon is treated as a `Command:Parameter`
 target unless the text after its last colon contains a path separator, in which
 case it is treated as a native command path such as `C:\tools\example.exe`.
@@ -211,8 +218,8 @@ HelpMessage: ''
 
 ### -Native
 
-Indicates that the targets are native command completers instead of command
-parameter completers.
+Indicates that the target is a native command completer instead of a command
+parameter completer.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -234,7 +241,7 @@ HelpMessage: ''
 
 ### -ParameterName
 
-Specifies one or more parameter names for command-parameter completer targets.
+Specifies the parameter name of the command-parameter completer target.
 
 ```yaml
 Type: System.String[]
@@ -264,11 +271,11 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### System.Management.Automation.PSObject[]
 
-Registration records, or any object that describes a completer target.
+A registration record, or any object that describes a completer target.
 
 ### System.String[]
 
-Registration keys and command or parameter names bound by property name.
+A registration key or command and parameter names bound by property name.
 
 ## OUTPUTS
 
