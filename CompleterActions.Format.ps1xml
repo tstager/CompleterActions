@@ -83,5 +83,49 @@
                 </ListEntries>
             </ListControl>
         </View>
+        <View>
+            <Name>CompletionMatchTable</Name>
+            <ViewSelectedBy>
+                <TypeName>CompleterActions.CompletionMatch</TypeName>
+            </ViewSelectedBy>
+            <GroupBy>
+                <PropertyName>RuntimeKey</PropertyName>
+            </GroupBy>
+            <TableControl>
+                <AutoSize />
+                <TableHeaders>
+                    <TableColumnHeader>
+                        <Label>CompletionText</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>ListItemText</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>ResultType</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>ToolTip</Label>
+                    </TableColumnHeader>
+                </TableHeaders>
+                <TableRowEntries>
+                    <TableRowEntry>
+                        <TableColumnItems>
+                            <TableColumnItem>
+                                <PropertyName>CompletionText</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>ListItemText</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>ResultType</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>ToolTip</PropertyName>
+                            </TableColumnItem>
+                        </TableColumnItems>
+                    </TableRowEntry>
+                </TableRowEntries>
+            </TableControl>
+        </View>
     </ViewDefinitions>
 </Configuration>

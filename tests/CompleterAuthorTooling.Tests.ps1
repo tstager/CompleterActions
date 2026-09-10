@@ -217,3 +217,123 @@ Describe 'Import-CompleterScript trusted tier' {
         $imported[0].Trusted | Should -BeFalse
     }
 }
+
+Describe 'Test-CompleterRegistration' {
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in @(
+            @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'importfixture'; CompleterType = 'Native' },
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+        ))
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+
+        function global:Test-ImportedFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $null = Import-CompleterScript -Path (Join-Path -Path $script:ImportFixtureRoot -ChildPath 'ParameterCompleter.ps1') | Register-CompleterRegistration
+        $null = Import-CompleterScript -Path (Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1') | Register-CompleterRegistration
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in @(
+            @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+            @{ CommandName = 'importfixture'; CompleterType = 'Native' },
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+        ))
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'returns the completion matches for a registered parameter completer' {
+        $matches = @(Test-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' -InputText 'Test-ImportedFixtureTool -Name imported')
+
+        $matches.Count | Should -Be 1
+        $matches[0].PSTypeNames | Should -Contain 'CompleterActions.CompletionMatch'
+        $matches[0].Key | Should -Be 'test-importedfixturetool:name'
+        $matches[0].RuntimeKey | Should -Be 'Test-ImportedFixtureTool:Name'
+        $matches[0].CompleterType | Should -Be 'Parameter'
+        $matches[0].InputText | Should -Be 'Test-ImportedFixtureTool -Name imported'
+        $matches[0].CursorPosition | Should -Be 39
+        $matches[0].CompletionText | Should -Be 'imported-alpha'
+        $matches[0].ListItemText | Should -Be 'imported-alpha'
+        $matches[0].ResultType | Should -Be 'ParameterValue'
+        $matches[0].ToolTip | Should -Be 'imported-alpha'
+    }
+
+    It 'returns the completion matches for a registered native completer' {
+        $matches = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a')
+
+        @($matches.CompletionText) | Should -Be @('alpha')
+        $matches[0].CompleterType | Should -Be 'Native'
+        $matches[0].RuntimeKey | Should -Be 'importfixture'
+    }
+
+    It 'accepts a piped registration record and a registration key' {
+        $piped = @(Get-CompleterRegistration -CommandName 'importfixture' -Native | Test-CompleterRegistration -InputText 'importfixture b')
+        @($piped.CompletionText) | Should -Be @('beta')
+
+        $byKey = @(Test-CompleterRegistration -Key 'importfixture' -InputText 'importfixture b')
+        @($byKey.CompletionText) | Should -Be @('beta')
+    }
+
+    It 'defaults the cursor to the end of the input and honours an explicit position' {
+        $default = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture ')
+        @($default.CompletionText) | Should -Be @('alpha', 'beta')
+        $default[0].CursorPosition | Should -Be 14
+
+        $explicit = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a trailing' -CursorPosition 15)
+        @($explicit.CompletionText) | Should -Be @('alpha')
+        $explicit[0].CursorPosition | Should -Be 15
+    }
+
+    It 'returns nothing when the completer yields no matches' {
+        @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture zzz') | Should -BeNullOrEmpty
+    }
+
+    It 'throws when the target has no runtime registration' {
+        {
+            Test-CompleterRegistration -CommandName 'Test-NotRegisteredTool' -ParameterName 'Name' -InputText 'Test-NotRegisteredTool -Name a'
+        } | Should -Throw '*No runtime completer registration exists*'
+    }
+
+    It 'rejects a cursor position past the end of the input' {
+        {
+            Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a' -CursorPosition 99
+        } | Should -Throw '*past the end of InputText*'
+    }
+
+    It 'leaves PSReadLine key handlers unchanged' {
+        Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
+
+        if ($null -eq (Get-Module -Name 'PSReadLine'))
+        {
+            Set-ItResult -Skipped -Because 'PSReadLine is not loaded in this session'
+        }
+
+        $before = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $null = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a')
+
+        $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $before.Count | Should -BeGreaterThan 0
+        $after | Should -Be $before
+    }
+}

@@ -76,6 +76,7 @@ FormatsToProcess = @(
      'Get-CompleterRegistration',
      'Import-CompleterScript',
      'Register-CompleterRegistration',
+     'Test-CompleterRegistration',
      'Test-CompleterScript',
      'Unregister-CompleterRegistration'
  )
