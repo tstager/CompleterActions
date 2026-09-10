@@ -6,21 +6,23 @@ Validates that a completer script uses a supported import shape.
 Checks the script AST for patterns that Import-CompleterScript can safely and
 predictably import. Supported scripts must be self-contained, must call
 Register-ArgumentCompleter at script scope, and must use literal values for the
-registration target and script block.
+registration target and script block. Every unsupported construct is reported
+as a CompleterActions.CompleterScriptFinding record; a conforming script
+produces no output.
 
 .PARAMETER Ast
 The parsed script AST to validate.
 
 .PARAMETER LiteralPath
-The source path for error reporting.
+The source path recorded on each finding.
 
 .OUTPUTS
-System.Boolean
+CompleterActions.CompleterScriptFinding
 #>
 function Test-CompleterScriptAst
 {
     [CmdletBinding()]
-    [OutputType([bool])]
+    [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -31,6 +33,54 @@ function Test-CompleterScriptAst
         [string] $LiteralPath
     )
 
+    $findings = [System.Collections.Generic.List[object]]::new()
+
+    $scriptScopeHint = 'Script scope may only contain Set-StrictMode, Get-Variable, Register-ArgumentCompleter, function definitions, and guarded if statements. Move this into a function that the completer calls lazily.'
+
+    function Add-Finding
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.IScriptExtent] $Extent,
+
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $Construct,
+
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $Message,
+
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $Hint
+        )
+
+        $findings.Add((New-CompleterScriptFinding -Path $LiteralPath -Extent $Extent -Construct $Construct -Message $Message -Hint $Hint))
+    }
+
+    function Get-ImportSafeExpressionHint
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.ExpressionAst] $ExpressionAst
+        )
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.ConvertExpressionAst])
+        {
+            return "A type cast runs at import time. Move the $($ExpressionAst.Type.Extent.Text) literal into a lazy initializer inside a function."
+        }
+
+        if ($ExpressionAst -is [System.Management.Automation.Language.MemberExpressionAst])
+        {
+            return 'A [type]::Member or object member access runs at import time. Move it into a lazy initializer inside a function.'
+        }
+
+        return 'Keep script-scope values literal (strings, numbers, arrays, and hashtables) and compute everything else lazily inside a function.'
+    }
+
     function Test-IsSupportedRegisterArgumentAst
     {
         param(
@@ -40,132 +90,74 @@ function Test-CompleterScriptAst
 
             [Parameter(Mandatory)]
             [ValidateNotNullOrEmpty()]
-            [string] $ParameterName,
-
-            [Parameter(Mandatory)]
-            [ValidateNotNullOrEmpty()]
-            [string] $Path
+            [string] $ParameterName
         )
 
-        function Test-IsSupportedLiteralStringArrayExpressionAst
+        function Get-LiteralArrayExpressionElement
         {
             param(
                 [Parameter(Mandatory)]
                 [ValidateNotNull()]
-                [System.Management.Automation.Language.ArrayExpressionAst] $ExpressionAst,
-
-                [Parameter(Mandatory)]
-                [ValidateNotNullOrEmpty()]
-                [string] $AstParameterName,
-
-                [Parameter(Mandatory)]
-                [ValidateNotNullOrEmpty()]
-                [string] $AstPath
+                [System.Management.Automation.Language.ArrayExpressionAst] $ExpressionAst
             )
 
             $statementBlockAst = $ExpressionAst.SubExpression
             if ($statementBlockAst.Traps.Count -ne 0 -or $statementBlockAst.Statements.Count -ne 1)
             {
-                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+                return $null
             }
 
             $pipelineAst = $statementBlockAst.Statements[0]
             if ($pipelineAst -isnot [System.Management.Automation.Language.PipelineAst] -or $pipelineAst.PipelineElements.Count -ne 1)
             {
-                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+                return $null
             }
 
             $commandExpressionAst = $pipelineAst.PipelineElements[0]
             if ($commandExpressionAst -isnot [System.Management.Automation.Language.CommandExpressionAst])
             {
-                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+                return $null
             }
 
-            $arrayLiteralAst = $commandExpressionAst.Expression
-            if ($arrayLiteralAst -isnot [System.Management.Automation.Language.ArrayLiteralAst])
+            if ($commandExpressionAst.Expression -is [System.Management.Automation.Language.ArrayLiteralAst])
             {
-                throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
+                return @($commandExpressionAst.Expression.Elements)
             }
 
-            foreach ($element in $arrayLiteralAst.Elements)
-            {
-                if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst])
-                {
-                    throw "Completer script '$AstPath' must use literal string values for -$AstParameterName. Non-literal value found at line $($ExpressionAst.Extent.StartLineNumber)."
-                }
-            }
+            return @($commandExpressionAst.Expression)
         }
 
-        switch ($ParameterName)
+        if ($ParameterName -eq 'ScriptBlock')
         {
-            'CommandName'
+            if ($ArgumentAst -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst])
             {
-                if ($ArgumentAst -is [System.Management.Automation.Language.StringConstantExpressionAst])
-                {
-                    return
-                }
-
-                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayLiteralAst])
-                {
-                    foreach ($element in $ArgumentAst.Elements)
-                    {
-                        if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst])
-                        {
-                            throw "Completer script '$Path' must use literal string values for -CommandName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
-                        }
-                    }
-
-                    return
-                }
-
-                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayExpressionAst])
-                {
-                    Test-IsSupportedLiteralStringArrayExpressionAst -ExpressionAst $ArgumentAst -AstParameterName $ParameterName -AstPath $Path
-                    return
-                }
-
-                throw "Completer script '$Path' must use literal string values for -CommandName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
+                Add-Finding -Extent $ArgumentAst.Extent -Construct $ArgumentAst.GetType().Name -Message 'The script must provide a literal script block for -ScriptBlock.' -Hint 'Pass the completer body as a literal { ... } script block and move any shared code into functions that the script block calls.'
             }
 
-            'ParameterName'
-            {
-                if ($ArgumentAst -is [System.Management.Automation.Language.StringConstantExpressionAst])
-                {
-                    return
-                }
-
-                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayLiteralAst])
-                {
-                    foreach ($element in $ArgumentAst.Elements)
-                    {
-                        if ($element -isnot [System.Management.Automation.Language.StringConstantExpressionAst])
-                        {
-                            throw "Completer script '$Path' must use literal string values for -ParameterName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
-                        }
-                    }
-
-                    return
-                }
-
-                if ($ArgumentAst -is [System.Management.Automation.Language.ArrayExpressionAst])
-                {
-                    Test-IsSupportedLiteralStringArrayExpressionAst -ExpressionAst $ArgumentAst -AstParameterName $ParameterName -AstPath $Path
-                    return
-                }
-
-                throw "Completer script '$Path' must use literal string values for -ParameterName. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
-            }
-
-            'ScriptBlock'
-            {
-                if ($ArgumentAst -isnot [System.Management.Automation.Language.ScriptBlockExpressionAst])
-                {
-                    throw "Completer script '$Path' must provide a literal script block for -ScriptBlock. Non-literal value found at line $($ArgumentAst.Extent.StartLineNumber)."
-                }
-
-                return
-            }
+            return
         }
+
+        if ($ArgumentAst -is [System.Management.Automation.Language.StringConstantExpressionAst])
+        {
+            return
+        }
+
+        $elements = $null
+        if ($ArgumentAst -is [System.Management.Automation.Language.ArrayLiteralAst])
+        {
+            $elements = @($ArgumentAst.Elements)
+        }
+        elseif ($ArgumentAst -is [System.Management.Automation.Language.ArrayExpressionAst])
+        {
+            $elements = Get-LiteralArrayExpressionElement -ExpressionAst $ArgumentAst
+        }
+
+        if ($null -ne $elements -and @($elements | Where-Object { $_ -isnot [System.Management.Automation.Language.StringConstantExpressionAst] }).Count -eq 0)
+        {
+            return
+        }
+
+        Add-Finding -Extent $ArgumentAst.Extent -Construct $ArgumentAst.GetType().Name -Message "The script must use literal string values for -$ParameterName." -Hint "Replace the -$ParameterName value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed."
     }
 
     $allowedImportCommands = @(
@@ -210,7 +202,7 @@ function Test-CompleterScriptAst
 
     # The nested validators below define the closed top-level grammar. Everything
     # outside function bodies and literal -ScriptBlock arguments must be reachable
-    # through them, so anything they do not recognize is rejected before the
+    # through them, so anything they do not recognize is reported before the
     # script is executed.
     function Test-ImportSafeExpressionAst
     {
@@ -229,7 +221,7 @@ function Test-CompleterScriptAst
         {
             if ($ExpressionAst.Splatted)
             {
-                throw "Completer script '$LiteralPath' uses argument splatting at line $($ExpressionAst.Extent.StartLineNumber). Import-CompleterScript requires explicit top-level command arguments."
+                Add-Finding -Extent $ExpressionAst.Extent -Construct 'VariableExpressionAst' -Message 'The script uses argument splatting at script scope.' -Hint 'Spell out each parameter explicitly; Import-CompleterScript requires explicit top-level command arguments.'
             }
 
             return
@@ -241,7 +233,7 @@ function Test-CompleterScriptAst
             {
                 if ($nestedExpression -isnot [System.Management.Automation.Language.VariableExpressionAst] -or $nestedExpression.Splatted)
                 {
-                    throw "Completer script '$LiteralPath' contains unsupported top-level expression '$($nestedExpression.GetType().Name)' at line $($nestedExpression.Extent.StartLineNumber)."
+                    Add-Finding -Extent $nestedExpression.Extent -Construct $nestedExpression.GetType().Name -Message "The script contains unsupported top-level expression '$($nestedExpression.GetType().Name)' inside an expandable string." -Hint 'Use only plain variables inside script-scope strings, or build the string lazily inside a function.'
                 }
             }
 
@@ -262,7 +254,7 @@ function Test-CompleterScriptAst
         {
             if ($ExpressionAst.SubExpression.Traps.Count -ne 0)
             {
-                throw "Completer script '$LiteralPath' contains unsupported top-level syntax 'TrapStatementAst' at line $($ExpressionAst.Extent.StartLineNumber)."
+                Add-Finding -Extent $ExpressionAst.SubExpression.Traps[0].Extent -Construct 'TrapStatementAst' -Message "The script contains unsupported top-level syntax 'TrapStatementAst'." -Hint 'Move trap statements into function bodies.'
             }
 
             foreach ($statement in $ExpressionAst.SubExpression.Statements)
@@ -294,7 +286,8 @@ function Test-CompleterScriptAst
         {
             if ($ExpressionAst.TokenKind -notin [System.Management.Automation.Language.TokenKind]::Not, [System.Management.Automation.Language.TokenKind]::Exclaim)
             {
-                throw "Completer script '$LiteralPath' uses unsupported top-level operator '$($ExpressionAst.TokenKind)' at line $($ExpressionAst.Extent.StartLineNumber)."
+                Add-Finding -Extent $ExpressionAst.Extent -Construct 'UnaryExpressionAst' -Message "The script uses unsupported top-level operator '$($ExpressionAst.TokenKind)'." -Hint 'Only -not and ! are supported at script scope; compute other values lazily inside a function.'
+                return
             }
 
             Test-ImportSafeExpressionAst -ExpressionAst $ExpressionAst.Child
@@ -305,7 +298,8 @@ function Test-CompleterScriptAst
         {
             if ($ExpressionAst.Operator -notin $allowedTopLevelOperators)
             {
-                throw "Completer script '$LiteralPath' uses unsupported top-level operator '$($ExpressionAst.Operator)' at line $($ExpressionAst.Extent.StartLineNumber)."
+                Add-Finding -Extent $ExpressionAst.Extent -Construct 'BinaryExpressionAst' -Message "The script uses unsupported top-level operator '$($ExpressionAst.Operator)'." -Hint 'Only comparison and logical operators are supported at script scope; compute other values lazily inside a function.'
+                return
             }
 
             Test-ImportSafeExpressionAst -ExpressionAst $ExpressionAst.Left
@@ -313,7 +307,7 @@ function Test-CompleterScriptAst
             return
         }
 
-        throw "Completer script '$LiteralPath' contains unsupported top-level expression '$($ExpressionAst.GetType().Name)' at line $($ExpressionAst.Extent.StartLineNumber). Import-CompleterScript only supports literal values, variables, and simple comparisons outside function bodies and registered script blocks."
+        Add-Finding -Extent $ExpressionAst.Extent -Construct $ExpressionAst.GetType().Name -Message "The script contains unsupported top-level expression '$($ExpressionAst.GetType().Name)'." -Hint (Get-ImportSafeExpressionHint -ExpressionAst $ExpressionAst)
     }
 
     function Test-ImportSafeCommandExpressionAst
@@ -326,7 +320,8 @@ function Test-CompleterScriptAst
 
         if ($CommandExpressionAst.Redirections.Count -ne 0)
         {
-            throw "Completer script '$LiteralPath' uses redirection at line $($CommandExpressionAst.Extent.StartLineNumber). Import-CompleterScript does not support top-level redirection."
+            Add-Finding -Extent $CommandExpressionAst.Redirections[0].Extent -Construct $CommandExpressionAst.Redirections[0].GetType().Name -Message 'The script uses redirection at script scope.' -Hint 'Remove the redirection, or move the expression into a function that the completer calls lazily.'
+            return
         }
 
         Test-ImportSafeExpressionAst -ExpressionAst $CommandExpressionAst.Expression
@@ -342,18 +337,21 @@ function Test-CompleterScriptAst
 
         if ($CommandAst.Redirections.Count -ne 0)
         {
-            throw "Completer script '$LiteralPath' uses redirection at line $($CommandAst.Extent.StartLineNumber). Import-CompleterScript does not support top-level redirection."
+            Add-Finding -Extent $CommandAst.Redirections[0].Extent -Construct $CommandAst.Redirections[0].GetType().Name -Message 'The script uses redirection at script scope.' -Hint 'Remove the redirection, or move the command into a function that the completer calls lazily.'
+            return
         }
 
         $commandName = $CommandAst.GetCommandName()
         if ([string]::IsNullOrWhiteSpace($commandName))
         {
-            throw "Completer script '$LiteralPath' uses a non-literal top-level command at line $($CommandAst.Extent.StartLineNumber)."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message 'The script uses a non-literal top-level command.' -Hint 'Call commands by their literal name at script scope, or move the call into a function that the completer calls lazily.'
+            return
         }
 
         if ($allowedImportCommands -notcontains $commandName)
         {
-            throw "Completer script '$LiteralPath' uses unsupported top-level command '$commandName' at line $($CommandAst.Extent.StartLineNumber)."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message "The script uses unsupported top-level command '$commandName'." -Hint "Only Set-StrictMode, Get-Variable, and Register-ArgumentCompleter may run at script scope. Move '$commandName' into a function that the completer calls lazily."
+            return
         }
 
         if ($commandName -eq 'Register-ArgumentCompleter')
@@ -391,7 +389,8 @@ function Test-CompleterScriptAst
 
         if ($PipelineAst.Background)
         {
-            throw "Completer script '$LiteralPath' starts a background pipeline at line $($PipelineAst.Extent.StartLineNumber). Import-CompleterScript does not support background execution."
+            Add-Finding -Extent $PipelineAst.Extent -Construct 'PipelineAst' -Message 'The script starts a background pipeline at script scope.' -Hint 'Remove the & background operator; Import-CompleterScript does not support background execution.'
+            return
         }
 
         foreach ($pipelineElement in $PipelineAst.PipelineElements)
@@ -410,10 +409,11 @@ function Test-CompleterScriptAst
                     continue
                 }
 
-                throw "Completer script '$LiteralPath' contains unsupported top-level expression '$($pipelineElement.Expression.GetType().Name)' at line $($pipelineElement.Extent.StartLineNumber). Import-CompleterScript only supports Set-StrictMode, Get-Variable, and Register-ArgumentCompleter commands at script scope."
+                Add-Finding -Extent $pipelineElement.Extent -Construct $pipelineElement.Expression.GetType().Name -Message "The script contains unsupported top-level expression '$($pipelineElement.Expression.GetType().Name)'." -Hint (Get-ImportSafeExpressionHint -ExpressionAst $pipelineElement.Expression)
+                continue
             }
 
-            throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($pipelineElement.GetType().Name)' at line $($pipelineElement.Extent.StartLineNumber)."
+            Add-Finding -Extent $pipelineElement.Extent -Construct $pipelineElement.GetType().Name -Message "The script contains unsupported top-level syntax '$($pipelineElement.GetType().Name)'." -Hint $scriptScopeHint
         }
     }
 
@@ -437,7 +437,7 @@ function Test-CompleterScriptAst
             return
         }
 
-        throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($StatementAst.GetType().Name)' at line $($StatementAst.Extent.StartLineNumber)."
+        Add-Finding -Extent $StatementAst.Extent -Construct $StatementAst.GetType().Name -Message "The script contains unsupported top-level syntax '$($StatementAst.GetType().Name)'." -Hint $scriptScopeHint
     }
 
     function Test-ImportSafeStatementAst
@@ -462,7 +462,8 @@ function Test-CompleterScriptAst
             {
                 if ($clause.Item1 -isnot [System.Management.Automation.Language.PipelineAst])
                 {
-                    throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($clause.Item1.GetType().Name)' at line $($clause.Item1.Extent.StartLineNumber)."
+                    Add-Finding -Extent $clause.Item1.Extent -Construct $clause.Item1.GetType().Name -Message "The script contains unsupported top-level syntax '$($clause.Item1.GetType().Name)'." -Hint $scriptScopeHint
+                    continue
                 }
 
                 Test-ImportSafePipelineAst -PipelineAst $clause.Item1 -AllowExpression
@@ -487,12 +488,14 @@ function Test-CompleterScriptAst
         {
             if (-not $AllowAssignment)
             {
-                throw "Completer script '$LiteralPath' uses a top-level assignment at line $($StatementAst.Extent.StartLineNumber). Import-CompleterScript only supports assignments inside importer-safe if statements."
+                Add-Finding -Extent $StatementAst.Extent -Construct 'AssignmentStatementAst' -Message 'The script uses a top-level assignment.' -Hint 'Guard script-scope state with if (-not (Get-Variable -Name State -Scope Script -ErrorAction SilentlyContinue)) { $script:State = @{ ... } }, or initialize it lazily inside a function.'
+                return
             }
 
             if ($StatementAst.Operator -ne [System.Management.Automation.Language.TokenKind]::Equals)
             {
-                throw "Completer script '$LiteralPath' uses unsupported top-level operator '$($StatementAst.Operator)' at line $($StatementAst.Extent.StartLineNumber)."
+                Add-Finding -Extent $StatementAst.Extent -Construct 'AssignmentStatementAst' -Message "The script uses unsupported top-level operator '$($StatementAst.Operator)'." -Hint 'Use plain = assignment for script-scope state.'
+                return
             }
 
             $target = $StatementAst.Left
@@ -500,14 +503,15 @@ function Test-CompleterScriptAst
                 $target.Splatted -or
                 -not ($target.VariablePath.IsUnqualified -or $target.VariablePath.IsScript))
             {
-                throw "Completer script '$LiteralPath' assigns to unsupported target '$($target.Extent.Text)' at line $($target.Extent.StartLineNumber). Import-CompleterScript only supports assignments to unqualified or script-scope variables."
+                Add-Finding -Extent $target.Extent -Construct $target.GetType().Name -Message "The script assigns to unsupported target '$($target.Extent.Text)'." -Hint 'Assign only to unqualified or $script: variables at script scope; drive-qualified and member targets change state outside the script at import time.'
+                return
             }
 
             Test-ImportSafeValueStatementAst -StatementAst $StatementAst.Right
             return
         }
 
-        throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($StatementAst.GetType().Name)' at line $($StatementAst.Extent.StartLineNumber)."
+        Add-Finding -Extent $StatementAst.Extent -Construct $StatementAst.GetType().Name -Message "The script contains unsupported top-level syntax '$($StatementAst.GetType().Name)'." -Hint $scriptScopeHint
     }
 
     function Test-ImportSafeStatementBlockAst
@@ -520,7 +524,7 @@ function Test-CompleterScriptAst
 
         if ($StatementBlockAst.Traps.Count -ne 0)
         {
-            throw "Completer script '$LiteralPath' contains unsupported top-level syntax 'TrapStatementAst' at line $($StatementBlockAst.Traps[0].Extent.StartLineNumber)."
+            Add-Finding -Extent $StatementBlockAst.Traps[0].Extent -Construct 'TrapStatementAst' -Message "The script contains unsupported top-level syntax 'TrapStatementAst'." -Hint 'Move trap statements into function bodies.'
         }
 
         foreach ($statement in $StatementBlockAst.Statements)
@@ -529,101 +533,22 @@ function Test-CompleterScriptAst
         }
     }
 
-    foreach ($usingStatement in @($Ast.UsingStatements))
+    function Test-RegisterArgumentCompleterCommandAst
     {
-        if ($usingStatement.UsingStatementKind -ne [System.Management.Automation.Language.UsingStatementKind]::Namespace)
-        {
-            throw "Completer script '$LiteralPath' uses a 'using $($usingStatement.UsingStatementKind.ToString().ToLowerInvariant())' statement at line $($usingStatement.Extent.StartLineNumber). Import-CompleterScript only supports 'using namespace' statements."
-        }
-    }
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNull()]
+            [System.Management.Automation.Language.CommandAst] $CommandAst
+        )
 
-    if ($null -ne $Ast.ScriptRequirements)
-    {
-        if ($Ast.ScriptRequirements.RequiredModules.Count -gt 0)
-        {
-            throw "Completer script '$LiteralPath' uses a '#requires -Modules' directive. Import-CompleterScript does not support '#requires -Modules' because the required modules are imported, and their top-level code executes, when the script is dot-sourced."
-        }
-
-        if ($Ast.ScriptRequirements.RequiredAssemblies.Count -gt 0)
-        {
-            throw "Completer script '$LiteralPath' uses a '#requires -Assembly' directive. Import-CompleterScript does not support '#requires -Assembly' because the required assemblies are loaded when the script is dot-sourced."
-        }
-    }
-
-    foreach ($namedBlock in @($Ast.ParamBlock, $Ast.BeginBlock, $Ast.ProcessBlock, $Ast.DynamicParamBlock, $Ast.CleanBlock))
-    {
-        if ($null -ne $namedBlock)
-        {
-            throw "Completer script '$LiteralPath' contains unsupported top-level syntax '$($namedBlock.GetType().Name)' at line $($namedBlock.Extent.StartLineNumber)."
-        }
-    }
-
-    if ($Ast.EndBlock.Traps.Count -ne 0)
-    {
-        throw "Completer script '$LiteralPath' contains unsupported top-level syntax 'TrapStatementAst' at line $($Ast.EndBlock.Traps[0].Extent.StartLineNumber)."
-    }
-
-    foreach ($statement in @($Ast.EndBlock.Statements))
-    {
-        Test-ImportSafeStatementAst -StatementAst $statement
-    }
-
-    $functionOverrides = @($Ast.FindAll(
-            {
-                param($node)
-
-                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                $node.Name -in $allowedImportCommands
-            },
-            $true
-        ))
-
-    if ($functionOverrides.Count -gt 0)
-    {
-        $lineNumber = $functionOverrides[0].Extent.StartLineNumber
-        throw "Completer script '$LiteralPath' defines its own $($functionOverrides[0].Name) function at line $lineNumber. Import-CompleterScript only supports scripts that call the built-in command name directly."
-    }
-
-    $dotSourcedCommands = @($Ast.FindAll(
-            {
-                param($node)
-
-                $node -is [System.Management.Automation.Language.CommandAst] -and
-                $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot
-            },
-            $true
-        ))
-
-    if ($dotSourcedCommands.Count -gt 0)
-    {
-        $lineNumber = $dotSourcedCommands[0].Extent.StartLineNumber
-        throw "Completer script '$LiteralPath' dot-sources another script at line $lineNumber. Import-CompleterScript only supports self-contained completer scripts."
-    }
-
-    $registerCommands = @($Ast.FindAll(
-            {
-                param($node)
-
-                $node -is [System.Management.Automation.Language.CommandAst] -and
-                $node.GetCommandName() -eq 'Register-ArgumentCompleter'
-            },
-            $true
-        ))
-
-    if ($registerCommands.Count -eq 0)
-    {
-        throw "Completer script '$LiteralPath' does not contain a Register-ArgumentCompleter call."
-    }
-
-    foreach ($registerCommand in $registerCommands)
-    {
-        $ancestor = $registerCommand.Parent
+        $ancestor = $CommandAst.Parent
         while ($null -ne $ancestor -and $ancestor -ne $Ast)
         {
             if ($ancestor -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
                 $ancestor -is [System.Management.Automation.Language.ScriptBlockExpressionAst])
             {
-                throw "Completer script '$LiteralPath' registers a completer from inside a nested function or script block at line $($registerCommand.Extent.StartLineNumber). Import-CompleterScript only supports script-scope Register-ArgumentCompleter calls."
+                Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message 'The script registers a completer from inside a nested function or script block.' -Hint 'Move the Register-ArgumentCompleter call to script scope; Import-CompleterScript only captures script-scope registrations.'
+                return
             }
 
             $ancestor = $ancestor.Parent
@@ -632,23 +557,25 @@ function Test-CompleterScriptAst
         $currentParameter = $null
         $seenParameters = [ordered] @{}
 
-        foreach ($commandElement in ($registerCommand.CommandElements | Select-Object -Skip 1))
+        foreach ($commandElement in ($CommandAst.CommandElements | Select-Object -Skip 1))
         {
             if ($commandElement -is [System.Management.Automation.Language.CommandParameterAst])
             {
                 if ($commandElement.ParameterName -notin 'CommandName', 'ParameterName', 'Native', 'ScriptBlock')
                 {
-                    throw "Completer script '$LiteralPath' uses unsupported Register-ArgumentCompleter parameter '-$($commandElement.ParameterName)' at line $($commandElement.Extent.StartLineNumber). Supported import parameters are -CommandName, -ParameterName, -Native, and -ScriptBlock."
+                    Add-Finding -Extent $commandElement.Extent -Construct 'CommandParameterAst' -Message "The script uses unsupported Register-ArgumentCompleter parameter '-$($commandElement.ParameterName)'." -Hint 'Use only -CommandName, -ParameterName, -Native, and -ScriptBlock.'
+                    return
                 }
 
                 if ($null -ne $commandElement.Argument)
                 {
                     if ($commandElement.ParameterName -eq 'Native')
                     {
-                        throw "Completer script '$LiteralPath' uses an argument for -Native at line $($commandElement.Extent.StartLineNumber). Import-CompleterScript only supports the bare -Native switch."
+                        Add-Finding -Extent $commandElement.Extent -Construct 'CommandParameterAst' -Message 'The script uses an argument for -Native.' -Hint 'Use the bare -Native switch.'
+                        return
                     }
 
-                    Test-IsSupportedRegisterArgumentAst -ArgumentAst $commandElement.Argument -ParameterName $commandElement.ParameterName -Path $LiteralPath
+                    Test-IsSupportedRegisterArgumentAst -ArgumentAst $commandElement.Argument -ParameterName $commandElement.ParameterName
                     $currentParameter = $null
                 }
                 elseif ($commandElement.ParameterName -eq 'Native')
@@ -666,43 +593,135 @@ function Test-CompleterScriptAst
 
             if ($commandElement -is [System.Management.Automation.Language.VariableExpressionAst] -and $commandElement.Splatted)
             {
-                throw "Completer script '$LiteralPath' uses argument splatting at line $($commandElement.Extent.StartLineNumber). Import-CompleterScript requires explicit Register-ArgumentCompleter parameters."
+                Add-Finding -Extent $commandElement.Extent -Construct 'VariableExpressionAst' -Message 'The script uses argument splatting for Register-ArgumentCompleter.' -Hint 'Spell out -CommandName, -ParameterName or -Native, and -ScriptBlock explicitly.'
+                return
             }
 
             if ([string]::IsNullOrWhiteSpace($currentParameter))
             {
-                throw "Completer script '$LiteralPath' uses positional Register-ArgumentCompleter arguments at line $($commandElement.Extent.StartLineNumber). Import-CompleterScript requires explicit parameter names."
+                Add-Finding -Extent $commandElement.Extent -Construct $commandElement.GetType().Name -Message 'The script uses positional Register-ArgumentCompleter arguments.' -Hint 'Name every argument: -CommandName, -ParameterName or -Native, and -ScriptBlock.'
+                return
             }
 
-            Test-IsSupportedRegisterArgumentAst -ArgumentAst $commandElement -ParameterName $currentParameter -Path $LiteralPath
+            Test-IsSupportedRegisterArgumentAst -ArgumentAst $commandElement -ParameterName $currentParameter
             $currentParameter = $null
         }
 
         if (-not [string]::IsNullOrWhiteSpace($currentParameter))
         {
-            throw "Completer script '$LiteralPath' is missing the argument for -$currentParameter at line $($registerCommand.Extent.StartLineNumber)."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message "The script is missing the argument for -$currentParameter." -Hint "Supply a literal value after -$currentParameter."
+            return
         }
 
         if (-not $seenParameters.Contains('CommandName'))
         {
-            throw "Completer script '$LiteralPath' is missing -CommandName in a Register-ArgumentCompleter call at line $($registerCommand.Extent.StartLineNumber)."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message 'The script is missing -CommandName in a Register-ArgumentCompleter call.' -Hint 'Add -CommandName with a literal command name or a literal array of command names.'
         }
 
         if (-not $seenParameters.Contains('ScriptBlock'))
         {
-            throw "Completer script '$LiteralPath' is missing -ScriptBlock in a Register-ArgumentCompleter call at line $($registerCommand.Extent.StartLineNumber)."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message 'The script is missing -ScriptBlock in a Register-ArgumentCompleter call.' -Hint 'Add -ScriptBlock with a literal { ... } script block.'
         }
 
         if ($seenParameters.Contains('Native') -and $seenParameters.Contains('ParameterName'))
         {
-            throw "Completer script '$LiteralPath' combines -Native and -ParameterName at line $($registerCommand.Extent.StartLineNumber). Import-CompleterScript only supports the standard Register-ArgumentCompleter parameter sets."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message 'The script combines -Native and -ParameterName.' -Hint 'Use -Native for a native command completer or -ParameterName for a command parameter completer, not both.'
         }
 
         if (-not $seenParameters.Contains('Native') -and -not $seenParameters.Contains('ParameterName'))
         {
-            throw "Completer script '$LiteralPath' does not identify whether the completer is native or parameter-based at line $($registerCommand.Extent.StartLineNumber). Use -Native or -ParameterName."
+            Add-Finding -Extent $CommandAst.Extent -Construct 'CommandAst' -Message 'The script does not identify whether the completer is native or parameter-based.' -Hint 'Add -Native for a native command completer or -ParameterName for a command parameter completer.'
         }
     }
 
-    return $true
+    foreach ($usingStatement in @($Ast.UsingStatements))
+    {
+        if ($usingStatement.UsingStatementKind -ne [System.Management.Automation.Language.UsingStatementKind]::Namespace)
+        {
+            Add-Finding -Extent $usingStatement.Extent -Construct 'UsingStatementAst' -Message "The script uses a 'using $($usingStatement.UsingStatementKind.ToString().ToLowerInvariant())' statement." -Hint 'Remove the using statement; only using namespace is supported. Load the module or assembly lazily inside a function with Import-Module or Add-Type.'
+        }
+    }
+
+    if ($null -ne $Ast.ScriptRequirements)
+    {
+        if ($Ast.ScriptRequirements.RequiredModules.Count -gt 0)
+        {
+            Add-Finding -Extent $Ast.Extent -Construct 'ScriptRequirements' -Message "The script uses a '#requires -Modules' directive." -Hint 'Remove the directive; the required modules are imported, and their top-level code executes, when the script is dot-sourced. Import the module lazily inside a function instead.'
+        }
+
+        if ($Ast.ScriptRequirements.RequiredAssemblies.Count -gt 0)
+        {
+            Add-Finding -Extent $Ast.Extent -Construct 'ScriptRequirements' -Message "The script uses a '#requires -Assembly' directive." -Hint 'Remove the directive; the required assemblies are loaded when the script is dot-sourced. Load the assembly lazily inside a function with Add-Type instead.'
+        }
+    }
+
+    foreach ($namedBlock in @($Ast.ParamBlock, $Ast.BeginBlock, $Ast.ProcessBlock, $Ast.DynamicParamBlock, $Ast.CleanBlock))
+    {
+        if ($null -ne $namedBlock)
+        {
+            Add-Finding -Extent $namedBlock.Extent -Construct $namedBlock.GetType().Name -Message "The script contains unsupported top-level syntax '$($namedBlock.GetType().Name)'." -Hint 'Remove the param, begin, process, dynamicparam, or clean block; a completer script is a flat script that defines functions and registers completers.'
+        }
+    }
+
+    if ($Ast.EndBlock.Traps.Count -ne 0)
+    {
+        Add-Finding -Extent $Ast.EndBlock.Traps[0].Extent -Construct 'TrapStatementAst' -Message "The script contains unsupported top-level syntax 'TrapStatementAst'." -Hint 'Move trap statements into function bodies.'
+    }
+
+    foreach ($statement in @($Ast.EndBlock.Statements))
+    {
+        Test-ImportSafeStatementAst -StatementAst $statement
+    }
+
+    $functionOverrides = @($Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+                $node.Name -in $allowedImportCommands
+            },
+            $true
+        ))
+
+    foreach ($functionOverride in $functionOverrides)
+    {
+        Add-Finding -Extent $functionOverride.Extent -Construct 'FunctionDefinitionAst' -Message "The script defines its own $($functionOverride.Name) function." -Hint "Rename the function; Import-CompleterScript only supports scripts that call the built-in $($functionOverride.Name) directly."
+    }
+
+    $dotSourcedCommands = @($Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Dot
+            },
+            $true
+        ))
+
+    foreach ($dotSourcedCommand in $dotSourcedCommands)
+    {
+        Add-Finding -Extent $dotSourcedCommand.Extent -Construct 'CommandAst' -Message 'The script dot-sources another script.' -Hint 'Inline the dot-sourced content, or move the dot-source into a function that the completer calls lazily; Import-CompleterScript only supports self-contained completer scripts.'
+    }
+
+    $registerCommands = @($Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'Register-ArgumentCompleter'
+            },
+            $true
+        ))
+
+    if ($registerCommands.Count -eq 0)
+    {
+        Add-Finding -Extent $Ast.Extent -Construct 'ScriptBlockAst' -Message 'The script does not contain a Register-ArgumentCompleter call.' -Hint 'Add a script-scope Register-ArgumentCompleter call with -CommandName, -ScriptBlock, and either -Native or -ParameterName.'
+    }
+
+    foreach ($registerCommand in $registerCommands)
+    {
+        Test-RegisterArgumentCompleterCommandAst -CommandAst $registerCommand
+    }
+
+    return $findings.ToArray()
 }

@@ -48,5 +48,40 @@
                 </TableRowEntries>
             </TableControl>
         </View>
+        <View>
+            <Name>CompleterScriptFindingList</Name>
+            <ViewSelectedBy>
+                <TypeName>CompleterActions.CompleterScriptFinding</TypeName>
+            </ViewSelectedBy>
+            <GroupBy>
+                <PropertyName>Path</PropertyName>
+            </GroupBy>
+            <ListControl>
+                <ListEntries>
+                    <ListEntry>
+                        <ListItems>
+                            <ListItem>
+                                <PropertyName>Line</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <PropertyName>Column</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <PropertyName>Severity</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <PropertyName>Construct</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <PropertyName>Message</PropertyName>
+                            </ListItem>
+                            <ListItem>
+                                <PropertyName>Hint</PropertyName>
+                            </ListItem>
+                        </ListItems>
+                    </ListEntry>
+                </ListEntries>
+            </ListControl>
+        </View>
     </ViewDefinitions>
 </Configuration>

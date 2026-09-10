@@ -7,11 +7,12 @@ Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows Register-ArgumentCompleter, and emits objects that
 can be piped directly to Register-CompleterRegistration -InputObject.
 
-Import-CompleterScript is safe by default for supported script shapes: it rejects
-unsupported Register-ArgumentCompleter patterns during AST validation and avoids
-mutating the live runtime completer tables during import. Imported ScriptBlock
-objects keep the temporary module context that contains helper functions and
-script-scope state defined by the source script.
+Import-CompleterScript is safe by default for supported script shapes: it
+validates the script against a closed grammar before executing it, rejects
+every unsupported construct with the same findings Test-CompleterScript
+reports, and avoids mutating the live runtime completer tables during import.
+Imported ScriptBlock objects keep the temporary module context that contains
+helper functions and script-scope state defined by the source script.
 
 Compatible completer scripts must be self-contained and must keep script scope
 limited to Set-StrictMode, function definitions, importer-safe if statements,
@@ -79,49 +80,25 @@ function Import-CompleterScript
 
     process
     {
-        $resolvedPaths = @()
-
         try
         {
-            switch ($PSCmdlet.ParameterSetName)
+            $pathParameters = if ($PSCmdlet.ParameterSetName -eq 'LiteralPath') { @{ LiteralPath = $LiteralPath } } else { @{ Path = $Path } }
+
+            foreach ($resolvedPath in @(Resolve-CompleterScriptPath @pathParameters))
             {
-                'Path'
+                $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
+
+                if ($findings.Count -gt 0)
                 {
-                    foreach ($pathItem in $Path)
+                    $findingLines = foreach ($finding in $findings)
                     {
-                        $resolvedPaths += @(Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath)
+                        'Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint
                     }
 
-                    break
+                    throw "Completer script '$resolvedPath' does not conform to the strict import grammar. Run Test-CompleterScript to work through the findings.$([Environment]::NewLine)$($findingLines -join [Environment]::NewLine)"
                 }
 
-                'LiteralPath'
-                {
-                    foreach ($literalPathItem in $LiteralPath)
-                    {
-                        $resolvedPaths += (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
-                    }
-
-                    break
-                }
-            }
-
-            foreach ($resolvedPath in $resolvedPaths)
-            {
-                $file = Get-Item -LiteralPath $resolvedPath -ErrorAction Stop
-                if ($file.PSIsContainer)
-                {
-                    throw "Completer script imports require a file path. '$resolvedPath' is a directory."
-                }
-
-                if ($file.Extension -ne '.ps1')
-                {
-                    throw "Completer script imports require .ps1 files. Received '$resolvedPath'."
-                }
-
-                $parseResult = Get-CompleterScriptParseResult -LiteralPath $file.FullName
-                $null = Test-CompleterScriptAst -Ast $parseResult.Ast -LiteralPath $file.FullName
-                $importSession = Import-CompleterScriptDefinition -LiteralPath $file.FullName
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath
 
                 foreach ($definition in $importSession.Definitions)
                 {
@@ -141,7 +118,7 @@ function Import-CompleterScript
                     foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
                     {
                         $PSCmdlet.WriteObject(
-                            (New-ImportedCompleterRegistration -Target $target -ScriptBlock $definition.ScriptBlock -SourcePath $file.FullName -ImportModule $importSession.Module)
+                            (New-ImportedCompleterRegistration -Target $target -ScriptBlock $definition.ScriptBlock -SourcePath $resolvedPath -ImportModule $importSession.Module)
                         )
                     }
                 }
@@ -150,10 +127,6 @@ function Import-CompleterScript
         catch
         {
             throw "Failed to import completer script. $($_.Exception.Message)"
-        }
-        finally
-        {
-            $resolvedPaths = @()
         }
     }
 }

@@ -5,7 +5,9 @@ Parses a completer script file into a reusable AST result.
 .DESCRIPTION
 Uses PowerShell's parser to read a completer script from disk and returns the
 root AST, token stream, and parse errors so higher-level import helpers can
-validate the script shape before executing it in a controlled scope.
+validate the script shape before executing it in a controlled scope. Parse
+errors are returned on the result rather than thrown, so callers can report
+them as findings.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -30,17 +32,6 @@ function Get-CompleterScriptParseResult
         [ref] $tokens,
         [ref] $parseErrors
     )
-
-    if ($parseErrors.Count -gt 0)
-    {
-        $errorSummary = @($parseErrors |
-            Select-Object -First 3 |
-            ForEach-Object {
-                'line {0}, column {1}: {2}' -f $_.Extent.StartLineNumber, $_.Extent.StartColumnNumber, $_.Message
-            }) -join '; '
-
-        throw "Completer script '$LiteralPath' could not be parsed. $errorSummary"
-    }
 
     [pscustomobject] [ordered] @{
         PSTypeName  = 'CompleterActions.CompleterScriptParseResult'
