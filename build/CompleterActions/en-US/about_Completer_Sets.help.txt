@@ -162,7 +162,9 @@ LAZY LOADING, PENDING, AND FAILED
     real script block for its own target, replaces the runtime entry with it,
     moves the record to `Active`, and delegates that first call to the real
     block. Later presses hit the real completer directly. A session that
-    never uses a completer never pays for loading it.
+    never uses a completer never pays for loading it. A script that registers
+    several targets is loaded once: every other Pending target of the same
+    script is swapped in from that same import.
 
     If the script fails to load on that first press, the press returns no
     completions, no error reaches the host, and the prompt is never
@@ -171,8 +173,10 @@ LAZY LOADING, PENDING, AND FAILED
     later presses on that command get PowerShell's default completion
     exactly as if no completer had been registered. `Get-CompleterRegistration`
     shows the `Failed` record and its `LoadError`; `-ManagedOnly` includes
-    both `Pending` and `Failed` records. Registering the script again with
-    `-Force` retries the load.
+    both `Pending` and `Failed` records. Only the target whose press failed
+    moves to `Failed`; the script's other targets stay `Pending` and fail the
+    same way on their own first press. Registering the script again with
+    `-Force`, or importing the set again with `-Force`, retries the load.
 
     The full state list is therefore:
 

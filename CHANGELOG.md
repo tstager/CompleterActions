@@ -56,7 +56,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `Get-ChildItem | Import-CompleterScript | Register-CompleterRegistration`
   pipeline against `Import-CompleterSet` of a set exported from the same
   scripts, each sample in a fresh `pwsh -NoProfile` process, and reports the
-  median, minimum, maximum, and ratio per leg.
+  median, minimum, maximum, and ratio per leg. On the 169-script, 355-target
+  repository with five samples per leg: eager median 6557.8 ms, lazy median
+  2382.4 ms, ratio 0.36. The roadmap target of 0.25 is not met yet; the
+  remaining lazy cost is one parse per script, done once for validation and
+  once inside `Register-CompleterRegistration`, plus the per-target
+  registration bookkeeping.
 
 ### Changed
 
@@ -68,6 +73,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   a script or a set lazily costs one parse per script; a script that fails the
   grammar moves to `Failed` on its first tab press with the findings in
   `LoadError`.
+- `Find-RuntimeCompleterRegistration -Key` compares the stored dictionary
+  keys directly instead of normalizing every key on each lookup, which removed
+  a quadratic cost from registering many targets: the eager 169-script import
+  dropped from about 9.0 s to 6.6 s per fresh `pwsh -NoProfile` session.
 
 ### Documentation
 
