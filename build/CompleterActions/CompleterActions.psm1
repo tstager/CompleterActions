@@ -2247,22 +2247,22 @@ function Find-RuntimeCompleterRegistration
 
             if ($null -ne $runtime.NativeArgumentCompleters)
             {
-                foreach ($entry in $runtime.NativeArgumentCompleters.GetEnumerator())
+                foreach ($entryKey in $runtime.NativeArgumentCompleters.Keys)
                 {
-                    if ((Get-CompleterRegistrationKey -RuntimeKey ([string] $entry.Key)) -eq $normalizedKey)
+                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key) -Native) -ScriptBlock $entry.Value -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
                     }
                 }
             }
 
             if ($null -ne $runtime.CustomArgumentCompleters)
             {
-                foreach ($entry in $runtime.CustomArgumentCompleters.GetEnumerator())
+                foreach ($entryKey in $runtime.CustomArgumentCompleters.Keys)
                 {
-                    if ((Get-CompleterRegistrationKey -RuntimeKey ([string] $entry.Key)) -eq $normalizedKey)
+                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key)) -ScriptBlock $entry.Value -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
                     }
                 }
             }
@@ -2643,14 +2643,17 @@ Derives the completer targets a strict-tier script registers without executing i
 
 .DESCRIPTION
 Parses the script once and reads the literal -CommandName, -ParameterName, and
--Native arguments of every Register-ArgumentCompleter call from the AST,
-resolving them into normalized completer targets. The strict import grammar
-requires those arguments to be literal, so a conforming script's targets are
-known without running it, and a script whose arguments cannot be read
-statically is reported with the position of the offending argument. The
-grammar itself does not run here; it runs through Import-CompleterScript when
-the script loads, so registering a script lazily costs one parse rather than a
-full conformance walk. Duplicate targets collapse to one record.
+-Native arguments of every script-scope Register-ArgumentCompleter call from
+the AST, resolving them into normalized completer targets. Nested script
+blocks are not searched: a call inside a completer body or a function does not
+run when the script is imported, and skipping them keeps the walk cheap. The
+strict import grammar requires those arguments to be literal, so a conforming
+script's targets are known without running it, and a script whose arguments
+cannot be read statically is reported with the position of the offending
+argument. The grammar itself does not run here; it runs through
+Import-CompleterScript when the script loads, so registering a script lazily
+costs one parse rather than a full conformance walk. Duplicate targets
+collapse to one record.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -2686,7 +2689,7 @@ function Get-CompleterScriptTarget
                 $node -is [System.Management.Automation.Language.CommandAst] -and
                 $node.GetCommandName() -eq 'Register-ArgumentCompleter'
             },
-            $true
+            $false
         ))
 
     $targetsByKey = [ordered] @{}
