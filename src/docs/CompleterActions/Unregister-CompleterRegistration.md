@@ -4,7 +4,7 @@ external help file: CompleterActions-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: CompleterActions
-ms.date: 04/01/2026
+ms.date: 09/11/2026
 PlatyPS schema version: 2024-05-01
 title: Unregister-CompleterRegistration
 ---
@@ -63,6 +63,9 @@ registration was replaced outside this module: the live value is only removed
 with -AllowUnmanaged, and the stale managed record is dropped with it.
 When the runtime registration was already removed outside this module, only the
 stale managed record remains and it is removed without the gate.
+A Pending lazy registration is removed like any managed registration, stub and
+record together. A Failed lazy registration has no runtime entry of its own, so
+only its managed record is removed.
 The command supports array inputs for keys and target fields, plus
 pipeline input from Get-CompleterRegistration output.
 

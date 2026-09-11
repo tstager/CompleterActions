@@ -12,9 +12,12 @@ When the runtime registration was replaced outside this module, the live
 discovered value is returned with State 'Conflicted' instead; -ManagedOnly
 returns the managed record with State 'Stale'. When the runtime registration
 was removed outside this module, the managed record is returned with State
-'Stale' and IsRuntimeRegistered false. The command accepts arrays for key,
-command, and parameter lookup scenarios and supports property-name pipeline
-binding for key-based and target-based lookups.
+'Stale' and IsRuntimeRegistered false. Lazy registrations report State
+'Pending' until their script loads on the first tab press and 'Failed' when
+that load failed; a Failed record has no runtime entry and carries the error
+in LoadError. Both are returned by default and by -ManagedOnly. The command
+accepts arrays for key, command, and parameter lookup scenarios and supports
+property-name pipeline binding for key-based and target-based lookups.
 
 .PARAMETER Key
 Gets the registrations that match one or more registration keys. A key without
@@ -44,9 +47,13 @@ Returns only registrations discovered from the current PowerShell runtime.
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns CompleterActions.CompleterRegistration records. The State property is
-'Active' for records that describe the live runtime value, 'Stale' for managed
-records that no longer match the runtime, and 'Conflicted' for live runtime
-values that replaced a managed registration outside this module.
+'Active' for records that describe the live runtime value, 'Pending' for lazy
+registrations whose script has not loaded yet, 'Failed' for lazy registrations
+whose script failed to load, 'Stale' for managed records that no longer match
+the runtime, and 'Conflicted' for live runtime values that replaced a managed
+registration outside this module. ScriptPath names the completer script behind
+a lazy or imported registration and LoadError holds the failure message of a
+Failed record.
 
 .EXAMPLE
 PS> Get-CompleterRegistration -CommandName 'git' -Native
@@ -176,13 +183,17 @@ function Get-CompleterRegistration
 
                 $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
 
-                if ($registrationState.ManagedState -eq 'Active')
+                if ($registrationState.ManagedState -in 'Active', 'Pending')
+                {
+                    $registrationsByKey[[string] $registration.Key] = $registration
+                }
+                elseif ($registrationState.ManagedState -eq 'Failed' -and ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration))
                 {
                     $registrationsByKey[[string] $registration.Key] = $registration
                 }
                 elseif ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration)
                 {
-                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale'
+                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
                 }
                 else
                 {
@@ -206,12 +217,12 @@ function Get-CompleterRegistration
                 {
                     $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
 
-                    if ($registrationState.ManagedState -eq 'Active')
+                    if ($registrationState.ManagedState -in 'Active', 'Pending')
                     {
                         continue
                     }
 
-                    if ($registrationState.ManagedState -eq 'Stale')
+                    if ($registrationState.ManagedState -in 'Stale', 'Failed')
                     {
                         $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                         continue

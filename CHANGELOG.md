@@ -7,6 +7,110 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Lazy registration. `Register-CompleterRegistration -Path` or `-LiteralPath`
+  with `-Lazy` registers a completer script without running it: the runtime
+  entry for each target is a stub that imports the script through
+  `Import-CompleterScript` on the first tab press, replaces itself with the
+  real completer, and delegates that first call to it. Under the default strict
+  tier the targets are read from the script's literal
+  `Register-ArgumentCompleter` arguments, so the file is parsed but never
+  executed at registration time; `-Trusted` selects the trusted tier for the
+  load and requires the targets to be named with `-CommandName` and `-Native`
+  or `-ParameterName`. A script that registers several targets is executed once
+  and every Pending sibling is swapped from the same import.
+- `Pending` and `Failed` registration states. A lazy record reports `Pending`
+  until its script loads and `Active` afterwards. If the load fails, the tab
+  press returns no completions, the runtime entry is removed so the completion
+  engine's default completion applies exactly as with no completer registered,
+  and the record moves to `Failed` with the message in `LoadError`; nothing is
+  written to the host. `Register-CompleterRegistration -Force` retries the
+  load. `Get-CompleterRegistration` returns both states by default and with
+  `-ManagedOnly`; `Unregister-CompleterRegistration` removes a Pending stub with
+  its record and a Failed record on its own.
+- `ScriptPath`, `Trusted`, and `LoadError` properties on
+  `CompleterActions.CompleterRegistration` records. Registrations made from
+  `Import-CompleterScript` records carry the script's path and tier too, so an
+  eager session exposes the same file information as a lazy one.
+- Lazy loading never hooks PSReadLine key handlers, replaces `TabExpansion2`,
+  or changes PSReadLine options; the tests snapshot
+  `Get-PSReadLineKeyHandler` around registration, first tab, and removal.
+- `Import-CompleterSet`. Reads a completer set, a `.psd1` data file that lists
+  completer scripts with a per-entry trust tier and their targets, through
+  `Import-PowerShellDataFile` so the set itself can never run code. Every
+  entry is validated before anything registers: the file exists and is a
+  `.ps1`, `Trusted` entries declare their `Targets`, strict entries expose
+  literal targets that are derived from the parsed script and compared
+  against any the entry declares, no target is listed by two entries, and
+  without `-Force` no target already carries a managed or runtime
+  registration for a different completer, the same rules
+  `Register-CompleterRegistration` applies. One terminating error lists every
+  problem;
+  `-SkipInvalid` writes them as warnings and registers the valid entries.
+  Paths that are not fully qualified, drive-relative ones included, resolve
+  against the set file's directory, `-Force` passes through to the
+  registration, and the command returns the registration records.
+- `Export-CompleterSet`. Writes a completer set from registration records
+  piped from `Get-CompleterRegistration` or `Import-CompleterScript`, or from
+  every managed registration that records a `ScriptPath`, one entry per
+  script with its `Trusted` flag and targets, and script paths relative to the
+  set file when they share a root.
+- `tools/Measure-CompleterStartup.ps1`. Startup benchmark that times the eager
+  `Get-ChildItem | Import-CompleterScript | Register-CompleterRegistration`
+  pipeline against `Import-CompleterSet` of a set exported from the same
+  scripts, each sample in a fresh `pwsh -NoProfile` process, and reports the
+  median, minimum, maximum, and ratio per leg. On the 169-script, 355-target
+  repository with five samples per leg: eager median 7063.3 ms, lazy median
+  1315.5 ms, ratio 0.19, under the roadmap target of 0.25; against the
+  highest eager median recorded on this machine, 7427.7 ms, the same lazy
+  figure is 0.18. The remaining lazy cost is one parse per strict script,
+  about a third of the leg, plus record creation and the runtime and managed
+  writes.
+
+### Changed
+
+- The default table view for registration records adds `ScriptPath` and
+  `LoadError` columns after `State`.
+- `Import-CompleterScript` runs its strict conformance gate through
+  `Assert-CompleterScriptConformance`. A lazily registered strict script goes
+  through that gate when it loads rather than at registration, so
+  `Register-CompleterRegistration -Lazy` and `Import-CompleterSet` each cost
+  one parse per strict script with no conformance walk; a script that fails
+  the grammar moves to `Failed` on its first tab press with the findings in
+  `LoadError`.
+- `Import-CompleterSet` registers each entry from the targets its validation
+  derived instead of calling `Register-CompleterRegistration -Lazy`, which
+  parsed every strict script a second time. Both paths write registrations
+  through one shared transactional helper, so conflict rules, record shapes,
+  and rollback are unchanged. On the 169-script repository the lazy startup
+  median dropped from 2566.2 ms to 1806.1 ms.
+- `Import-CompleterSet` registers a set as one batch. Validation and
+  registration share one snapshot of the managed table and the runtime
+  completer dictionaries, each entry's targets are reconciled in one pass
+  against that snapshot instead of once per target during validation and
+  again during registration, and the whole set is written through one call
+  that rolls back every runtime and managed change of the set, replaced
+  registrations included, if any write fails. `Register-CompleterRegistration`
+  resolves conflicts and writes through the same helpers one target at a time,
+  so each target of a call is still its own transaction: a failed write or a
+  conflict on a later target leaves the earlier targets of that call
+  registered, and a target repeated within one call is resolved against what
+  the earlier occurrence wrote, exactly as before. On the 169-script
+  repository the lazy startup median dropped from 1806.1 ms to 1315.5 ms.
+- `Find-RuntimeCompleterRegistration -Key` compares the stored dictionary
+  keys directly instead of normalizing every key on each lookup, which removed
+  a quadratic cost from registering many targets: the eager 169-script import
+  dropped from about 9.0 s to 6.6 s per fresh `pwsh -NoProfile` session.
+
+### Documentation
+
+- `about_Completer_Sets` describes the set file schema, the trust tier per
+  entry, up-front validation, the `Pending` and `Failed` lifecycle of lazily
+  loaded completers, and the PSReadLine neutrality promise.
+- README command map, examples, and architecture notes cover the two set
+  commands, and a lazy-loading section explains the set format and lifecycle.
+
 ## [1.4.0] - 2026-09-10
 
 ### Added

@@ -107,17 +107,7 @@ function Import-CompleterScript
             {
                 if (-not $Trusted)
                 {
-                    $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
-
-                    if ($findings.Count -gt 0)
-                    {
-                        $findingLines = foreach ($finding in $findings)
-                        {
-                            'Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint
-                        }
-
-                        throw "Completer script '$resolvedPath' does not conform to the strict import grammar. Run Test-CompleterScript to work through the findings, or import with -Trusted to run the script as-is.$([Environment]::NewLine)$($findingLines -join [Environment]::NewLine)"
-                    }
+                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath
                 }
 
                 $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath

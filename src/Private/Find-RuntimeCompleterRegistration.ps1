@@ -113,22 +113,22 @@ function Find-RuntimeCompleterRegistration
 
             if ($null -ne $runtime.NativeArgumentCompleters)
             {
-                foreach ($entry in $runtime.NativeArgumentCompleters.GetEnumerator())
+                foreach ($entryKey in $runtime.NativeArgumentCompleters.Keys)
                 {
-                    if ((Get-CompleterRegistrationKey -RuntimeKey ([string] $entry.Key)) -eq $normalizedKey)
+                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key) -Native) -ScriptBlock $entry.Value -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
                     }
                 }
             }
 
             if ($null -ne $runtime.CustomArgumentCompleters)
             {
-                foreach ($entry in $runtime.CustomArgumentCompleters.GetEnumerator())
+                foreach ($entryKey in $runtime.CustomArgumentCompleters.Keys)
                 {
-                    if ((Get-CompleterRegistrationKey -RuntimeKey ([string] $entry.Key)) -eq $normalizedKey)
+                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key)) -ScriptBlock $entry.Value -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
                     }
                 }
             }

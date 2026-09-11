@@ -4,7 +4,7 @@ external help file: CompleterActions-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: CompleterActions
-ms.date: 04/01/2026
+ms.date: 09/11/2026
 PlatyPS schema version: 2024-05-01
 title: Get-CompleterRegistration
 ---
@@ -61,6 +61,10 @@ discovered value is returned with State 'Conflicted' instead; -ManagedOnly
 returns the managed record with State 'Stale'.
 When the runtime registration was removed outside this module, the managed
 record is returned with State 'Stale' and IsRuntimeRegistered false.
+Lazy registrations report State 'Pending' until their script loads on the
+first tab press and 'Failed' when that load failed; a Failed record has no
+runtime entry and carries the error in LoadError. Both are returned by default
+and by -ManagedOnly.
 The command accepts arrays for key, command, and parameter
 lookup scenarios and supports property-name pipeline binding for key-based and
 target-based lookups.
@@ -79,6 +83,13 @@ git.
 Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
 
 Gets multiple completer registrations by key in a single call.
+
+### EXAMPLE 3
+
+Get-CompleterRegistration -ManagedOnly | Where-Object State -in Pending, Failed
+
+Lists the lazy registrations that have not loaded yet and the ones whose script
+failed to load, with the failure message in LoadError.
 
 ## PARAMETERS
 
@@ -292,7 +303,14 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### System.Management.Automation.PSCustomObject
 
-Returns CompleterActions.CompleterRegistration records.
+Returns CompleterActions.CompleterRegistration records. The State property is
+'Active' for records that describe the live runtime value, 'Pending' for lazy
+registrations whose script has not loaded yet, 'Failed' for lazy registrations
+whose script failed to load, 'Stale' for managed records that no longer match
+the runtime, and 'Conflicted' for live runtime values that replaced a managed
+registration outside this module. ScriptPath names the completer script behind
+a lazy or imported registration and LoadError holds the failure message of a
+Failed record.
 
 ### System.Management.Automation.PSObject
 
