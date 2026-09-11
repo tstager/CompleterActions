@@ -61,11 +61,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   pipeline against `Import-CompleterSet` of a set exported from the same
   scripts, each sample in a fresh `pwsh -NoProfile` process, and reports the
   median, minimum, maximum, and ratio per leg. On the 169-script, 355-target
-  repository with five samples per leg: eager median 7427.7 ms, lazy median
-  1806.1 ms, ratio 0.24. That sits at the roadmap target of 0.25 with a thin
-  margin, since the eager leg moves by a few hundred milliseconds between
-  runs; the remaining lazy cost is one parse per strict script plus the
-  per-target conflict check and registration bookkeeping.
+  repository with five samples per leg: eager median 6898.5 ms, lazy median
+  1327.1 ms, ratio 0.19, under the roadmap target of 0.25; against the
+  highest eager median recorded on this machine, 7427.7 ms, the same lazy
+  figure is 0.18. The remaining lazy cost is one parse per strict script,
+  about a third of the leg, plus record creation and the runtime and managed
+  writes.
 
 ### Changed
 
@@ -84,6 +85,20 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   through one shared transactional helper, so conflict rules, record shapes,
   and rollback are unchanged. On the 169-script repository the lazy startup
   median dropped from 2566.2 ms to 1806.1 ms.
+- `Import-CompleterSet` registers a set as one batch. Validation and
+  registration share one snapshot of the managed table and the runtime
+  completer dictionaries, each entry's targets are reconciled in one pass
+  against that snapshot instead of once per target during validation and
+  again during registration, and the whole set is written through one call
+  that rolls back every runtime and managed change of the set, replaced
+  registrations included, if any write fails. `Register-CompleterRegistration`
+  resolves conflicts and writes through the same path, so the targets of one
+  call are now one transaction too: a failed write or a conflict on a later
+  target leaves the earlier targets of that call unregistered, where each
+  target used to be its own transaction. A target repeated within one call is
+  still resolved as if the earlier occurrence had already been written. On the
+  169-script repository the lazy startup median dropped from 1806.1 ms to
+  1327.1 ms.
 - `Find-RuntimeCompleterRegistration -Key` compares the stored dictionary
   keys directly instead of normalizing every key on each lookup, which removed
   a quadratic cost from registering many targets: the eager 169-script import
