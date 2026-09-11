@@ -22,6 +22,7 @@
 
 - Manage both parameter completers and native command completers
 - Import completer scripts into managed registration input objects through a strict grammar or, for scripts you own, a trusted tier
+- Describe a whole completer repository in one set file, validate it up front, and register it with a single command
 - Check completer scripts against the strict grammar and get findings with line numbers and fix hints
 - Verify a registration by running tab completion for an input and getting the matches back as objects
 - Query module-managed registrations and runtime-discovered registrations
@@ -34,8 +35,10 @@
 
 | Command | What it does |
 | --- | --- |
+| `Export-CompleterSet` | Writes a completer set file (`.psd1`) from registrations that came from scripts, with each script's trust tier and targets |
 | `Get-CompleterRegistration` | Lists completer registrations known to the module or discovered from the current runtime |
 | `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-CompleterRegistration -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
+| `Import-CompleterSet` | Validates every entry of a completer set up front, then registers the whole set; `-SkipInvalid` warns and registers the rest |
 | `Register-CompleterRegistration` | Registers a managed completer and records it in module state |
 | `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches |
 | `Test-CompleterScript` | Checks completer scripts against the strict import grammar and returns findings with line, column, construct, and a fix hint |
@@ -62,10 +65,11 @@ Import-Module .\CompleterActions.psd1
 Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```
 
-### Read the conceptual import guide
+### Read the conceptual guides
 
 ```powershell
 Get-Help about_Import_Completers
+Get-Help about_Completer_Sets
 ```
 
 Runtime registration discovery and unmanaged-registration removal depend on PowerShell runtime internals. The module is tested on PowerShell 7, but future engine changes may require maintenance in that discovery path.
@@ -145,6 +149,18 @@ Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
     Register-CompleterRegistration
 ```
 
+### Describe a completer repository as a set
+
+```powershell
+# Build the set once, without registering anything in this session
+Get-ChildItem ~\Completers -Recurse -Filter *_completer.ps1 |
+    Import-CompleterScript |
+    Export-CompleterSet -Path ~\Completers\completers.psd1
+
+# The profile then needs one line
+Import-CompleterSet -Path ~\Completers\completers.psd1
+```
+
 ### Verify a registration
 
 ```powershell
@@ -201,6 +217,29 @@ Unregister-CompleterRegistration `
     -Confirm:$false
 ```
 
+## Lazy loading and completer sets
+
+A completer set is a `.psd1` data file that lists completer scripts, the trust tier each one loads under, and the targets each one registers:
+
+```powershell
+@{
+    Version = 1
+    Entries = @(
+        @{
+            Path    = 'git_completer.ps1'
+            Trusted = $false
+            Targets = @(
+                @{ CommandName = 'git'; Native = $true }
+            )
+        }
+    )
+}
+```
+
+`Import-CompleterSet` reads the file with `Import-PowerShellDataFile`, so the set itself can never run code, and validates every entry before registering anything: the file exists and is a `.ps1`, `Trusted` entries declare their `Targets`, and strict entries pass the same grammar `Test-CompleterScript` checks, with targets derived from the script and compared against any the entry declares. One error lists every problem; `-SkipInvalid` turns them into warnings and registers the rest.
+
+Registering a set does not run the scripts. Each target gets a stub and a managed record in state `Pending`; the first tab press for that target loads the script, swaps in the real completer, and moves the record to `Active`. A script that fails to load yields no completions for that press, records the error as `LoadError` with state `Failed`, and removes its stub so PowerShell's default completion takes over. Nothing the module does hooks PSReadLine key handlers, replaces `TabExpansion2`, or changes PSReadLine options. `about_Completer_Sets` covers the schema and lifecycle in full, and `tools/Measure-CompleterStartup.ps1` measures the eager and lazy startup cost of a completer repository in child `pwsh -NoProfile` processes.
+
 ## Output, formatting, paging, and pipeline support
 
 Registration records use the `CompleterActions.CompleterRegistration` type and have a default table view with:
@@ -226,6 +265,7 @@ Pipeline highlights:
 
 - `Get-CompleterRegistration` supports property-name binding for key, command, and parameter lookups
 - `Import-CompleterScript` emits input objects that are ready for `Register-CompleterRegistration -InputObject`
+- `Export-CompleterSet` accepts records from `Get-CompleterRegistration` and `Import-CompleterScript`; `Import-CompleterSet` accepts `Get-ChildItem` output through `FullName` binding
 - `Test-CompleterScript` accepts `Get-ChildItem` output directly through `FullName` binding
 - `Test-CompleterRegistration` accepts registration records from `Get-CompleterRegistration` and `Import-CompleterScript`
 - `Register-CompleterRegistration` can accept input objects that describe a target and expose a `ScriptBlock`
@@ -294,13 +334,16 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
 - `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Private` and `src\Public`, runs `src\Bootstrap.ps1`, and exports the public function set.
 - `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe and module state initialization. The build appends it to the packaged `.psm1` after the function definitions.
 - `src\Public` contains the user-facing command surface:
+  - `Export-CompleterSet`
   - `Get-CompleterRegistration`
   - `Import-CompleterScript`
+  - `Import-CompleterSet`
   - `Register-CompleterRegistration`
   - `Test-CompleterRegistration`
   - `Test-CompleterScript`
   - `Unregister-CompleterRegistration`
-- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar lives in `Test-CompleterScriptAst`, which returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume.
+- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar lives in `Test-CompleterScriptAst`, which returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume. Completer sets are read by `Import-CompleterSetDefinition`, validated entry by entry in `Resolve-CompleterSetEntry` (with `Get-CompleterScriptTarget` deriving strict-tier targets from the AST), and registered through `Register-CompleterSetEntry`.
+- `tools\Measure-CompleterStartup.ps1` is the startup benchmark: eager import versus `Import-CompleterSet`, each sampled in fresh `pwsh -NoProfile` processes.
 
 ### Runtime internals caveat
 

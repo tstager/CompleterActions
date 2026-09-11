@@ -7,6 +7,38 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- `Import-CompleterSet`. Reads a completer set, a `.psd1` data file that lists
+  completer scripts with a per-entry trust tier and their targets, through
+  `Import-PowerShellDataFile` so the set itself can never run code. Every
+  entry is validated before anything registers: the file exists and is a
+  `.ps1`, `Trusted` entries declare their `Targets`, strict entries pass the
+  strict import grammar with targets derived from the script and compared
+  against any the entry declares. One terminating error lists every problem;
+  `-SkipInvalid` writes them as warnings and registers the valid entries.
+  Relative paths resolve against the set file's directory, `-Force` passes
+  through to the registration, and the command returns the registration
+  records.
+- `Export-CompleterSet`. Writes a completer set from registration records
+  piped from `Get-CompleterRegistration` or `Import-CompleterScript`, or from
+  every managed registration that records a `ScriptPath`, one entry per
+  script with its `Trusted` flag and targets, and script paths relative to the
+  set file when they share a root.
+- `tools/Measure-CompleterStartup.ps1`. Startup benchmark that times the eager
+  `Get-ChildItem | Import-CompleterScript | Register-CompleterRegistration`
+  pipeline against `Import-CompleterSet` of a set exported from the same
+  scripts, each sample in a fresh `pwsh -NoProfile` process, and reports the
+  median, minimum, maximum, and ratio per leg.
+
+### Documentation
+
+- `about_Completer_Sets` describes the set file schema, the trust tier per
+  entry, up-front validation, the `Pending` and `Failed` lifecycle of lazily
+  loaded completers, and the PSReadLine neutrality promise.
+- README command map, examples, and architecture notes cover the two set
+  commands, and a lazy-loading section explains the set format and lifecycle.
+
 ## [1.4.0] - 2026-09-10
 
 ### Added
