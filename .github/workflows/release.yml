@@ -108,6 +108,12 @@ jobs:
           $asset = Join-Path -Path $env:RUNNER_TEMP -ChildPath 'CompleterActions.zip'
           $arguments = @($env:GITHUB_REF_NAME, '--title', $env:GITHUB_REF_NAME, '--verify-tag', '--generate-notes')
 
+          # A hyphen in the tag means a Prerelease label, so the GitHub release must not become "latest".
+          if ($env:GITHUB_REF_NAME -match '-')
+          {
+              $arguments += '--prerelease'
+          }
+
           if (Test-Path -Path $notes)
           {
               $arguments += @('--notes-file', $notes)

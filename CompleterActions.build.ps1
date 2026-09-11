@@ -210,7 +210,7 @@ task external_help {
         Export-MamlCommandHelp -OutputFolder $docPath -Force
 }
 
-# Synopsis: Asserts that the tag on HEAD (if any) matches the source manifest ModuleVersion
+# Synopsis: Asserts that the tag on HEAD (if any) matches the source manifest ModuleVersion plus any Prerelease label
 task release_check {
 
     if (-not (Get-Command -Name git -ErrorAction SilentlyContinue)) {
@@ -224,13 +224,20 @@ task release_check {
         return
     }
 
-    $expectedTag = "v$($sourceManifestData.ModuleVersion)"
+    $expectedVersion = $sourceManifestData.ModuleVersion
+    $prerelease = $sourceManifestData.PrivateData.PSData.Prerelease
 
-    if ($headTag -ne $expectedTag) {
-        throw "release_check: HEAD tag '$headTag' does not match the source manifest ModuleVersion '$($sourceManifestData.ModuleVersion)' (expected tag '$expectedTag')."
+    if (-not [string]::IsNullOrWhiteSpace($prerelease)) {
+        $expectedVersion = "$expectedVersion-$prerelease"
     }
 
-    Write-Build Green "release_check: HEAD tag '$headTag' matches ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+    $expectedTag = "v$expectedVersion"
+
+    if ($headTag -ne $expectedTag) {
+        throw "release_check: HEAD tag '$headTag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
+    }
+
+    Write-Build Green "release_check: HEAD tag '$headTag' matches the source manifest version '$expectedVersion'."
 }
 
 task Publish_build {

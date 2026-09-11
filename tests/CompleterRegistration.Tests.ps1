@@ -82,6 +82,7 @@ Describe 'Module Manifest Tests' {
 
         $sourceManifest.PrivateData.PSData.ProjectUri | Should -Not -BeNullOrEmpty
         $builtManifest.PrivateData.PSData.ProjectUri | Should -Be $sourceManifest.PrivateData.PSData.ProjectUri
+        [string] $builtManifest.PrivateData.PSData.Prerelease | Should -Be ([string] $sourceManifest.PrivateData.PSData.Prerelease)
         $builtManifest.Copyright | Should -Match ([regex]::Escape($sourceManifest.Author))
     }
 
