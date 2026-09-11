@@ -2,6 +2,200 @@
 <helpItems xmlns:maml="http://schemas.microsoft.com/maml/2004/10" xmlns:command="http://schemas.microsoft.com/maml/dev/command/2004/10" xmlns:dev="http://schemas.microsoft.com/maml/dev/2004/10" schema="maml" xmlns="http://msh">
   <command:command>
     <command:details>
+      <command:name>Export-CompleterSet</command:name>
+      <maml:description>
+        <maml:para>Writes a completer set file from registrations that came from scripts.</maml:para>
+      </maml:description>
+      <command:verb>Export</command:verb>
+      <command:noun>CompleterSet</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Groups registration records by the completer script they came from and writes
+a completer set: a `.psd1` data file that lists each script once with its
+trust tier and the targets it registers. `Import-CompleterSet` reads the file
+back and registers everything in it, so a profile that imports a completer
+repository becomes one `Import-CompleterSet` call.
+
+Records arrive through `-InputObject`, typically from
+`Get-CompleterRegistration` or `Import-CompleterScript`. Without `-InputObject`
+the command exports every managed registration that records a `ScriptPath`.
+Script paths are written relative to the set file when both share a root, so a
+repository can carry its set file alongside its scripts; paths on another drive
+stay absolute. The `Trusted` flag of each entry is taken from the records, and
+records for the same script must agree on it.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Export-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="none">
+          <maml:name>Path</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputObject</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="cf">
+        <maml:name>Confirm</maml:name>
+        <maml:description>
+          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="Named" aliases="none">
+        <maml:name>InputObject</maml:name>
+        <maml:description>
+          <maml:para>Registration records to export. Each record must describe a target and expose
+the script it came from through a `ScriptPath` or `SourcePath` property.
+Records without a script path cannot be expressed in a set and are rejected.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>PassThru</maml:name>
+        <maml:description>
+          <maml:para>Returns the written file.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="none">
+        <maml:name>Path</maml:name>
+        <maml:description>
+          <maml:para>The path of the `.psd1` file to write. The parent directory must exist.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="wi">
+        <maml:name>WhatIf</maml:name>
+        <maml:description>
+          <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>Registration records from `Get-CompleterRegistration` or
+`Import-CompleterScript`, or any object that describes a target and exposes a
+`ScriptPath` or `SourcePath`.</maml:para>
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <maml:name>System.IO.FileInfo</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>When `-PassThru` is used, returns the written set file.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para>The set file schema and the per-entry trust tier are described in
+`about_Completer_Sets`.</maml:para>
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Export-CompleterSet -Path ~\Completers\completers.psd1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Writes every managed registration that came from a script into a set file next
+to the scripts.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Get-ChildItem ~\Completers -Recurse -Filter *_completer.ps1 |
+    Import-CompleterScript |
+    Export-CompleterSet -Path ~\Completers\completers.psd1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Builds a set from a completer repository without registering anything in the
+current session.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Import-CompleterSet</maml:linkText>
+        <maml:uri>Import-CompleterSet.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Import-CompleterScript</maml:linkText>
+        <maml:uri>Import-CompleterScript.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Get-CompleterRegistration</maml:linkText>
+        <maml:uri>Get-CompleterRegistration.md</maml:uri>
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
       <command:name>Get-CompleterRegistration</command:name>
       <maml:description>
         <maml:para>Gets completer registrations known to the module or discovered at runtime.</maml:para>
@@ -610,6 +804,266 @@ grammar, then registers it. The imported records carry `Trusted` set to
       <maml:navigationLink>
         <maml:linkText>text</maml:linkText>
         <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Import-CompleterScript.md</maml:uri>
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
+      <command:name>Import-CompleterSet</command:name>
+      <maml:description>
+        <maml:para>Validates a completer set file and registers every script it lists.</maml:para>
+      </maml:description>
+      <command:verb>Import</command:verb>
+      <command:noun>CompleterSet</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Reads a completer set, a `.psd1` data file written by `Export-CompleterSet` or
+by hand, validates every entry up front, and then registers each valid entry's
+targets as managed registrations. The set is read with
+`Import-PowerShellDataFile`, which evaluates data only, and validation never
+executes a completer script.
+
+Every entry is checked before anything is registered: the script file must
+exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because
+the script is not parsed, and strict entries must pass the strict import
+grammar, with their targets derived from the script and compared against any
+`Targets` the entry declares. When one or more entries are invalid the command
+throws a single error that lists every problem and registers nothing. With
+`-SkipInvalid` each problem is written as a warning instead and the valid
+entries register.
+
+Relative `Path` values resolve against the directory of the set file, so a
+completer repository can carry its set file next to its scripts.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Import-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+          <maml:name>Path</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>SkipInvalid</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Force</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Import-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+          <maml:name>LiteralPath</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>SkipInvalid</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Force</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="cf">
+        <maml:name>Confirm</maml:name>
+        <maml:description>
+          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Force</maml:name>
+        <maml:description>
+          <maml:para>Replaces existing managed or runtime registrations for the targets in the set.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="PSPath">
+        <maml:name>LiteralPath</maml:name>
+        <maml:description>
+          <maml:para>The literal path to a completer set file. Wildcards are not expanded.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="true" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
+        <maml:name>Path</maml:name>
+        <maml:description>
+          <maml:para>The path to a completer set file. Wildcards are supported.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>SkipInvalid</maml:name>
+        <maml:description>
+          <maml:para>Writes each invalid entry as a warning and registers the valid entries instead
+of failing the whole set.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="wi">
+        <maml:name>WhatIf</maml:name>
+        <maml:description>
+          <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>A set file path, or `Get-ChildItem` output bound through `FullName`.</maml:para>
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>Returns the `CompleterActions.CompleterRegistration` records that were created
+or reused for the set's targets.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para>The set file schema, the per-entry trust tier, and the `Pending` and `Failed`
+lifecycle of lazily loaded completers are described in `about_Completer_Sets`.
+The command never hooks PSReadLine key handlers, replaces `TabExpansion2`, or
+changes PSReadLine options.</maml:para>
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterSet -Path ~\Completers\completers.psd1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Registers every completer script listed in the set. This is the one line a
+profile needs for a whole completer repository.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid -Force
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Registers the valid entries, warns about the rest, and replaces any existing
+registration for the same targets.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 3 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterSet -Path ~\Completers\completers.psd1 -WhatIf
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Runs the full validation and reports what would be registered without changing
+the session.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Export-CompleterSet</maml:linkText>
+        <maml:uri>Export-CompleterSet.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Register-CompleterRegistration</maml:linkText>
+        <maml:uri>Register-CompleterRegistration.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Test-CompleterScript</maml:linkText>
+        <maml:uri>Test-CompleterScript.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Get-CompleterRegistration</maml:linkText>
+        <maml:uri>Get-CompleterRegistration.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>

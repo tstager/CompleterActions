@@ -1,5 +1,213 @@
 <#
 .SYNOPSIS
+Writes a completer set file from registrations that came from scripts.
+
+.DESCRIPTION
+Groups registration records by the completer script they came from and writes
+a completer set: a .psd1 data file that lists each script once with its trust
+tier and the targets it registers. Import-CompleterSet reads the file back and
+registers everything in it, so a profile that imports a completer repository
+becomes one Import-CompleterSet call.
+
+Records arrive through -InputObject, typically from Get-CompleterRegistration
+or Import-CompleterScript. Without -InputObject the command exports every
+managed registration that records a ScriptPath. Script paths are written
+relative to the set file when both share a root, so a repository can carry its
+set file alongside its scripts; paths on another drive stay absolute. The
+Trusted flag of each entry is taken from the records, and records for the same
+script must agree on it.
+
+.PARAMETER Path
+The path of the .psd1 file to write. The parent directory must exist.
+
+.PARAMETER InputObject
+Registration records to export. Each record must describe a target and expose
+the script it came from through a ScriptPath or SourcePath property. Records
+without a script path cannot be expressed in a set and are rejected.
+
+.PARAMETER PassThru
+Returns the written file.
+
+.OUTPUTS
+System.IO.FileInfo
+When -PassThru is used, returns the written set file.
+
+.EXAMPLE
+PS> Export-CompleterSet -Path ~\Completers\completers.psd1
+
+Writes every managed registration that came from a script into a set file next
+to the scripts.
+
+.EXAMPLE
+PS> Get-ChildItem ~\Completers -Recurse -Filter *_completer.ps1 | Import-CompleterScript | Export-CompleterSet -Path ~\Completers\completers.psd1
+
+Builds a set from a completer repository without registering anything in the
+current session.
+#>
+function Export-CompleterSet
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
+    [OutputType([System.IO.FileInfo])]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path,
+
+        [Parameter(ValueFromPipeline)]
+        [ValidateNotNull()]
+        [psobject[]] $InputObject,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        $outputPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
+
+        if ([System.IO.Path]::GetExtension($outputPath) -ne '.psd1')
+        {
+            throw "Completer sets must be .psd1 files. Received '$outputPath'."
+        }
+
+        $outputDirectory = Split-Path -Path $outputPath -Parent
+
+        if (-not (Test-Path -LiteralPath $outputDirectory -PathType Container))
+        {
+            throw "The directory '$outputDirectory' does not exist."
+        }
+
+        $records = [System.Collections.Generic.List[psobject]]::new()
+        $inputBound = $false
+    }
+
+    process
+    {
+        if ($PSBoundParameters.ContainsKey('InputObject'))
+        {
+            $inputBound = $true
+            $records.AddRange([psobject[]] @($InputObject))
+        }
+    }
+
+    end
+    {
+        try
+        {
+            if (-not $inputBound)
+            {
+                $records.AddRange([psobject[]] @(Get-CompleterRegistration -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+            }
+
+            $entriesByPath = [ordered] @{}
+
+            foreach ($record in $records)
+            {
+                $scriptPath = $null
+
+                foreach ($propertyName in 'ScriptPath', 'SourcePath')
+                {
+                    $property = $record.PSObject.Properties[$propertyName]
+
+                    if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
+                    {
+                        $scriptPath = [System.IO.Path]::GetFullPath([string] $property.Value)
+                        break
+                    }
+                }
+
+                if ($null -eq $scriptPath)
+                {
+                    throw 'InputObject must expose the script it came from through a ScriptPath or SourcePath property; registrations created from an in-memory script block cannot be exported to a set.'
+                }
+
+                $target = ($record | Resolve-CompleterInputObject).Target
+                $trustedProperty = $record.PSObject.Properties['Trusted']
+                $trusted = $null -ne $trustedProperty -and [bool] $trustedProperty.Value
+
+                if (-not $entriesByPath.Contains($scriptPath))
+                {
+                    $entriesByPath[$scriptPath] = [pscustomobject] [ordered] @{
+                        Path    = $scriptPath
+                        Trusted = $trusted
+                        Targets = [ordered] @{}
+                    }
+                }
+
+                $entry = $entriesByPath[$scriptPath]
+
+                if ($entry.Trusted -ne $trusted)
+                {
+                    throw "The records for '$scriptPath' disagree on Trusted, so the entry's trust tier cannot be written."
+                }
+
+                $entry.Targets[[string] $target.Key] = $target
+            }
+
+            if ($entriesByPath.Count -eq 0)
+            {
+                throw 'No registrations with a script path were found to export.'
+            }
+
+            $lines = [System.Collections.Generic.List[string]]::new()
+            $lines.Add('@{')
+            $lines.Add('    Version = 1')
+            $lines.Add('    Entries = @(')
+
+            foreach ($entry in $entriesByPath.Values)
+            {
+                $relativePath = [System.IO.Path]::GetRelativePath($outputDirectory, $entry.Path)
+                $writtenPath = if ([System.IO.Path]::IsPathRooted($relativePath)) { $entry.Path } else { $relativePath }
+
+                $lines.Add('        @{')
+                $lines.Add("            Path    = '$($writtenPath.Replace("'", "''"))'")
+                $lines.Add("            Trusted = `$$($entry.Trusted.ToString().ToLowerInvariant())")
+                $lines.Add('            Targets = @(')
+
+                foreach ($target in $entry.Targets.Values)
+                {
+                    $commandName = ([string] $target.CommandName).Replace("'", "''")
+
+                    if ($target.IsNative)
+                    {
+                        $lines.Add("                @{ CommandName = '$commandName'; Native = `$true }")
+                    }
+                    else
+                    {
+                        $lines.Add("                @{ CommandName = '$commandName'; ParameterName = '$(([string] $target.ParameterName).Replace("'", "''"))' }")
+                    }
+                }
+
+                $lines.Add('            )')
+                $lines.Add('        }')
+            }
+
+            $lines.Add('    )')
+            $lines.Add('}')
+
+            if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
+            {
+                return
+            }
+
+            Set-Content -LiteralPath $outputPath -Value $lines -Encoding utf8
+
+            if ($PassThru)
+            {
+                Get-Item -LiteralPath $outputPath
+            }
+        }
+        catch
+        {
+            throw "Failed to export completer set. $($_.Exception.Message)"
+        }
+    }
+}
+<#
+.SYNOPSIS
 Gets completer registrations known to the module or discovered at runtime.
 
 .DESCRIPTION
@@ -432,6 +640,161 @@ function Import-CompleterScript
         catch
         {
             throw "Failed to import completer script. $($_.Exception.Message)"
+        }
+    }
+}
+<#
+.SYNOPSIS
+Validates a completer set file and registers every script it lists.
+
+.DESCRIPTION
+Reads a completer set, a .psd1 data file written by Export-CompleterSet or by
+hand, validates every entry up front, and then registers each valid entry's
+targets as managed registrations. The set is read with
+Import-PowerShellDataFile, which evaluates data only, and validation never
+executes a completer script.
+
+Every entry is checked before anything is registered: the script file must
+exist and be a .ps1, Trusted entries must declare their Targets because the
+script is not parsed, and strict entries must pass the strict import grammar,
+with their targets derived from the script and compared against any Targets
+the entry declares. When one or more entries are invalid the command throws a
+single error that lists every problem and registers nothing. With -SkipInvalid
+each problem is written as a warning instead and the valid entries register.
+
+Relative Path values resolve against the directory of the set file, so a
+completer repository can carry its set file next to its scripts.
+
+.PARAMETER Path
+The path to a completer set file. Wildcards are supported.
+
+.PARAMETER LiteralPath
+The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER SkipInvalid
+Writes each invalid entry as a warning and registers the valid entries instead
+of failing the whole set.
+
+.PARAMETER Force
+Replaces existing managed or runtime registrations for the targets in the set.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns the CompleterActions.CompleterRegistration records that were created
+or reused for the set's targets.
+
+.EXAMPLE
+PS> Import-CompleterSet -Path ~\Completers\completers.psd1
+
+Registers every completer script listed in the set. This is the one line a
+profile needs for a whole completer repository.
+
+.EXAMPLE
+PS> Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid -Force
+
+Registers the valid entries, warns about the rest, and replaces any existing
+registration for the same targets.
+#>
+function Import-CompleterSet
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath', ValueFromPipelineByPropertyName)]
+        [Alias('PSPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $LiteralPath,
+
+        [Parameter()]
+        [switch] $SkipInvalid,
+
+        [Parameter()]
+        [switch] $Force
+    )
+
+    process
+    {
+        try
+        {
+            $resolvedPaths = @(
+                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+                {
+                    foreach ($literalPathItem in $LiteralPath)
+                    {
+                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                    }
+                }
+                else
+                {
+                    foreach ($pathItem in $Path)
+                    {
+                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                    }
+                }
+            )
+
+            foreach ($setPath in $resolvedPaths)
+            {
+                $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+                $entryIndex = 0
+                $entries = @(
+                    foreach ($rawEntry in $setDefinition.Entries)
+                    {
+                        $entryIndex++
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
+                    }
+                )
+
+                $invalidEntries = @($entries | Where-Object { -not $_.IsValid })
+
+                if ($invalidEntries.Count -gt 0)
+                {
+                    $problemLines = @(
+                        foreach ($entry in $invalidEntries)
+                        {
+                            $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $($entry.Index)" } else { "Entry $($entry.Index) ('$($entry.DeclaredPath)')" }
+
+                            foreach ($problem in $entry.Problems)
+                            {
+                                '{0}: {1}' -f $entryLabel, $problem
+                            }
+                        }
+                    )
+
+                    if (-not $SkipInvalid)
+                    {
+                        $entryNoun = if ($invalidEntries.Count -eq 1) { 'entry' } else { 'entries' }
+                        throw "Completer set '$setPath' has $($invalidEntries.Count) invalid $entryNoun and nothing was registered. Fix the entries or use -SkipInvalid to register the valid ones.$([Environment]::NewLine)$($problemLines -join [Environment]::NewLine)"
+                    }
+
+                    foreach ($problemLine in $problemLines)
+                    {
+                        Write-Warning -Message "Completer set '$setPath' skipped $problemLine"
+                    }
+                }
+
+                foreach ($entry in @($entries | Where-Object { $_.IsValid }))
+                {
+                    if (-not $PSCmdlet.ShouldProcess($entry.Path, 'Import completer set entry'))
+                    {
+                        continue
+                    }
+
+                    Register-CompleterSetEntry -Entry $entry -Force:$Force
+                }
+            }
+        }
+        catch
+        {
+            throw "Failed to import completer set. $($_.Exception.Message)"
         }
     }
 }
@@ -2026,6 +2389,118 @@ function Get-CompleterScriptParseResult
 }
 <#
 .SYNOPSIS
+Derives the completer targets a strict-tier script registers without running it.
+
+.DESCRIPTION
+Parses the script and reads the literal -CommandName, -ParameterName, and
+-Native arguments of every Register-ArgumentCompleter call. The strict import
+grammar guarantees those arguments are literal, so callers run
+Get-CompleterScriptFinding first and only call this helper for a script with no
+Error findings. Targets are expanded through Resolve-CompleterTargetList, so
+one call that names several commands yields several targets, exactly as
+Import-CompleterScript would emit them.
+
+.PARAMETER LiteralPath
+The literal path to the completer script file.
+
+.OUTPUTS
+CompleterActions.CompleterTarget
+#>
+function Get-CompleterScriptTarget
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+
+    if ($parseResult.ParseErrors.Count -gt 0)
+    {
+        throw "Completer script '$LiteralPath' does not parse, so its targets cannot be derived."
+    }
+
+    $registerCommands = @($parseResult.Ast.FindAll(
+            {
+                param($node)
+
+                $node -is [System.Management.Automation.Language.CommandAst] -and
+                $node.GetCommandName() -eq 'Register-ArgumentCompleter'
+            },
+            $true
+        ))
+
+    foreach ($registerCommand in $registerCommands)
+    {
+        $commandNames = @()
+        $parameterNames = @()
+        $isNative = $false
+        $currentParameter = $null
+
+        foreach ($commandElement in ($registerCommand.CommandElements | Select-Object -Skip 1))
+        {
+            $parameterName = $currentParameter
+            $valueAst = $commandElement
+            $currentParameter = $null
+
+            if ($commandElement -is [System.Management.Automation.Language.CommandParameterAst])
+            {
+                if ($commandElement.ParameterName -eq 'Native')
+                {
+                    $isNative = $true
+                    continue
+                }
+
+                if ($null -eq $commandElement.Argument)
+                {
+                    $currentParameter = $commandElement.ParameterName
+                    continue
+                }
+
+                $parameterName = $commandElement.ParameterName
+                $valueAst = $commandElement.Argument
+            }
+
+            switch ($parameterName)
+            {
+                'CommandName'
+                {
+                    $commandNames = @($valueAst.SafeGetValue())
+                    break
+                }
+
+                'ParameterName'
+                {
+                    $parameterNames = @($valueAst.SafeGetValue())
+                    break
+                }
+            }
+        }
+
+        $targetParameters = @{
+            CommandName = $commandNames
+        }
+
+        if ($isNative)
+        {
+            $targetParameters['Native'] = $true
+        }
+        else
+        {
+            $targetParameters['ParameterName'] = $parameterNames
+        }
+
+        Resolve-CompleterTargetList @targetParameters
+    }
+}
+<#
+.SYNOPSIS
 Gets the managed registration dictionary from module state.
 
 .DESCRIPTION
@@ -2163,6 +2638,75 @@ function Import-CompleterScriptDefinition
     catch
     {
         throw "Failed to execute completer script '$LiteralPath' in the import scope. $($_.Exception.Message)"
+    }
+}
+<#
+.SYNOPSIS
+Reads a completer set file and checks its top-level shape.
+
+.DESCRIPTION
+Reads the .psd1 through Import-PowerShellDataFile, which evaluates data only
+and refuses anything that would run code, so a set file can never execute a
+completer script or anything else. The file must declare Version 1 and a
+non-empty Entries array; the entries themselves are validated one by one by
+Resolve-CompleterSetEntry.
+
+.PARAMETER LiteralPath
+The literal path to the completer set file.
+
+.OUTPUTS
+CompleterActions.CompleterSetDefinition
+#>
+function Import-CompleterSetDefinition
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $file = Get-Item -LiteralPath $LiteralPath -ErrorAction Stop
+
+    if ($file.PSIsContainer)
+    {
+        throw "Completer sets must be file paths. '$LiteralPath' is a directory."
+    }
+
+    if ($file.Extension -ne '.psd1')
+    {
+        throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
+    }
+
+    $data = Import-PowerShellDataFile -LiteralPath $file.FullName -ErrorAction Stop
+
+    if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
+    {
+        throw "Completer set '$($file.FullName)' must declare Version = 1."
+    }
+
+    $entries = @()
+
+    if ($data.Contains('Entries'))
+    {
+        $entries = @($data['Entries'] | Where-Object { $null -ne $_ })
+    }
+
+    if ($entries.Count -eq 0)
+    {
+        throw "Completer set '$($file.FullName)' has no Entries."
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName = 'CompleterActions.CompleterSetDefinition'
+        Path       = $file.FullName
+        Directory  = $file.DirectoryName
+        Version    = 1
+        Entries    = $entries
     }
 }
 <#
@@ -2421,6 +2965,70 @@ function New-ImportedCompleterRegistration
         ScriptBlock     = $ScriptBlock
         ScriptText      = $ScriptBlock.ToString()
     }
+}
+<#
+.SYNOPSIS
+Registers the targets of one validated completer set entry.
+
+.DESCRIPTION
+Import-CompleterSet calls this helper once per valid entry, after every entry
+in the set has been validated, and it is the single place where a set entry
+becomes managed registrations. The current body imports the script eagerly
+through Import-CompleterScript under the entry's trust tier, keeps only the
+targets the entry resolved to, and registers them with
+Register-CompleterRegistration. Lazy registration replaces that import so the
+script is not executed until the first tab press for one of its targets.
+
+.PARAMETER Entry
+A valid CompleterActions.CompleterSetEntry record from Resolve-CompleterSetEntry.
+
+.PARAMETER Force
+Replaces existing managed or runtime registrations for the entry's targets.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns the CompleterActions.CompleterRegistration records that were created
+or reused.
+#>
+function Register-CompleterSetEntry
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Entry,
+
+        [Parameter()]
+        [switch] $Force
+    )
+
+    # LAZY INTEGRATION POINT: replace the eager import below with the lazy
+    # Register-CompleterRegistration path (script path, -Lazy, -Trusted per the
+    # entry, explicit targets for trusted entries, -Force pass-through, -PassThru).
+    $importedByKey = @{}
+
+    foreach ($imported in @(Import-CompleterScript -LiteralPath $Entry.Path -Trusted:$Entry.Trusted))
+    {
+        $importedByKey[[string] $imported.Key] = $imported
+    }
+
+    $selectedInputs = @(
+        foreach ($target in $Entry.Targets)
+        {
+            if (-not $importedByKey.ContainsKey([string] $target.Key))
+            {
+                throw "The script '$($Entry.Path)' did not register the target '$($target.RuntimeKey)' that the completer set declares for it."
+            }
+
+            $importedByKey[[string] $target.Key]
+        }
+    )
+
+    $selectedInputs | Register-CompleterRegistration -Force:$Force -PassThru -Confirm:$false
 }
 <#
 .SYNOPSIS
@@ -3078,6 +3686,207 @@ function Resolve-CompleterScriptPath
         }
 
         $file.FullName
+    }
+}
+<#
+.SYNOPSIS
+Validates one completer set entry and resolves its script path and targets.
+
+.DESCRIPTION
+Normalizes a raw entry hashtable from a completer set into a record that
+Import-CompleterSet can register, collecting every problem instead of stopping
+at the first so the caller can report all of them at once. A relative Path
+resolves against the set file's directory. Trusted defaults to false. Trusted
+entries must declare Targets because the script is not parsed. Strict entries
+must pass the strict import grammar; their targets are derived from the script
+and, when the entry also declares Targets, the two lists must match. The
+script is never executed.
+
+.PARAMETER Entry
+The raw entry value from the set file's Entries array.
+
+.PARAMETER Index
+The one-based position of the entry in the set file, used in messages.
+
+.PARAMETER SetDirectory
+The directory that relative entry paths resolve against.
+
+.OUTPUTS
+CompleterActions.CompleterSetEntry
+#>
+function Resolve-CompleterSetEntry
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [object] $Entry,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(1, [int]::MaxValue)]
+        [int] $Index,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $SetDirectory
+    )
+
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $declaredPath = $null
+    $resolvedPath = $null
+    $scriptIsUsable = $false
+    $trusted = $false
+    $declaredTargets = $null
+    $targets = @()
+
+    if ($Entry -isnot [System.Collections.IDictionary])
+    {
+        $problems.Add('The entry is not a hashtable with Path, Trusted, and Targets keys.')
+    }
+    else
+    {
+        if (-not $Entry.Contains('Path') -or [string]::IsNullOrWhiteSpace([string] $Entry['Path']))
+        {
+            $problems.Add('The entry has no Path.')
+        }
+        else
+        {
+            $declaredPath = [string] $Entry['Path']
+            $candidatePath = if ([System.IO.Path]::IsPathRooted($declaredPath)) { $declaredPath } else { Join-Path -Path $SetDirectory -ChildPath $declaredPath }
+            $resolvedPath = [System.IO.Path]::GetFullPath($candidatePath)
+
+            if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
+            {
+                $problems.Add("The file '$resolvedPath' does not exist.")
+            }
+            elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
+            {
+                $problems.Add("The file '$resolvedPath' is not a .ps1 script.")
+            }
+            else
+            {
+                $scriptIsUsable = $true
+            }
+        }
+
+        if ($Entry.Contains('Trusted'))
+        {
+            if ($Entry['Trusted'] -isnot [bool])
+            {
+                $problems.Add('Trusted must be $true or $false.')
+            }
+            else
+            {
+                $trusted = $Entry['Trusted']
+            }
+        }
+
+        if ($Entry.Contains('Targets') -and @($Entry['Targets']).Count -gt 0)
+        {
+            $declaredTargets = @(
+                foreach ($targetEntry in @($Entry['Targets']))
+                {
+                    if ($targetEntry -isnot [System.Collections.IDictionary])
+                    {
+                        $problems.Add('Each target must be a hashtable with CommandName and either Native = $true or ParameterName.')
+                        continue
+                    }
+
+                    $commandName = if ($targetEntry.Contains('CommandName')) { [string] $targetEntry['CommandName'] } else { $null }
+
+                    if ([string]::IsNullOrWhiteSpace($commandName))
+                    {
+                        $problems.Add('A target has no CommandName.')
+                        continue
+                    }
+
+                    try
+                    {
+                        if ($targetEntry.Contains('Native') -and $targetEntry['Native'] -eq $true)
+                        {
+                            Resolve-CompleterTarget -CommandName $commandName -Native
+                        }
+                        elseif ($targetEntry.Contains('ParameterName') -and -not [string]::IsNullOrWhiteSpace([string] $targetEntry['ParameterName']))
+                        {
+                            Resolve-CompleterTarget -CommandName $commandName -ParameterName ([string] $targetEntry['ParameterName'])
+                        }
+                        else
+                        {
+                            $problems.Add("Target '$commandName' must declare Native = `$true or a ParameterName.")
+                        }
+                    }
+                    catch
+                    {
+                        $problems.Add($_.Exception.Message)
+                    }
+                }
+            )
+        }
+
+        if ($trusted)
+        {
+            if ($null -eq $declaredTargets)
+            {
+                $problems.Add('Trusted entries must declare Targets, because a trusted script is not parsed for them.')
+            }
+            else
+            {
+                $targets = $declaredTargets
+            }
+        }
+        elseif ($scriptIsUsable)
+        {
+            $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
+
+            if ($findings.Count -gt 0)
+            {
+                foreach ($finding in $findings)
+                {
+                    $problems.Add(('The script does not conform to the strict import grammar. Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint))
+                }
+            }
+            else
+            {
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath)
+
+                if ($null -eq $declaredTargets)
+                {
+                    $targets = $derivedTargets
+                }
+                else
+                {
+                    $declaredKeys = @($declaredTargets | ForEach-Object { [string] $_.Key })
+                    $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
+                    $mismatch = @($declaredKeys | Where-Object { $_ -notin $derivedKeys }).Count -gt 0 -or @($derivedKeys | Where-Object { $_ -notin $declaredKeys }).Count -gt 0
+
+                    if ($mismatch)
+                    {
+                        $declaredList = @($declaredTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                        $derivedList = @($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                        $problems.Add("The declared Targets do not match the script. Declared: $declaredList. Script registers: $derivedList.")
+                    }
+                    else
+                    {
+                        $targets = $derivedTargets
+                    }
+                }
+            }
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName   = 'CompleterActions.CompleterSetEntry'
+        Index        = $Index
+        DeclaredPath = $declaredPath
+        Path         = $resolvedPath
+        Trusted      = $trusted
+        Targets      = @($targets)
+        Problems     = @($problems)
+        IsValid      = $problems.Count -eq 0
     }
 }
 <#
