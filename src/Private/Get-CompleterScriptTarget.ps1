@@ -3,12 +3,15 @@
 Derives the completer targets a strict-tier script registers without executing it.
 
 .DESCRIPTION
-Checks the script against the strict import grammar, then reads the literal
--CommandName, -ParameterName, and -Native arguments of every script-scope
-Register-ArgumentCompleter call from the AST and resolves them into normalized
-completer targets. The grammar guarantees that those arguments are literal, so
-the targets a lazy registration will own are known at registration time
-without running the script. Duplicate targets collapse to one record.
+Parses the script once and reads the literal -CommandName, -ParameterName, and
+-Native arguments of every Register-ArgumentCompleter call from the AST,
+resolving them into normalized completer targets. The strict import grammar
+requires those arguments to be literal, so a conforming script's targets are
+known without running it, and a script whose arguments cannot be read
+statically is reported with the position of the offending argument. The
+grammar itself does not run here; it runs through Import-CompleterScript when
+the script loads, so registering a script lazily costs one parse rather than a
+full conformance walk. Duplicate targets collapse to one record.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -26,9 +29,14 @@ function Get-CompleterScriptTarget
         [string] $LiteralPath
     )
 
-    Assert-CompleterScriptConformance -LiteralPath $LiteralPath
-
     $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+
+    if ($parseResult.ParseErrors.Count -gt 0)
+    {
+        $parseError = $parseResult.ParseErrors[0]
+        throw "The script '$LiteralPath' does not parse, so its targets cannot be derived. Line $($parseError.Extent.StartLineNumber), column $($parseError.Extent.StartColumnNumber): $($parseError.Message)"
+    }
+
     $registerCommands = @($parseResult.Ast.FindAll(
             {
                 param($node)
@@ -76,10 +84,27 @@ function Get-CompleterScriptTarget
 
             $currentParameter = $null
 
-            switch ($argumentParameter)
+            if ($argumentParameter -notin 'CommandName', 'ParameterName')
             {
-                'CommandName' { $commandNames += @([string[]] @($argumentAst.SafeGetValue())) }
-                'ParameterName' { $parameterNames += @([string[]] @($argumentAst.SafeGetValue())) }
+                continue
+            }
+
+            try
+            {
+                $argumentValues = @([string[]] @($argumentAst.SafeGetValue()))
+            }
+            catch
+            {
+                throw "The script '$LiteralPath' does not use a literal -$argumentParameter argument at line $($argumentAst.Extent.StartLineNumber), column $($argumentAst.Extent.StartColumnNumber), so its targets cannot be derived without running it. Run Test-CompleterScript to work through the findings, or register it with -Trusted and name the targets."
+            }
+
+            if ($argumentParameter -eq 'CommandName')
+            {
+                $commandNames += $argumentValues
+            }
+            else
+            {
+                $parameterNames += $argumentValues
             }
         }
 
@@ -100,6 +125,11 @@ function Get-CompleterScriptTarget
         {
             $targetsByKey[[string] $target.Key] = $target
         }
+    }
+
+    if ($targetsByKey.Count -eq 0)
+    {
+        throw "The script '$LiteralPath' does not call Register-ArgumentCompleter with literal targets, so nothing can be registered lazily. Run Test-CompleterScript to work through the findings, or register it with -Trusted and name the targets."
     }
 
     return @($targetsByKey.Values)

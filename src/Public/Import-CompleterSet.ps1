@@ -11,9 +11,12 @@ executes a completer script.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a .ps1, Trusted entries must declare their Targets because the
-script is not parsed, and strict entries must pass the strict import grammar,
-with their targets derived from the script and compared against any Targets
-the entry declares. When one or more entries are invalid the command throws a
+script is not parsed, and strict entries must name their targets with literal
+Register-ArgumentCompleter arguments so the targets can be derived from the
+parsed script and compared against any Targets the entry declares. The strict
+import grammar runs when a script loads, so a set import costs one parse per
+script; run Test-CompleterScript over the repository to find grammar findings
+ahead of time. When one or more entries are invalid the command throws a
 single error that lists every problem and registers nothing. With -SkipInvalid
 each problem is written as a warning instead and the valid entries register.
 

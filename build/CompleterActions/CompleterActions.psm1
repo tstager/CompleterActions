@@ -657,9 +657,12 @@ executes a completer script.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a .ps1, Trusted entries must declare their Targets because the
-script is not parsed, and strict entries must pass the strict import grammar,
-with their targets derived from the script and compared against any Targets
-the entry declares. When one or more entries are invalid the command throws a
+script is not parsed, and strict entries must name their targets with literal
+Register-ArgumentCompleter arguments so the targets can be derived from the
+parsed script and compared against any Targets the entry declares. The strict
+import grammar runs when a script loads, so a set import costs one parse per
+script; run Test-CompleterScript over the repository to find grammar findings
+ahead of time. When one or more entries are invalid the command throws a
 single error that lists every problem and registers nothing. With -SkipInvalid
 each problem is written as a warning instead and the valid entries register.
 
@@ -835,7 +838,9 @@ replaces itself with the real completer, and delegates that first call to it.
 The managed record reports State 'Pending' until then and 'Active' afterwards.
 Under the default strict tier the targets are read from the script's literal
 Register-ArgumentCompleter arguments, so the script is parsed but never
-executed at registration time. With -Trusted the script is dot-sourced as-is
+executed at registration time; the strict grammar itself runs when the script
+loads, and a script that fails it moves to 'Failed' then. With -Trusted the
+script is dot-sourced as-is
 on first use and cannot be parsed safely, so the targets must be supplied with
 -CommandName and -Native or -ParameterName.
 
@@ -893,8 +898,8 @@ now. The script is imported on the first tab press for any of its targets.
 Imports the script through the trusted tier on first use, dot-sourcing it as-is
 without the strict grammar. The targets must be supplied with -CommandName and
 -Native or -ParameterName because a trusted script is not parsed. The default
-is the strict tier, which validates the script against the grammar both at
-registration and again when it loads.
+is the strict tier, which validates the script against the grammar when it
+loads.
 
 .PARAMETER Force
 Replaces an existing managed or runtime registration for the same target with
@@ -2637,12 +2642,15 @@ function Get-CompleterScriptParseResult
 Derives the completer targets a strict-tier script registers without executing it.
 
 .DESCRIPTION
-Checks the script against the strict import grammar, then reads the literal
--CommandName, -ParameterName, and -Native arguments of every script-scope
-Register-ArgumentCompleter call from the AST and resolves them into normalized
-completer targets. The grammar guarantees that those arguments are literal, so
-the targets a lazy registration will own are known at registration time
-without running the script. Duplicate targets collapse to one record.
+Parses the script once and reads the literal -CommandName, -ParameterName, and
+-Native arguments of every Register-ArgumentCompleter call from the AST,
+resolving them into normalized completer targets. The strict import grammar
+requires those arguments to be literal, so a conforming script's targets are
+known without running it, and a script whose arguments cannot be read
+statically is reported with the position of the offending argument. The
+grammar itself does not run here; it runs through Import-CompleterScript when
+the script loads, so registering a script lazily costs one parse rather than a
+full conformance walk. Duplicate targets collapse to one record.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -2663,9 +2671,14 @@ function Get-CompleterScriptTarget
         [string] $LiteralPath
     )
 
-    Assert-CompleterScriptConformance -LiteralPath $LiteralPath
-
     $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+
+    if ($parseResult.ParseErrors.Count -gt 0)
+    {
+        $parseError = $parseResult.ParseErrors[0]
+        throw "The script '$LiteralPath' does not parse, so its targets cannot be derived. Line $($parseError.Extent.StartLineNumber), column $($parseError.Extent.StartColumnNumber): $($parseError.Message)"
+    }
+
     $registerCommands = @($parseResult.Ast.FindAll(
             {
                 param($node)
@@ -2713,10 +2726,27 @@ function Get-CompleterScriptTarget
 
             $currentParameter = $null
 
-            switch ($argumentParameter)
+            if ($argumentParameter -notin 'CommandName', 'ParameterName')
             {
-                'CommandName' { $commandNames += @([string[]] @($argumentAst.SafeGetValue())) }
-                'ParameterName' { $parameterNames += @([string[]] @($argumentAst.SafeGetValue())) }
+                continue
+            }
+
+            try
+            {
+                $argumentValues = @([string[]] @($argumentAst.SafeGetValue()))
+            }
+            catch
+            {
+                throw "The script '$LiteralPath' does not use a literal -$argumentParameter argument at line $($argumentAst.Extent.StartLineNumber), column $($argumentAst.Extent.StartColumnNumber), so its targets cannot be derived without running it. Run Test-CompleterScript to work through the findings, or register it with -Trusted and name the targets."
+            }
+
+            if ($argumentParameter -eq 'CommandName')
+            {
+                $commandNames += $argumentValues
+            }
+            else
+            {
+                $parameterNames += $argumentValues
             }
         }
 
@@ -2737,6 +2767,11 @@ function Get-CompleterScriptTarget
         {
             $targetsByKey[[string] $target.Key] = $target
         }
+    }
+
+    if ($targetsByKey.Count -eq 0)
+    {
+        throw "The script '$LiteralPath' does not call Register-ArgumentCompleter with literal targets, so nothing can be registered lazily. Run Test-CompleterScript to work through the findings, or register it with -Trusted and name the targets."
     }
 
     return @($targetsByKey.Values)
@@ -4184,9 +4219,10 @@ Import-CompleterSet can register, collecting every problem instead of stopping
 at the first so the caller can report all of them at once. A relative Path
 resolves against the set file's directory. Trusted defaults to false. Trusted
 entries must declare Targets because the script is not parsed. Strict entries
-must pass the strict import grammar; their targets are derived from the script
-and, when the entry also declares Targets, the two lists must match. The
-script is never executed.
+must register their targets with literal arguments so the targets can be
+derived from the parsed script and, when the entry also declares Targets, the
+two lists must match; the strict import grammar itself runs when the script
+loads. The script is never executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -4326,19 +4362,19 @@ function Resolve-CompleterSetEntry
         }
         elseif ($scriptIsUsable)
         {
-            $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
+            $derivedTargets = @()
 
-            if ($findings.Count -gt 0)
-            {
-                foreach ($finding in $findings)
-                {
-                    $problems.Add(('The script does not conform to the strict import grammar. Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint))
-                }
-            }
-            else
+            try
             {
                 $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath)
+            }
+            catch
+            {
+                $problems.Add($_.Exception.Message)
+            }
 
+            if ($derivedTargets.Count -gt 0)
+            {
                 if ($null -eq $declaredTargets)
                 {
                     $targets = $derivedTargets

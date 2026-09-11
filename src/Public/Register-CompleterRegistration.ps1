@@ -24,7 +24,9 @@ replaces itself with the real completer, and delegates that first call to it.
 The managed record reports State 'Pending' until then and 'Active' afterwards.
 Under the default strict tier the targets are read from the script's literal
 Register-ArgumentCompleter arguments, so the script is parsed but never
-executed at registration time. With -Trusted the script is dot-sourced as-is
+executed at registration time; the strict grammar itself runs when the script
+loads, and a script that fails it moves to 'Failed' then. With -Trusted the
+script is dot-sourced as-is
 on first use and cannot be parsed safely, so the targets must be supplied with
 -CommandName and -Native or -ParameterName.
 
@@ -82,8 +84,8 @@ now. The script is imported on the first tab press for any of its targets.
 Imports the script through the trusted tier on first use, dot-sourcing it as-is
 without the strict grammar. The targets must be supplied with -CommandName and
 -Native or -ParameterName because a trusted script is not parsed. The default
-is the strict tier, which validates the script against the grammar both at
-registration and again when it loads.
+is the strict tier, which validates the script against the grammar when it
+loads.
 
 .PARAMETER Force
 Replaces an existing managed or runtime registration for the same target with

@@ -91,12 +91,17 @@ THE TRUST TIER PER ENTRY
 
     Strict entries (`Trusted = $false` or omitted):
 
-    - The script must pass the strict import grammar. `Import-CompleterSet`
-      runs the same check as `Test-CompleterScript` and reports every Error
-      finding with its line, column, construct, and hint.
     - The targets are derived from the script without running it. The strict
       grammar requires literal `-CommandName`, `-ParameterName`, and `-Native`
-      arguments, so the targets can be read from the parsed script.
+      arguments, so the targets can be read from the parsed script; an entry
+      whose arguments cannot be read statically is reported with the position
+      of the offending argument.
+    - The script must pass the strict import grammar when it loads, exactly as
+      `Import-CompleterScript` requires. `Import-CompleterSet` does not run the
+      grammar itself, so importing a set costs one parse per script instead of
+      a full conformance walk; a script that fails the grammar moves to
+      `Failed` on its first tab press with the findings in `LoadError`. Run
+      `Test-CompleterScript` over the repository to catch that ahead of time.
     - `Targets` may be omitted. When present, it must match what the script
       declares, or the entry is reported as a mismatch. Declaring targets is
       a way to notice that a script changed underneath the set.
@@ -119,7 +124,8 @@ VALIDATION BEFORE REGISTRATION
     - each target has a `CommandName` and either `Native = $true` or a
       `ParameterName`
     - trusted entries declare `Targets`
-    - strict entries pass the strict import grammar
+    - strict entries expose literal targets that can be derived without
+      running the script
     - strict entries that declare `Targets` match the script
 
     When any entry fails, the command throws one error that lists every

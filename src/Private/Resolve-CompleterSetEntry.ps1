@@ -8,9 +8,10 @@ Import-CompleterSet can register, collecting every problem instead of stopping
 at the first so the caller can report all of them at once. A relative Path
 resolves against the set file's directory. Trusted defaults to false. Trusted
 entries must declare Targets because the script is not parsed. Strict entries
-must pass the strict import grammar; their targets are derived from the script
-and, when the entry also declares Targets, the two lists must match. The
-script is never executed.
+must register their targets with literal arguments so the targets can be
+derived from the parsed script and, when the entry also declares Targets, the
+two lists must match; the strict import grammar itself runs when the script
+loads. The script is never executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -147,19 +148,19 @@ function Resolve-CompleterSetEntry
         }
         elseif ($scriptIsUsable)
         {
-            $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
+            $derivedTargets = @()
 
-            if ($findings.Count -gt 0)
-            {
-                foreach ($finding in $findings)
-                {
-                    $problems.Add(('The script does not conform to the strict import grammar. Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint))
-                }
-            }
-            else
+            try
             {
                 $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath)
+            }
+            catch
+            {
+                $problems.Add($_.Exception.Message)
+            }
 
+            if ($derivedTargets.Count -gt 0)
+            {
                 if ($null -eq $declaredTargets)
                 {
                     $targets = $derivedTargets

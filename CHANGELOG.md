@@ -40,8 +40,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   completer scripts with a per-entry trust tier and their targets, through
   `Import-PowerShellDataFile` so the set itself can never run code. Every
   entry is validated before anything registers: the file exists and is a
-  `.ps1`, `Trusted` entries declare their `Targets`, strict entries pass the
-  strict import grammar with targets derived from the script and compared
+  `.ps1`, `Trusted` entries declare their `Targets`, strict entries expose
+  literal targets that are derived from the parsed script and compared
   against any the entry declares. One terminating error lists every problem;
   `-SkipInvalid` writes them as warnings and registers the valid entries.
   Relative paths resolve against the set file's directory, `-Force` passes
@@ -62,8 +62,12 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 - The default table view for registration records adds `ScriptPath` and
   `LoadError` columns after `State`.
-- `Import-CompleterScript` and the strict lazy path share one conformance gate,
-  `Assert-CompleterScriptConformance`, so the two report identical findings.
+- `Import-CompleterScript` runs its strict conformance gate through
+  `Assert-CompleterScriptConformance`. A lazily registered strict script goes
+  through that gate when it loads rather than at registration, so registering
+  a script or a set lazily costs one parse per script; a script that fails the
+  grammar moves to `Failed` on its first tab press with the findings in
+  `LoadError`.
 
 ### Documentation
 

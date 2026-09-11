@@ -81,11 +81,13 @@ BeforeAll {
     $script:NativeFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1'
     $script:TrustedFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'TrustedOnlyCompleter.ps1'
     $script:UnsafeFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'UnsafeTopLevelScript.ps1'
+    $script:DynamicFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'DynamicCommandName.ps1'
     $script:ThrowingStrictFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath (Join-Path -Path 'LazyRegistration' -ChildPath 'ThrowingStrictCompleter.ps1')
     $script:SetCleanupTargets = @(
         @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-LazyStrictSetTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+        @{ CommandName = 'Test-UnsafeTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'importfixture'; CompleterType = 'Native' },
         @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
     )
@@ -103,6 +105,7 @@ Describe 'Completer sets' {
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-LazyStrictSetTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-UnsafeTool' -ErrorAction SilentlyContinue
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
 
@@ -130,6 +133,14 @@ Describe 'Completer sets' {
             )
         }
 
+        function global:Test-UnsafeTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
         $script:SetRoot = Join-Path -Path $TestDrive -ChildPath ('sets-{0}' -f ([guid]::NewGuid().ToString('N')))
         New-Item -Path $script:SetRoot -ItemType Directory | Out-Null
         $script:SetPath = Join-Path -Path $script:SetRoot -ChildPath 'completers.psd1'
@@ -144,6 +155,7 @@ Describe 'Completer sets' {
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-LazyStrictSetTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-UnsafeTool' -ErrorAction SilentlyContinue
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
@@ -338,6 +350,26 @@ Describe 'Completer sets' {
             $retried[0].LoadError | Should -BeNullOrEmpty
         }
 
+        It 'registers a strict entry that breaks the grammar as Pending and fails it with the findings on first tab' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:UnsafeFixturePath' }"
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-unsafetool:name'
+            $registered[0].State | Should -Be 'Pending'
+
+            $inputScript = 'Test-UnsafeTool -Name un'
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'unsafe'
+
+            $failed = Get-CompleterRegistration -CommandName 'Test-UnsafeTool' -ParameterName 'Name'
+            $failed.State | Should -Be 'Failed'
+            $failed.LoadError | Should -Match 'does not conform to the strict import grammar'
+            $failed.LoadError | Should -Match 'Get-Date'
+            Get-CompleterRegistration -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+        }
+
         It 'resolves relative paths against the set file directory, not the current location' {
             $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
             New-Item -Path $scriptFolder -ItemType Directory | Out-Null
@@ -364,7 +396,7 @@ Describe 'Completer sets' {
                 "@{ Path = 'missing.ps1' }"
                 "@{ Path = 'notes.txt' }"
                 "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true }"
-                "@{ Path = '$script:UnsafeFixturePath' }"
+                "@{ Path = '$script:DynamicFixturePath' }"
                 "@{ Path = '$script:ParameterFixturePath' }"
             )
 
@@ -374,7 +406,7 @@ Describe 'Completer sets' {
             $thrown.Exception.Message | Should -Match "Entry 1 \('missing\.ps1'\): The file '.*missing\.ps1' does not exist\."
             $thrown.Exception.Message | Should -Match "Entry 2 \('notes\.txt'\): The file '.*notes\.txt' is not a \.ps1 script\."
             $thrown.Exception.Message | Should -Match 'Entry 3 \(.*TrustedOnlyCompleter\.ps1.\): Trusted entries must declare Targets'
-            $thrown.Exception.Message | Should -Match "Entry 4 \(.*UnsafeTopLevelScript\.ps1.\): The script does not conform to the strict import grammar\. Line 1, column 1 \(CommandAst\): The script uses unsupported top-level command 'Get-Date'"
+            $thrown.Exception.Message | Should -Match "Entry 4 \(.*DynamicCommandName\.ps1.\): The script '.*DynamicCommandName\.ps1' does not use a literal -CommandName argument at line 1, column \d+"
             $thrown.Exception.Message | Should -Not -Match 'Entry 5'
 
             Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
@@ -394,7 +426,7 @@ Describe 'Completer sets' {
                 "@{ Path = 'missing.ps1' }"
                 "@{ Path = 'notes.txt' }"
                 "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true }"
-                "@{ Path = '$script:UnsafeFixturePath' }"
+                "@{ Path = '$script:DynamicFixturePath' }"
                 "@{ Path = '$script:ParameterFixturePath' }"
             )
 
@@ -407,7 +439,7 @@ Describe 'Completer sets' {
             @($warningText | Where-Object { $_ -match "skipped Entry 1 \('missing\.ps1'\)" }).Count | Should -Be 1
             @($warningText | Where-Object { $_ -match "skipped Entry 2 \('notes\.txt'\)" }).Count | Should -Be 1
             @($warningText | Where-Object { $_ -match 'skipped Entry 3 \(.*\): Trusted entries must declare Targets' }).Count | Should -Be 1
-            @($warningText | Where-Object { $_ -match 'skipped Entry 4 \(.*\): The script does not conform' }).Count | Should -BeGreaterThan 0
+            @($warningText | Where-Object { $_ -match 'skipped Entry 4 \(.*\): The script .* does not use a literal -CommandName argument' }).Count | Should -Be 1
             @($warningText | Where-Object { $_ -match 'Entry 5' }).Count | Should -Be 0
 
             (Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').Source | Should -Be 'Managed'
