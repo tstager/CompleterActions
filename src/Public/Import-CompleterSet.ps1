@@ -32,12 +32,15 @@ completer repository can carry its set file next to its scripts.
 Registering a set does not run its scripts. Every valid entry is registered
 lazily under the entry's trust tier, exactly as Register-CompleterRegistration
 -Lazy registers a script, so each target gets a stub and a managed record in
-state Pending. The first tab
-press for a target loads the script and moves the record to Active; a script
-that fails to load moves to Failed with the message in LoadError, and the
-completion engine's default completion applies as if no completer were
-registered. -Force replaces existing registrations for the set's targets and
-retries Failed ones.
+state Pending. The whole set is one transaction against one snapshot of the
+session's registrations: validation and registration read the managed table
+and the runtime dictionaries once, and if any runtime or managed write fails,
+every change the set made is rolled back and nothing from it stays registered.
+The first tab press for a target loads the script and moves the record to
+Active; a script that fails to load moves to Failed with the message in
+LoadError, and the completion engine's default completion applies as if no
+completer were registered. -Force replaces existing registrations for the
+set's targets and retries Failed ones.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
@@ -116,13 +119,14 @@ function Import-CompleterSet
             foreach ($setPath in $resolvedPaths)
             {
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+                $snapshot = Get-CompleterRegistrationSnapshot
                 $claimedTargets = @{}
                 $entryIndex = 0
                 $entries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Force:$Force
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Snapshot $snapshot -Force:$Force
                     }
                 )
 
@@ -154,15 +158,20 @@ function Import-CompleterSet
                     }
                 }
 
-                foreach ($entry in @($entries | Where-Object { $_.IsValid }))
-                {
-                    if (-not $PSCmdlet.ShouldProcess($entry.Path, 'Import completer set entry'))
+                $confirmedEntries = @(
+                    foreach ($entry in @($entries | Where-Object { $_.IsValid }))
                     {
-                        continue
+                        if ($PSCmdlet.ShouldProcess($entry.Path, 'Import completer set entry'))
+                        {
+                            $entry
+                        }
                     }
+                )
 
-                    Register-CompleterSetEntry -Entry $entry -Force:$Force
-                }
+                $registrations = @(foreach ($entry in $confirmedEntries) { $entry.Registrations })
+                $conflicts = @(foreach ($entry in $confirmedEntries) { $entry.Conflicts })
+
+                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts
             }
         }
         catch

@@ -13,14 +13,16 @@ entries must declare Targets because the script is not parsed. Strict entries
 must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
 two lists must match; the strict import grammar itself runs when the script
-loads. Every target is then held to the rules Register-CompleterRegistration
-applies through Resolve-CompleterRegistrationConflict, so a target that already
-carries a different registration is a problem unless -Force is given, and a
-target that an earlier valid entry of the same set already claimed is always a
-problem. A valid entry claims its targets in ClaimedTargets for the entries
-after it, and its Targets are the resolved records Register-CompleterSetEntry
-registers, so a strict script is parsed once per import. The script is never
-executed.
+loads. The entry's Pending records, one lazy stub per target, are then held to
+the rules Register-CompleterRegistration applies through
+Resolve-CompleterRegistrationConflict against the snapshot the whole set
+shares, so a target that already carries a different registration is a
+problem unless -Force is given, and a target that an earlier valid entry of
+the same set already claimed is always a problem. A valid entry claims its
+targets in ClaimedTargets for the entries after it, and its Registrations and
+Conflicts are what Import-CompleterSet writes, so a strict script is parsed
+once per import and the session's registrations are read once per set. The
+script is never executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -35,12 +37,19 @@ The directory that relative entry paths resolve against.
 The dictionary, shared by every entry of one set, that maps a claimed target
 key to the index of the valid entry that claimed it.
 
+.PARAMETER Snapshot
+The CompleterActions.CompleterRegistrationSnapshot, shared by every entry of
+one set, that the entry's targets are reconciled against.
+
 .PARAMETER Force
 Indicates that the set is imported with -Force, so existing registrations for
 its targets are replaced rather than reported.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
+Returns a record with Index, DeclaredPath, Path, Trusted, Targets, the Pending
+Registrations built for those targets, the Conflicts resolved for them in the
+same order, Problems, and IsValid.
 #>
 function Resolve-CompleterSetEntry
 {
@@ -62,6 +71,10 @@ function Resolve-CompleterSetEntry
         [Parameter(Mandatory)]
         [ValidateNotNull()]
         [System.Collections.IDictionary] $ClaimedTargets,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Snapshot,
 
         [Parameter()]
         [switch] $Force
@@ -209,13 +222,21 @@ function Resolve-CompleterSetEntry
         }
     }
 
-    foreach ($target in $targets)
-    {
-        $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptPath $resolvedPath -Trusted:$trusted -Lazy -Force:$Force
-
-        if ($null -ne $conflict.Problem)
+    $registrations = @(
+        foreach ($target in $targets)
         {
-            $problems.Add($conflict.Problem)
+            New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $resolvedPath -Trusted:$trusted
+        }
+    )
+    $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Snapshot $Snapshot -Force:$Force)
+
+    for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
+    {
+        $target = $targets[$targetIndex]
+
+        if ($null -ne $conflicts[$targetIndex].Problem)
+        {
+            $problems.Add($conflicts[$targetIndex].Problem)
         }
 
         if ($ClaimedTargets.Contains([string] $target.Key))
@@ -233,13 +254,15 @@ function Resolve-CompleterSetEntry
     }
 
     [pscustomobject] [ordered] @{
-        PSTypeName   = 'CompleterActions.CompleterSetEntry'
-        Index        = $Index
-        DeclaredPath = $declaredPath
-        Path         = $resolvedPath
-        Trusted      = $trusted
-        Targets      = @($targets)
-        Problems     = @($problems)
-        IsValid      = $problems.Count -eq 0
+        PSTypeName    = 'CompleterActions.CompleterSetEntry'
+        Index         = $Index
+        DeclaredPath  = $declaredPath
+        Path          = $resolvedPath
+        Trusted       = $trusted
+        Targets       = @($targets)
+        Registrations = $registrations
+        Conflicts     = $conflicts
+        Problems      = @($problems)
+        IsValid       = $problems.Count -eq 0
     }
 }

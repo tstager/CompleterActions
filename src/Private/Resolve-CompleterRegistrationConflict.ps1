@@ -1,37 +1,33 @@
 <#
 .SYNOPSIS
-Decides whether a completer target can be registered over the current managed and runtime state.
+Decides whether each of a batch of completer registrations can be written over the current managed and runtime state.
 
 .DESCRIPTION
-Reconciles the target through Resolve-CompleterRegistrationState and applies
-the module's replacement rules in one place. Without -Force an existing managed
-record blocks the registration when it is stale, when its lazy load failed, or
-when it describes a different completer, and an unmanaged runtime registration
-blocks it as well. A managed record that already describes the same completer,
-the same script block text for an eager registration or the same script and
-tier for a lazy one, is reported as existing so the caller can reuse it.
-Register-CompleterRegistration throws the reported problem and
-Resolve-CompleterSetEntry collects it, so a completer set is validated against
-the same rules its registrations are held to.
+Reconciles the records through one Resolve-CompleterRegistrationState pass and
+applies the module's replacement rules in one place. Without -Force an
+existing managed record blocks a registration when it is stale, when its lazy
+load failed, or when it describes a different completer, and an unmanaged
+runtime registration blocks it as well. A managed record that already
+describes the same completer, the same script block text for an eager
+registration or the same script and tier for a lazy one, is reported as
+existing so the caller can reuse it. A record is lazy when its State is
+'Pending'.
 
-.PARAMETER Target
-The resolved completer target. It must expose Key and RuntimeKey.
+The records are resolved in order as if each earlier record of the same call
+had already been written: a later record for the same key sees the earlier
+one as the managed and runtime registration, so repeating a target within one
+call reuses or replaces the first registration exactly as two calls would.
+Register-CompleterRegistration throws the first reported problem and
+Resolve-CompleterSetEntry collects them, so a completer set is validated
+against the same rules its registrations are held to.
 
-.PARAMETER ScriptText
-The text of the script block being registered eagerly, compared against an
-existing managed record.
+.PARAMETER Registration
+The CompleterActions.CompleterRegistration records that are about to be
+written, in the order they will be written.
 
-.PARAMETER ScriptPath
-The script a lazy registration loads, compared against an existing managed
-record.
-
-.PARAMETER Trusted
-The tier a lazy registration loads under, compared against an existing managed
-record.
-
-.PARAMETER Lazy
-Indicates a lazy registration, which matches an existing record by ScriptPath
-and Trusted rather than by script text.
+.PARAMETER Snapshot
+A CompleterActions.CompleterRegistrationSnapshot to resolve against. When it is
+omitted, one is taken for this call.
 
 .PARAMETER Force
 Indicates that existing registrations are replaced, so nothing is reported as
@@ -39,9 +35,9 @@ a problem.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-Returns an object with Key, ManagedRegistration, RuntimeRegistration,
-IsExisting (the managed record already describes this completer), and Problem
-(the message that blocks the registration, or null).
+Returns one object per record, in order, with Key, ManagedRegistration,
+RuntimeRegistration, IsExisting (the managed record already describes this
+completer), and Problem (the message that blocks the registration, or null).
 #>
 function Resolve-CompleterRegistrationConflict
 {
@@ -50,70 +46,92 @@ function Resolve-CompleterRegistrationConflict
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
-        [psobject] $Target,
+        [AllowEmptyCollection()]
+        [psobject[]] $Registration,
 
         [Parameter()]
-        [string] $ScriptText,
-
-        [Parameter()]
-        [string] $ScriptPath,
-
-        [Parameter()]
-        [switch] $Trusted,
-
-        [Parameter()]
-        [switch] $Lazy,
+        [psobject] $Snapshot,
 
         [Parameter()]
         [switch] $Force
     )
 
-    $registrationState = Resolve-CompleterRegistrationState -Key $Target.Key
-    $existingManagedRegistration = $registrationState.ManagedRegistration
-    $existingRuntimeRegistration = $registrationState.RuntimeRegistration
-    $isExisting = $false
-    $problem = $null
-
-    if (-not $Force)
+    if ($Registration.Count -eq 0)
     {
-        if ($null -ne $existingManagedRegistration)
+        return
+    }
+
+    $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    $plannedRegistrations = @{}
+
+    for ($index = 0; $index -lt $Registration.Count; $index++)
+    {
+        $registrationItem = $Registration[$index]
+        $registrationState = $registrationStates[$index]
+        $key = [string] $registrationItem.Key
+
+        if ($plannedRegistrations.Contains($key))
         {
-            if ($registrationState.ManagedState -eq 'Stale')
-            {
-                $problem = "The module-managed completer registration for '$($Target.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
+            $plannedRegistration = $plannedRegistrations[$key]
+            $registrationState = [pscustomobject] [ordered] @{
+                Key                 = $key
+                ManagedRegistration = $plannedRegistration
+                RuntimeRegistration = New-CompleterRegistrationRecord -Target $plannedRegistration -ScriptBlock $plannedRegistration.ScriptBlock -Source 'Discovered'
+                ManagedState        = $plannedRegistration.State
             }
-            elseif ($registrationState.ManagedState -eq 'Failed')
+        }
+
+        $existingManagedRegistration = $registrationState.ManagedRegistration
+        $existingRuntimeRegistration = $registrationState.RuntimeRegistration
+        $isExisting = $false
+        $problem = $null
+
+        if (-not $Force)
+        {
+            if ($null -ne $existingManagedRegistration)
             {
-                $problem = "The module-managed completer registration for '$($Target.RuntimeKey)' failed to load '$($existingManagedRegistration.ScriptPath)': $($existingManagedRegistration.LoadError) Use -Force to retry the lazy load."
-            }
-            else
-            {
-                $isExisting = if ($Lazy)
+                if ($registrationState.ManagedState -eq 'Stale')
                 {
-                    $existingManagedRegistration.ScriptPath -eq $ScriptPath -and [bool] $existingManagedRegistration.Trusted -eq [bool] $Trusted
+                    $problem = "The module-managed completer registration for '$($registrationItem.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
+                }
+                elseif ($registrationState.ManagedState -eq 'Failed')
+                {
+                    $problem = "The module-managed completer registration for '$($registrationItem.RuntimeKey)' failed to load '$($existingManagedRegistration.ScriptPath)': $($existingManagedRegistration.LoadError) Use -Force to retry the lazy load."
                 }
                 else
                 {
-                    $existingManagedRegistration.ScriptText -eq $ScriptText
-                }
+                    $isExisting = if ($registrationItem.State -eq 'Pending')
+                    {
+                        $existingManagedRegistration.ScriptPath -eq $registrationItem.ScriptPath -and [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
+                    }
+                    else
+                    {
+                        $existingManagedRegistration.ScriptText -eq $registrationItem.ScriptText
+                    }
 
-                if (-not $isExisting)
-                {
-                    $problem = "A module-managed completer registration already exists for '$($Target.RuntimeKey)'. Use -Force to replace it."
+                    if (-not $isExisting)
+                    {
+                        $problem = "A module-managed completer registration already exists for '$($registrationItem.RuntimeKey)'. Use -Force to replace it."
+                    }
                 }
             }
+            elseif ($null -ne $existingRuntimeRegistration)
+            {
+                $problem = "A runtime completer registration already exists for '$($registrationItem.RuntimeKey)'. Use -Force to replace it."
+            }
         }
-        elseif ($null -ne $existingRuntimeRegistration)
-        {
-            $problem = "A runtime completer registration already exists for '$($Target.RuntimeKey)'. Use -Force to replace it."
-        }
-    }
 
-    return [pscustomobject] [ordered] @{
-        Key                 = [string] $Target.Key
-        ManagedRegistration = $existingManagedRegistration
-        RuntimeRegistration = $existingRuntimeRegistration
-        IsExisting          = $isExisting
-        Problem             = $problem
+        if ($null -eq $problem)
+        {
+            $plannedRegistrations[$key] = if ($isExisting) { $existingManagedRegistration } else { $registrationItem }
+        }
+
+        [pscustomobject] [ordered] @{
+            Key                 = $key
+            ManagedRegistration = $existingManagedRegistration
+            RuntimeRegistration = $existingRuntimeRegistration
+            IsExisting          = $isExisting
+            Problem             = $problem
+        }
     }
 }

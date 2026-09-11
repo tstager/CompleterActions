@@ -850,6 +850,77 @@ Describe 'Completer registration public API' {
         $thrown.Exception.Message | Should -Match 'forced rollback failure'
     }
 
+    It 'rolls back every target of one call when a later target fails to write' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('batch', 'batch', 'ParameterValue', 'batch')
+        }
+
+        & (Get-Module -Name 'CompleterActions') {
+            $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+            function script:Add-ManagedCompleterRegistration
+            {
+                param($Registration)
+
+                if ($Registration.Key -eq 'test-arraytwo:path')
+                {
+                    throw 'forced batch failure'
+                }
+
+                & $script:TestManagedWriteFunction -Registration $Registration
+            }
+        }
+
+        $thrown = {
+            Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock
+        } | Should -Throw -PassThru
+
+        $thrown.Exception.Message | Should -Be "Failed to register the completer 'Test-ArrayTwo:Path'. forced batch failure"
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 0
+        Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' | Should -BeNullOrEmpty
+    }
+
+    It 'resolves a target repeated within one call against the earlier registration of that call' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('repeat', 'repeat', 'ParameterValue', 'repeat')
+        }
+
+        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Name' -ScriptBlock $scriptBlock -PassThru)
+
+        $registrations.Count | Should -Be 2
+        [object]::ReferenceEquals($registrations[0], $registrations[1]) | Should -BeTrue
+
+        $state = InModuleScope CompleterActions {
+            Get-CompleterActionState
+        }
+
+        $state['Registrations'].Count | Should -Be 1
+
+        $otherScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('other', 'other', 'ParameterValue', 'other')
+        }
+
+        {
+            Register-CompleterRegistration -InputObject @(
+                [pscustomobject] @{ CommandName = 'Test-ArrayTwo'; ParameterName = 'Path'; ScriptBlock = $scriptBlock },
+                [pscustomobject] @{ CommandName = 'Test-ArrayTwo'; ParameterName = 'Path'; ScriptBlock = $otherScriptBlock }
+            )
+        } | Should -Throw "*Failed to register the completer 'Test-ArrayTwo:Path'. A module-managed completer registration already exists for 'Test-ArrayTwo:Path'. Use -Force to replace it.*"
+
+        Get-CompleterRegistration -CommandName 'Test-ArrayTwo' -ParameterName 'Path' | Should -BeNullOrEmpty
+    }
+
     It 'treats a managed record as stale after the runtime is overwritten outside the module' {
         function Test-ManagedTool
         {

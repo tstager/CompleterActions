@@ -152,6 +152,13 @@ VALIDATION BEFORE REGISTRATION
     The command supports `-WhatIf`, and validation never executes a completer
     script.
 
+    The set registers as one transaction against one snapshot of the
+    session's registrations: the managed table and the runtime completer
+    dictionaries are read once for validation and registration together, and
+    if any runtime or managed write fails, every change the set made is
+    rolled back, replaced registrations included, so nothing from the set
+    stays registered.
+
     The returned objects are the `CompleterActions.CompleterRegistration`
     records for the set's targets, the same records `Get-CompleterRegistration`
     returns.

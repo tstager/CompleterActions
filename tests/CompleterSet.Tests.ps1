@@ -603,6 +603,113 @@ Describe 'Completer sets' {
             $registered[1].Trusted | Should -BeTrue
         }
 
+        It 'rolls back every entry of the set when a later entry fails to write' {
+            $externalScriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+
+                [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
+            }
+
+            Register-ArgumentCompleter -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration)
+
+                    if ($Registration.Key -eq 'test-trustedfixturetool:name')
+                    {
+                        throw 'forced batch failure'
+                    }
+
+                    & $script:TestManagedWriteFunction -Registration $Registration
+                }
+            }
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath -Force } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'Test-TrustedFixtureTool:Name'. forced batch failure"
+
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-CompleterRegistration -CommandName 'importfixture', 'importfixture.exe' -Native | Should -BeNullOrEmpty
+            Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+
+            $restored = Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
+            $restored.Source | Should -Be 'Discovered'
+            [object]::ReferenceEquals($restored.ScriptBlock, $externalScriptBlock) | Should -BeTrue
+
+            $inputScript = 'Test-ImportedFixtureTool -Name '
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('external')
+        }
+
+        It 'returns the records in set order and keeps a reused record in its place' {
+            $existing = Register-CompleterRegistration -LiteralPath $script:ParameterFixturePath -Lazy -PassThru
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            @($registered.Key) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
+            [object]::ReferenceEquals($registered[2], $existing) | Should -BeTrue
+            @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
+            @(Get-CompleterRegistration -ManagedOnly).Count | Should -Be 4
+        }
+
+        It 'reads the session registrations once and resolves each entry against that snapshot' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestSnapshotCount = 0
+                $script:TestStateCount = 0
+                $script:TestSnapshotFunction = ${function:Get-CompleterRegistrationSnapshot}
+                $script:TestStateFunction = ${function:Resolve-CompleterRegistrationState}
+
+                function script:Get-CompleterRegistrationSnapshot
+                {
+                    $script:TestSnapshotCount++
+                    & $script:TestSnapshotFunction
+                }
+
+                function script:Resolve-CompleterRegistrationState
+                {
+                    param($Key, $Snapshot)
+
+                    $script:TestStateCount++
+                    & $script:TestStateFunction -Key $Key -Snapshot $Snapshot
+                }
+            }
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $registered.Count | Should -Be 4
+
+            $counts = & (Get-Module -Name 'CompleterActions') {
+                [pscustomobject] @{
+                    Snapshots = $script:TestSnapshotCount
+                    States    = $script:TestStateCount
+                }
+            }
+
+            $counts.Snapshots | Should -Be 1
+            $counts.States | Should -Be 3 -Because 'each entry resolves its targets in one pass against the shared snapshot'
+        }
+
         It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
             Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 1; Entries = @( (New-Item -ItemType File -Path '$probePath') ) }" -Encoding utf8
