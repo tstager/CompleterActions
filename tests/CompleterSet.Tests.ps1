@@ -393,6 +393,39 @@ Describe 'Completer sets' {
             $registered[0].Key | Should -Be 'test-importedfixturetool:name'
         }
 
+        It 'resolves a drive-relative path against the set file directory, not the current location' {
+            $driveRoot = [System.IO.Path]::GetPathRoot($script:SetRoot)
+
+            if ($driveRoot -notmatch '^[A-Za-z]:\\$')
+            {
+                Set-ItResult -Skipped -Because 'drive-relative paths exist only on Windows drives'
+            }
+
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'DriveRelative.ps1'
+            Copy-Item -LiteralPath $script:ParameterFixturePath -Destination $scriptPath
+            $driveRelativePath = $driveRoot.TrimEnd('\') + 'scripts\DriveRelative.ps1'
+
+            [System.IO.Path]::IsPathRooted($driveRelativePath) | Should -BeTrue
+            [System.IO.Path]::IsPathFullyQualified($driveRelativePath) | Should -BeFalse
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$driveRelativePath' }"
+
+            Push-Location -LiteralPath $TestDrive
+            try
+            {
+                $registered = @(Import-CompleterSet -Path $script:SetPath)
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-importedfixturetool:name'
+            $registered[0].ScriptPath | Should -Be $scriptPath
+        }
+
         It 'reports every invalid entry in one error and registers nothing' {
             Set-Content -LiteralPath (Join-Path -Path $script:SetRoot -ChildPath 'notes.txt') -Value 'not a script' -Encoding utf8
             Write-TestCompleterSet -Path $script:SetPath -Entry @(

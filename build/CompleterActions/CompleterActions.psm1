@@ -4341,8 +4341,10 @@ Validates one completer set entry and resolves its script path and targets.
 .DESCRIPTION
 Normalizes a raw entry hashtable from a completer set into a record that
 Import-CompleterSet can register, collecting every problem instead of stopping
-at the first so the caller can report all of them at once. A relative Path
-resolves against the set file's directory. Trusted defaults to false. Trusted
+at the first so the caller can report all of them at once. A Path that is not
+fully qualified, a drive-relative form such as C:scripts\x.ps1 included,
+resolves against the set file's directory rather than the current location.
+Trusted defaults to false. Trusted
 entries must declare Targets because the script is not parsed. Strict entries
 must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
@@ -4423,8 +4425,7 @@ function Resolve-CompleterSetEntry
         else
         {
             $declaredPath = [string] $Entry['Path']
-            $candidatePath = if ([System.IO.Path]::IsPathRooted($declaredPath)) { $declaredPath } else { Join-Path -Path $SetDirectory -ChildPath $declaredPath }
-            $resolvedPath = [System.IO.Path]::GetFullPath($candidatePath)
+            $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath, $SetDirectory)
 
             if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
             {

@@ -62,9 +62,11 @@ THE SET FILE SCHEMA
 
     - `Path`
       Required. The completer script, which must exist and be a `.ps1` file.
-      A relative path resolves against the directory that contains the set
-      file, not the current location, so a repository can carry its set file
-      next to its scripts. An absolute path is used as written.
+      Only a fully qualified path is used as written. Any other form, a
+      relative path and also a drive-relative one such as `C:scripts\x.ps1`,
+      resolves against the directory that contains the set file, not the
+      current location, so a repository can carry its set file next to its
+      scripts.
 
     - `Trusted`
       Optional, default `$false`. Selects the import tier for the entry. See

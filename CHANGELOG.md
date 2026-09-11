@@ -48,9 +48,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `Register-CompleterRegistration` applies. One terminating error lists every
   problem;
   `-SkipInvalid` writes them as warnings and registers the valid entries.
-  Relative paths resolve against the set file's directory, `-Force` passes
-  through to the registration, and the command returns the registration
-  records.
+  Paths that are not fully qualified, drive-relative ones included, resolve
+  against the set file's directory, `-Force` passes through to the
+  registration, and the command returns the registration records.
 - `Export-CompleterSet`. Writes a completer set from registration records
   piped from `Get-CompleterRegistration` or `Import-CompleterScript`, or from
   every managed registration that records a `ScriptPath`, one entry per
