@@ -103,6 +103,7 @@ Register-ArgumentCompleter -CommandName 'Test-LazyStrictTool' -ParameterName 'Na
     $script:FixtureRoot = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures'
     $script:NativeFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1'
     $script:ThrowingFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath (Join-Path -Path 'LazyRegistration' -ChildPath 'ThrowingTrustedCompleter.ps1')
+    $script:ReentrantFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath (Join-Path -Path 'LazyRegistration' -ChildPath 'ReentrantTrustedCompleter.ps1')
     $script:LazyCleanupTargets = @(
         @{ CommandName = 'importfixture'; CompleterType = 'Native' },
         @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
@@ -151,6 +152,7 @@ Describe 'Lazy completer registration' {
 
         Remove-Item -Path 'Function:\global:Test-LazyStrictTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-LazyTrustedTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Env:\CompleterActionsReentrantNestedResult' -ErrorAction SilentlyContinue
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
@@ -284,6 +286,34 @@ Describe 'Lazy completer registration' {
 
         $output | Should -BeNullOrEmpty
         (Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name').State | Should -Be 'Failed'
+    }
+
+    It 'loads a script once and keeps it Active when it requests completion for its own target while loading' {
+        $null = Register-CompleterRegistration -LiteralPath $script:ReentrantFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $stub = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
+
+        $inputScript = 'Test-LazyTrustedTool -Name '
+        $firstCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($firstCompletion.CompletionMatches.CompletionText) | Should -Be @('reentrant-alpha')
+
+        $env:CompleterActionsReentrantNestedResult | Should -Not -BeNullOrEmpty
+        @($env:CompleterActionsReentrantNestedResult -split '\|') | Should -Not -Contain 'reentrant-alpha'
+
+        $record = Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $record.State | Should -Be 'Active'
+        $record.LoadError | Should -BeNullOrEmpty
+
+        $loaded = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
+        [object]::ReferenceEquals($stub, $loaded) | Should -BeFalse
+        $loaded.ToString() | Should -Match 'reentrant-alpha'
+        [object]::ReferenceEquals($record.ScriptBlock, $loaded) | Should -BeTrue
+
+        $secondCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($secondCompletion.CompletionMatches.CompletionText) | Should -Be @('reentrant-alpha')
+
+        InModuleScope CompleterActions {
+            $script:CompleterLazyLoadsInProgress.Count | Should -Be 0
+        }
     }
 
     It 'marks a strict registration Failed when the script no longer conforms at first tab' {

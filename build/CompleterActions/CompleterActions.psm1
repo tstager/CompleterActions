@@ -3004,6 +3004,12 @@ swapped from the same import so a script that registers several targets is
 executed once. The call that triggered the load is then delegated to the real
 script block and its results are returned.
 
+A load in flight owns its record. The helper tracks the keys it is loading on
+the current call stack, so a nested completion for the same target, such as a
+script that calls TabExpansion2 for its own command while it loads, returns
+nothing instead of starting a second import, and a sibling load never swaps or
+fails a record whose own load is still running.
+
 When anything in the load fails, the helper returns nothing, stores the error
 message on the managed record as LoadError with State Failed, and removes the
 runtime entry for the target, so the completion engine's default completion
@@ -3065,41 +3071,54 @@ function Invoke-CompleterLazyStub
                 throw "The managed registration for '$($registration.RuntimeKey)' is in state '$($registration.State)' and cannot be loaded lazily."
             }
 
-            $importedRegistrations = @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted)
-            $ownRegistration = $importedRegistrations | Where-Object -Property Key -EQ -Value $registration.Key | Select-Object -First 1
-
-            if ($null -eq $ownRegistration)
+            if (-not $script:CompleterLazyLoadsInProgress.Add($registration.Key))
             {
-                $importedKeys = ($importedRegistrations | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
-                throw "The script '$($registration.ScriptPath)' did not register a completer for '$($registration.RuntimeKey)'. It registered: $importedKeys."
+                return
             }
 
-            foreach ($importedRegistration in $importedRegistrations)
+            try
             {
-                $pendingRegistration = Find-ManagedCompleterRegistration -Key $importedRegistration.Key
+                $importedRegistrations = @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted)
+                $ownRegistration = $importedRegistrations | Where-Object -Property Key -EQ -Value $registration.Key | Select-Object -First 1
 
-                if ($null -eq $pendingRegistration -or
-                    $pendingRegistration.State -ne 'Pending' -or
-                    $pendingRegistration.ScriptPath -ne $registration.ScriptPath -or
-                    [bool] $pendingRegistration.Trusted -ne [bool] $registration.Trusted)
+                if ($null -eq $ownRegistration)
                 {
-                    continue
+                    $importedKeys = ($importedRegistrations | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                    throw "The script '$($registration.ScriptPath)' did not register a completer for '$($registration.RuntimeKey)'. It registered: $importedKeys."
                 }
 
-                $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $pendingRegistration.Key
-
-                if ($null -eq $runtimeRegistration -or -not [object]::ReferenceEquals($runtimeRegistration.ScriptBlock, $pendingRegistration.ScriptBlock))
+                foreach ($importedRegistration in $importedRegistrations)
                 {
-                    continue
+                    $pendingRegistration = Find-ManagedCompleterRegistration -Key $importedRegistration.Key
+
+                    if ($null -eq $pendingRegistration -or
+                        $pendingRegistration.State -ne 'Pending' -or
+                        $pendingRegistration.ScriptPath -ne $registration.ScriptPath -or
+                        [bool] $pendingRegistration.Trusted -ne [bool] $registration.Trusted -or
+                        ($pendingRegistration.Key -ne $registration.Key -and $script:CompleterLazyLoadsInProgress.Contains($pendingRegistration.Key)))
+                    {
+                        continue
+                    }
+
+                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $pendingRegistration.Key
+
+                    if ($null -eq $runtimeRegistration -or -not [object]::ReferenceEquals($runtimeRegistration.ScriptBlock, $pendingRegistration.ScriptBlock))
+                    {
+                        continue
+                    }
+
+                    $null = Add-RuntimeCompleterRegistration -Target $pendingRegistration -ScriptBlock $importedRegistration.ScriptBlock
+                    $null = Add-ManagedCompleterRegistration -Registration (
+                        New-CompleterRegistrationRecord -Target $pendingRegistration -ScriptBlock $importedRegistration.ScriptBlock -Source 'Managed' -ImportModule $importedRegistration.ImportModule -State 'Active' -ScriptPath $pendingRegistration.ScriptPath -Trusted:$pendingRegistration.Trusted
+                    )
                 }
 
-                $null = Add-RuntimeCompleterRegistration -Target $pendingRegistration -ScriptBlock $importedRegistration.ScriptBlock
-                $null = Add-ManagedCompleterRegistration -Registration (
-                    New-CompleterRegistrationRecord -Target $pendingRegistration -ScriptBlock $importedRegistration.ScriptBlock -Source 'Managed' -ImportModule $importedRegistration.ImportModule -State 'Active' -ScriptPath $pendingRegistration.ScriptPath -Trusted:$pendingRegistration.Trusted
-                )
+                $realScriptBlock = $ownRegistration.ScriptBlock
             }
-
-            $realScriptBlock = $ownRegistration.ScriptBlock
+            finally
+            {
+                $null = $script:CompleterLazyLoadsInProgress.Remove($registration.Key)
+            }
         }
     }
     catch
@@ -5514,3 +5533,4 @@ function Test-CompleterScriptAst
 # Import-time work shared by the source root module and the packaged module.
 Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
+$script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
