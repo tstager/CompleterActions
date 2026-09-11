@@ -234,7 +234,7 @@ Describe 'Completer sets' {
 
             @($registered.Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
             $registered[0].PSTypeNames | Should -Contain 'CompleterActions.CompleterRegistration'
-            @($registered.State | Select-Object -Unique) | Should -Be @('Active')
+            @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
             @((Get-CompleterRegistration -ManagedOnly).Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
 
             $trustedInput = 'Test-TrustedFixtureTool -Name trusted'

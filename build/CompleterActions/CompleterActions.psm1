@@ -666,6 +666,15 @@ each problem is written as a warning instead and the valid entries register.
 Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
+Registering a set does not run its scripts. Every valid entry is registered
+through Register-CompleterRegistration -Lazy under the entry's trust tier, so
+each target gets a stub and a managed record in state Pending. The first tab
+press for a target loads the script and moves the record to Active; a script
+that fails to load moves to Failed with the message in LoadError, and the
+completion engine's default completion applies as if no completer were
+registered. -Force replaces existing registrations for the set's targets and
+retries Failed ones.
+
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
 
@@ -677,12 +686,13 @@ Writes each invalid entry as a warning and registers the valid entries instead
 of failing the whole set.
 
 .PARAMETER Force
-Replaces existing managed or runtime registrations for the targets in the set.
+Replaces existing managed or runtime registrations for the targets in the set,
+including Failed lazy records whose load should be retried.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns the CompleterActions.CompleterRegistration records that were created
-or reused for the set's targets.
+or reused for the set's targets, in state Pending until each script loads.
 
 .EXAMPLE
 PS> Import-CompleterSet -Path ~\Completers\completers.psd1
@@ -3408,16 +3418,17 @@ function New-ImportedCompleterRegistration
 }
 <#
 .SYNOPSIS
-Registers the targets of one validated completer set entry.
+Registers the targets of one validated completer set entry lazily.
 
 .DESCRIPTION
 Import-CompleterSet calls this helper once per valid entry, after every entry
 in the set has been validated, and it is the single place where a set entry
-becomes managed registrations. The current body imports the script eagerly
-through Import-CompleterScript under the entry's trust tier, keeps only the
-targets the entry resolved to, and registers them with
-Register-CompleterRegistration. Lazy registration replaces that import so the
-script is not executed until the first tab press for one of its targets.
+becomes managed registrations. The entry's script is registered through
+Register-CompleterRegistration -Lazy under the entry's trust tier, so the
+script is not executed until the first tab press for one of its targets. A
+trusted entry names its targets explicitly because a trusted script is not
+parsed; a strict entry lets the lazy path derive them from the script, which
+validation has already matched against the entry.
 
 .PARAMETER Entry
 A valid CompleterActions.CompleterSetEntry record from Resolve-CompleterSetEntry.
@@ -3446,29 +3457,32 @@ function Register-CompleterSetEntry
         [switch] $Force
     )
 
-    # LAZY INTEGRATION POINT: replace the eager import below with the lazy
-    # Register-CompleterRegistration path (script path, -Lazy, -Trusted per the
-    # entry, explicit targets for trusted entries, -Force pass-through, -PassThru).
-    $importedByKey = @{}
-
-    foreach ($imported in @(Import-CompleterScript -LiteralPath $Entry.Path -Trusted:$Entry.Trusted))
-    {
-        $importedByKey[[string] $imported.Key] = $imported
+    $registerParameters = @{
+        LiteralPath = $Entry.Path
+        Lazy        = $true
+        Trusted     = $Entry.Trusted
+        Force       = $Force
+        PassThru    = $true
+        Confirm     = $false
     }
 
-    $selectedInputs = @(
-        foreach ($target in $Entry.Targets)
-        {
-            if (-not $importedByKey.ContainsKey([string] $target.Key))
-            {
-                throw "The script '$($Entry.Path)' did not register the target '$($target.RuntimeKey)' that the completer set declares for it."
-            }
+    if (-not $Entry.Trusted)
+    {
+        Register-CompleterRegistration @registerParameters
+        return
+    }
 
-            $importedByKey[[string] $target.Key]
-        }
-    )
+    $nativeTargets = @($Entry.Targets | Where-Object -Property IsNative -EQ -Value $true)
 
-    $selectedInputs | Register-CompleterRegistration -Force:$Force -PassThru -Confirm:$false
+    if ($nativeTargets.Count -gt 0)
+    {
+        Register-CompleterRegistration @registerParameters -CommandName @($nativeTargets.CommandName) -Native
+    }
+
+    foreach ($parameterGroup in @($Entry.Targets | Where-Object -Property IsNative -EQ -Value $false | Group-Object -Property ParameterName))
+    {
+        Register-CompleterRegistration @registerParameters -CommandName @($parameterGroup.Group.CommandName) -ParameterName $parameterGroup.Name
+    }
 }
 <#
 .SYNOPSIS

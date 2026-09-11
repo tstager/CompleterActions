@@ -51,6 +51,15 @@ entries register.
 Relative `Path` values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
+Registering a set does not run its scripts. Every valid entry is registered
+through `Register-CompleterRegistration -Lazy` under the entry's trust tier, so
+each target gets a stub and a managed record in state `Pending`. The first tab
+press for a target loads the script and moves the record to `Active`; a script
+that fails to load moves to `Failed` with the message in `LoadError`, and the
+completion engine's default completion applies as if no completer were
+registered. `-Force` replaces existing registrations for the set's targets and
+retries `Failed` ones.
+
 ## EXAMPLES
 
 ### EXAMPLE 1
@@ -106,7 +115,8 @@ HelpMessage: ''
 
 ### -Force
 
-Replaces existing managed or runtime registrations for the targets in the set.
+Replaces existing managed or runtime registrations for the targets in the set,
+including `Failed` lazy records whose load should be retried.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -231,7 +241,7 @@ A set file path, or `Get-ChildItem` output bound through `FullName`.
 ### System.Management.Automation.PSCustomObject
 
 Returns the `CompleterActions.CompleterRegistration` records that were created
-or reused for the set's targets.
+or reused for the set's targets, in state `Pending` until each script loads.
 
 ## NOTES
 
