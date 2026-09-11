@@ -3,6 +3,14 @@
 Drafted: 2026-09-08
 Baseline: 1.2.0, merge commit `4318821`
 Live page: https://claude.ai/code/artifact/55cc8aca-46d5-4180-a763-c36c5505dd3a
+Status (2026-09-10): milestones 1 and 2 shipped; next up is milestone 3.
+
+| Milestone | Version | Status |
+| --- | --- | --- |
+| 1 Safety net | 1.3.0 | Shipped 2026-09-09, tag v1.3.0, PR #2 |
+| 2 Author tooling and trust tiers | 1.4.0 | Shipped 2026-09-10, tag v1.4.0, PR #3 |
+| 3 Lazy loading and completer sets | 2.0.0-preview.1 | Next |
+| 4 Breaking surface and release | 2.0.0 | Planned |
 
 Four milestones from the 1.2.0 baseline to a major release. The first two ship on the 1.x line so users get value early; the breaking surface lands last and all at once.
 
@@ -21,6 +29,8 @@ Public commands: 4. Private helpers: 25. Source: about 3,500 lines.
 
 ## Milestone 1: Safety net (1.3.0, additive)
 
+**Shipped 2026-09-09 as v1.3.0** (PR #2, merge f12c878, release commit 12cfd14). All four items landed; the release workflow published to PSGallery from a single tag push.
+
 Small, low-risk work that de-risks everything after it. The reflection dependency is the module's single biggest liability and nothing else should be built on top of it until it fails loudly instead of mysteriously.
 
 - **Capability probe at import** (infra). Verify the private context field and both completer dictionaries resolve. If the engine shape changed, throw one clear message naming the PowerShell version instead of failing deep inside a Get call.
@@ -37,6 +47,8 @@ Find-PSResource CompleterActions -Repository PSGallery   # 1.3.0 within minutes
 ```
 
 ## Milestone 2: Author tooling and trust tiers (1.4.0, additive)
+
+**Shipped 2026-09-10 as v1.4.0** (PR #3, merge 25e9388, release commit 9e1b8b5). All four items landed. Both exit criteria were verified before tagging: zero Error findings across the 169 personal scripts, and the git completion check returned checkout, cherry, and cherry-pick. One review finding was fixed before merge: Test-CompleterRegistration accepts exactly one resolved target per call.
 
 The strict importer is right for untrusted files and wrong for a personal completer repo. Give authors a linter so they learn about problems before an import fails, and give owners an explicit way to say "this is my code, run it".
 
@@ -103,9 +115,9 @@ Aliases keep the old names working for the whole 2.x line. Nothing is removed un
 | Register-CompleterRegistration | Register-Completer | Gains a lazy switch and a path parameter set |
 | Get-CompleterRegistration | Get-Completer | ManagedOnly and DiscoveredOnly fold into State |
 | Unregister-CompleterRegistration | Unregister-Completer | AllowUnmanaged unchanged |
-| Import-CompleterScript | Import-CompleterScript | Unchanged name; gains the trusted switch in 1.4 |
-| (new) | Test-CompleterScript | New in 1.4 |
-| (new) | Test-CompleterRegistration | New in 1.4 |
+| Import-CompleterScript | Import-CompleterScript | Unchanged name; gained the trusted switch in 1.4.0 |
+| Test-CompleterScript | Test-CompleterScript | Shipped in 1.4.0 |
+| Test-CompleterRegistration | Test-CompleterRegistration | Shipped in 1.4.0 |
 | (new) | Import-CompleterSet, Export-CompleterSet | New in 2.0 preview |
 
 ## Decisions
@@ -115,4 +127,4 @@ Locked on 2026-09-08. These settle the shape of milestones 3 and 4; reopen one o
 1. **Set files use a per-entry trust flag, strict by default.** An entry may declare `Trusted = $true` to be dot-sourced without the grammar. Entries without it go through the strict importer. A set that points at a script from elsewhere stays safe. Affects: milestone 3, set file schema and Import-CompleterSet.
 2. **A lazy stub that fails to load returns no completions and marks the record Failed.** The error is kept on the record and shown by Get-Completer. Added rule: nothing the module does may alter PSReadLine's default behaviour. The stub runs inside the normal completer call and never hooks key handlers, replaces TabExpansion2, or changes PSReadLine options. After a failure, tab on that command behaves exactly as if no completer were registered. Affects: milestone 3, lazy registration and the PSReadLine neutrality constraint.
 3. **Keys are output-only. Hand-typed key strings are no longer accepted.** Key remains on every record and binds by property name when a record is piped back into Get, Register, or Unregister. Typed input uses CommandName with Native or ParameterName. The colon and path-separator inference is deleted. Affects: milestone 4, explicit target contract and the migration guide.
-4. **File an upstream issue for a public completer-enumeration API; do not block on it.** The capability probe ships in 1.3.0 regardless. If the engine gains an API, a later release swaps the reflection out behind the same commands. Affects: milestone 1, capability probe; tracked as a follow-up, not a milestone item.
+4. **File an upstream issue for a public completer-enumeration API; do not block on it.** The capability probe shipped in 1.3.0. If the engine gains an API, a later release swaps the reflection out behind the same commands. Affects: milestone 1, capability probe; tracked as a follow-up, not a milestone item.
