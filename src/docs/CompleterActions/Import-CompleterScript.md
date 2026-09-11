@@ -4,7 +4,7 @@ external help file: CompleterActions-Help.xml
 HelpUri: ''
 Locale: en-US
 Module Name: CompleterActions
-ms.date: 04/04/2026
+ms.date: 09/10/2026
 PlatyPS schema version: 2024-05-01
 title: Import-CompleterScript
 ---
@@ -20,13 +20,13 @@ Imports self-contained completer scripts into registration input objects.
 ### Path (Default)
 
 ```PowerShell
-Import-CompleterScript [-Path] <string[]> [<CommonParameters>]
+Import-CompleterScript [-Path] <string[]> [-Trusted] [<CommonParameters>]
 ```
 
 ### LiteralPath
 
 ```PowerShell
-Import-CompleterScript -LiteralPath <string[]> [<CommonParameters>]
+Import-CompleterScript -LiteralPath <string[]> [-Trusted] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -35,15 +35,21 @@ Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows `Register-ArgumentCompleter`, and emits objects
 that can be piped directly to `Register-CompleterRegistration -InputObject`.
 
-Supported scripts must be self-contained and must use literal
-`Register-ArgumentCompleter` arguments for the target metadata and script block.
-Imported script blocks preserve the temporary module context that contains any
-helper functions and script-scope state defined by the source script.
+The command has two tiers. The strict tier is the default: it validates the
+script against a closed grammar before executing it, rejects every unsupported
+construct with the same findings `Test-CompleterScript` reports, and avoids
+mutating the live runtime completer tables during import. The trusted tier,
+selected with `-Trusted`, skips the grammar and dot-sources the script as-is
+inside the same capture module, so use it only for scripts you wrote or
+reviewed. Imported script blocks preserve the temporary module context that
+contains any helper functions and script-scope state defined by the source
+script under either tier.
 
 ## COMPATIBLE COMPLETER SCRIPT SPECIFICATION
 
 Write standalone completer scripts to this specification if you want them to
-remain importable through `Import-CompleterScript` without redesign:
+remain importable through the strict tier without redesign. Run
+`Test-CompleterScript` to check a script against it:
 
 - Keep the script self-contained. Do not dot-source other scripts, and do not
   use `#requires -Modules`, `#requires -Assembly`, `using module`, or
@@ -102,6 +108,17 @@ This is the preferred registration shape for an import-compatible native
 completer. Keep setup logic in helper functions that run from `Complete-Tool`
 rather than at script scope.
 
+### EXAMPLE 3
+
+```PowerShell
+Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
+    Register-CompleterRegistration
+```
+
+Imports a completer script you own without validating it against the strict
+grammar, then registers it. The imported records carry `Trusted` set to
+`$true`.
+
 ## PARAMETERS
 
 ### -LiteralPath
@@ -147,6 +164,30 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -Trusted
+
+Skips the strict grammar validation and dot-sources the script as-is inside the
+capture module. Everything at script scope runs at import time, exactly as it
+would when the script is dot-sourced from a profile. The emitted records carry
+`Trusted` set to `$true`.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: False
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### CommonParameters
 
 This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable,
@@ -163,14 +204,15 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 ### System.Management.Automation.PSCustomObject
 
 Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
-`Register-CompleterRegistration -InputObject`.
+`Register-CompleterRegistration -InputObject`. The `Trusted` property records
+which tier produced the record.
 
 ## NOTES
 
 Importer compatibility and runtime correctness are both required for future
-standalone completer scripts. Validate both the real `pwsh -NoProfile`
-completion behavior and the script's `Import-CompleterScript` compatibility
-before treating a completer as complete.
+standalone completer scripts. Check the script with `Test-CompleterScript`,
+then verify the real completion behavior with `Test-CompleterRegistration` in
+a `pwsh -NoProfile` session before treating a completer as complete.
 
 ## RELATED LINKS
 

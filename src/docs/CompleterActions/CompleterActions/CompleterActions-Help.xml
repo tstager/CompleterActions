@@ -404,15 +404,21 @@ git.</maml:para>
 temporary module that shadows `Register-ArgumentCompleter`, and emits objects
 that can be piped directly to `Register-CompleterRegistration -InputObject`.
 
-Supported scripts must be self-contained and must use literal
-`Register-ArgumentCompleter` arguments for the target metadata and script block.
-Imported script blocks preserve the temporary module context that contains any
-helper functions and script-scope state defined by the source script.
+The command has two tiers. The strict tier is the default: it validates the
+script against a closed grammar before executing it, rejects every unsupported
+construct with the same findings `Test-CompleterScript` reports, and avoids
+mutating the live runtime completer tables during import. The trusted tier,
+selected with `-Trusted`, skips the grammar and dot-sources the script as-is
+inside the same capture module, so use it only for scripts you wrote or
+reviewed. Imported script blocks preserve the temporary module context that
+contains any helper functions and script-scope state defined by the source
+script under either tier.
 
 ## COMPATIBLE COMPLETER SCRIPT SPECIFICATION
 
 Write standalone completer scripts to this specification if you want them to
-remain importable through `Import-CompleterScript` without redesign:
+remain importable through the strict tier without redesign. Run
+`Test-CompleterScript` to check a script against it:
 
 - Keep the script self-contained. Do not dot-source other scripts, and do not
   use `#requires -Modules`, `#requires -Assembly`, `using module`, or
@@ -457,6 +463,13 @@ remain importable through `Import-CompleterScript` without redesign:
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Trusted</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Import-CompleterScript</maml:name>
@@ -466,6 +479,13 @@ remain importable through `Import-CompleterScript` without redesign:
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
           <dev:type>
             <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Trusted</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
       </command:syntaxItem>
@@ -491,6 +511,18 @@ remain importable through `Import-CompleterScript` without redesign:
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Trusted</maml:name>
+        <maml:description>
+          <maml:para>Skips the strict grammar validation and dot-sources the script as-is inside the
+capture module. Everything at script scope runs at import time, exactly as it
+would when the script is dot-sourced from a profile. The emitted records carry
+`Trusted` set to `$true`.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
     </command:parameters>
     <command:inputTypes>
       <command:inputType>
@@ -509,16 +541,17 @@ remain importable through `Import-CompleterScript` without redesign:
         </dev:type>
         <maml:description>
           <maml:para>Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
-`Register-CompleterRegistration -InputObject`.</maml:para>
+`Register-CompleterRegistration -InputObject`. The `Trusted` property records
+which tier produced the record.</maml:para>
         </maml:description>
       </command:returnValue>
     </command:returnValues>
     <maml:alertSet>
       <maml:alert>
         <maml:para>Importer compatibility and runtime correctness are both required for future
-standalone completer scripts. Validate both the real `pwsh -NoProfile`
-completion behavior and the script's `Import-CompleterScript` compatibility
-before treating a completer as complete.</maml:para>
+standalone completer scripts. Check the script with `Test-CompleterScript`,
+then verify the real completion behavior with `Test-CompleterRegistration` in
+a `pwsh -NoProfile` session before treating a completer as complete.</maml:para>
       </maml:alert>
     </maml:alertSet>
     <command:examples>
@@ -549,6 +582,21 @@ Register-ArgumentCompleter -Native -CommandName @('tool', 'tool.exe') -ScriptBlo
           <maml:para>This is the preferred registration shape for an import-compatible native
 completer. Keep setup logic in helper functions that run from `Complete-Tool`
 rather than at script scope.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 3 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
+    Register-CompleterRegistration
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Imports a completer script you own without validating it against the strict
+grammar, then registers it. The imported records carry `Trusted` set to
+`$true`.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -894,6 +942,499 @@ supplied through arrays, the same script block is reused for each target.</maml:
       <maml:navigationLink>
         <maml:linkText>text</maml:linkText>
         <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Register-CompleterRegistration.md</maml:uri>
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
+      <command:name>Test-CompleterRegistration</command:name>
+      <maml:description>
+        <maml:para>Runs tab completion for an input against a registered completer target.</maml:para>
+      </maml:description>
+      <command:verb>Test</command:verb>
+      <command:noun>CompleterRegistration</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Resolves a completer target, confirms that it has a live runtime registration,
+and runs `TabExpansion2` for the supplied input text. The completion matches
+are returned as `CompleterActions.CompletionMatch` records that carry the
+target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
+`ToolTip`, so the same check that used to be done by hand after every
+registration can be scripted and asserted on.
+
+One input text invokes one completer, so each call tests exactly one target.
+The target parameters accept the same shapes as `Get-CompleterRegistration` so
+registration records and property-bound values pipe in, but the command throws
+when more than one target resolves in a single call.
+
+The command only reads the completion engine. It does not change any
+registration, and it never touches PSReadLine.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>ParameterName</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputText</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CursorPosition</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputObject</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputText</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CursorPosition</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="RegistrationKey">
+          <maml:name>Key</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputText</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CursorPosition</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterRegistration</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Native</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputText</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CursorPosition</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
+        <maml:name>CommandName</maml:name>
+        <maml:description>
+          <maml:para>Specifies the command name of the native or command-parameter completer
+target.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>CursorPosition</maml:name>
+        <maml:description>
+          <maml:para>The zero-based cursor position within `InputText` at which completion runs. The
+default is the end of the input.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Int32</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Int32</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="Named" aliases="none">
+        <maml:name>InputObject</maml:name>
+        <maml:description>
+          <maml:para>Supplies an object that describes the completer target, such as a record
+returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
+must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
+`CommandName`/`ParameterName` plus `IsNative`/`Native`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>InputText</maml:name>
+        <maml:description>
+          <maml:para>The command line to complete, exactly as it would be typed at the prompt. It
+must invoke the target's command, because the matches come from whatever
+command the text names.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="RegistrationKey">
+        <maml:name>Key</maml:name>
+        <maml:description>
+          <maml:para>Identifies the target by registration key. A key without a colon is treated
+as a native command. A key with a colon is treated as a `Command:Parameter`
+target unless the text after its last colon contains a path separator, in which
+case it is treated as a native command path such as `C:\tools\example.exe`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="IsNative">
+        <maml:name>Native</maml:name>
+        <maml:description>
+          <maml:para>Indicates that the target is a native command completer instead of a command
+parameter completer.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
+        <maml:name>ParameterName</maml:name>
+        <maml:description>
+          <maml:para>Specifies the parameter name of the command-parameter completer target.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>A registration record, or any object that describes a completer target.</maml:para>
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>A registration key or command and parameter names bound by property name.</maml:para>
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>Returns `CompleterActions.CompletionMatch` records, one per completion match,
+with `Key`, `RuntimeKey`, `CommandName`, `ParameterName`, `CompleterType`,
+`InputText`, `CursorPosition`, `CompletionText`, `ListItemText`, `ResultType`,
+and `ToolTip` properties. Nothing is returned when the completer yields no
+matches.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para>Completion runs from the module's scope, so the commands named in `InputText`
+must be resolvable from the global scope, as they are in an interactive
+session. Functions defined in a script's local scope are not visible to the
+completion engine when it is invoked from this command.</maml:para>
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Returns the completion matches the registered git completer produces for
+`git che`, such as `checkout`, `cherry`, and `cherry-pick`.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name |
+    Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Verifies a registration record returned by `Get-CompleterRegistration` by
+completing an argument for its parameter.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 3 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
+$matches.CompletionText | Should -Contain 'checkout'
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Asserts on the matches inside a Pester test.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Get-CompleterRegistration</maml:linkText>
+        <maml:uri>Get-CompleterRegistration.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Test-CompleterScript</maml:linkText>
+        <maml:uri>Test-CompleterScript.md</maml:uri>
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
+      <command:name>Test-CompleterScript</command:name>
+      <maml:description>
+        <maml:para>Checks completer scripts against the strict import grammar and reports findings.</maml:para>
+      </maml:description>
+      <command:verb>Test</command:verb>
+      <command:noun>CompleterScript</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Parses one or more completer scripts and runs the same validation that
+`Import-CompleterScript` applies before it executes a script. Instead of
+stopping at the first problem, the command returns one
+`CompleterActions.CompleterScriptFinding` record per unsupported construct with
+the line and column, the construct type, a message, and a hint that describes
+how to change the script so it imports under the strict tier.
+
+A conforming script produces no output, so a conformance test can assert that
+the command returns nothing, or filter on `Severity` the way the strict importer
+does. A script that cannot be parsed yields one finding per parse error and is
+not checked further. `Test-CompleterScript` never executes the script.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterScript</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+          <maml:name>Path</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterScript</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+          <maml:name>LiteralPath</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="PSPath">
+        <maml:name>LiteralPath</maml:name>
+        <maml:description>
+          <maml:para>One or more literal paths to completer script files. Wildcards are not expanded.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
+        <maml:name>Path</maml:name>
+        <maml:description>
+          <maml:para>One or more paths to completer script files. Wildcards are supported.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>Returns `CompleterActions.CompleterScriptFinding` records with `Path`, `Line`,
+`Column`, `Severity`, `Construct`, `Message`, and `Hint` properties. Every
+finding the strict grammar produces has `Severity` `Error`.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para>`Import-CompleterScript` builds its strict-tier error text from the same
+findings, so the two commands cannot disagree about what the grammar accepts.
+Scripts that must stay outside the grammar can be imported with
+`Import-CompleterScript -Trusted` instead of being rewritten.</maml:para>
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterScript -Path .\tool_completer.ps1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Reports each construct that keeps the script from importing under the strict
+tier, or nothing when the script conforms.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Get-ChildItem -Path ~\Completers -Recurse -Filter *.ps1 |
+    Test-CompleterScript |
+    Where-Object Severity -eq Error
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Runs the conformance check over a completer repository. The pipeline is empty
+when every script conforms.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 3 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Describe 'completer conformance' {
+    It 'imports under the strict tier: &lt;Name&gt;' -TestCases (
+        Get-ChildItem -Path $PSScriptRoot -Filter *_completer.ps1 -File |
+            ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
+    ) {
+        param($Path)</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Test-CompleterScript -Path $Path | Should -BeNullOrEmpty
+    }
+}
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Turns the conformance check into a Pester test for a completer repository.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Import-CompleterScript</maml:linkText>
+        <maml:uri>Import-CompleterScript.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Test-CompleterRegistration</maml:linkText>
+        <maml:uri>Test-CompleterRegistration.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
