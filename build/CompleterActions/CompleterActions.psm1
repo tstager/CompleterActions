@@ -841,13 +841,12 @@ state. Existing managed or runtime registrations are preserved unless you use
 managed is idempotent only while the managed record still matches the live
 runtime value; when the runtime registration was replaced or removed outside
 this module, the managed record is stale and the command fails until you
-reconcile it with -Force. The targets of one call are registered as one
-transaction: if the runtime or managed write for any of them fails, the
-previous runtime and managed state of every target the call had changed is
-restored and any rollback failure is reported alongside the original error.
-The command supports array inputs for command and parameter targets, and it
-can also accept pipeline InputObject values that describe the target and
-expose a ScriptBlock property.
+reconcile it with -Force. Each target is updated transactionally: if the
+runtime or managed write fails, the previous runtime and managed state are
+restored and any rollback failure is reported alongside the original error. The
+command supports array inputs for command and parameter targets, and it can
+also accept pipeline InputObject values that describe the target and expose a
+ScriptBlock property.
 
 With -Path or -LiteralPath and -Lazy the command registers a completer script
 without running it. The runtime entry for each target is a small stub that
@@ -1137,37 +1136,27 @@ function Register-CompleterRegistration
             }
 
             $targetState = if ($isLazy) { 'Pending' } else { 'Active' }
-            $registrations = @(
-                foreach ($resolvedInput in $resolvedInputs)
-                {
-                    New-CompleterRegistrationRecord -Target $resolvedInput.Target -ScriptBlock $resolvedInput.ScriptBlock -Source 'Managed' -ImportModule $resolvedInput.ImportModule -State $targetState -ScriptPath $resolvedInput.ScriptPath -Trusted:([bool] $resolvedInput.Trusted)
-                }
-            )
-            $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Force:$Force)
-            $confirmedRegistrations = [System.Collections.Generic.List[psobject]]::new()
-            $confirmedConflicts = [System.Collections.Generic.List[psobject]]::new()
 
-            for ($index = 0; $index -lt $registrations.Count; $index++)
+            foreach ($resolvedInput in $resolvedInputs)
             {
-                if ($null -ne $conflicts[$index].Problem)
+                $registration = New-CompleterRegistrationRecord -Target $resolvedInput.Target -ScriptBlock $resolvedInput.ScriptBlock -Source 'Managed' -ImportModule $resolvedInput.ImportModule -State $targetState -ScriptPath $resolvedInput.ScriptPath -Trusted:([bool] $resolvedInput.Trusted)
+                $conflict = Resolve-CompleterRegistrationConflict -Registration $registration -Force:$Force
+
+                if ($null -ne $conflict.Problem)
                 {
-                    throw "Failed to register the completer '$($registrations[$index].RuntimeKey)'. $($conflicts[$index].Problem)"
+                    throw "Failed to register the completer '$($registration.RuntimeKey)'. $($conflict.Problem)"
                 }
 
-                if (-not $conflicts[$index].IsExisting -and -not $PSCmdlet.ShouldProcess($registrations[$index].RuntimeKey, 'Register completer registration'))
+                if (-not $conflict.IsExisting -and -not $PSCmdlet.ShouldProcess($registration.RuntimeKey, 'Register completer registration'))
                 {
                     continue
                 }
 
-                $confirmedRegistrations.Add($registrations[$index])
-                $confirmedConflicts.Add($conflicts[$index])
-            }
+                $storedRegistration = Add-CompleterRegistration -Registration $registration -Conflict $conflict
 
-            foreach ($registration in @(Add-CompleterRegistration -Registration $confirmedRegistrations -Conflict $confirmedConflicts))
-            {
                 if ($PassThru)
                 {
-                    $PSCmdlet.WriteObject($registration)
+                    $PSCmdlet.WriteObject($storedRegistration)
                 }
             }
         }
@@ -1727,10 +1716,10 @@ back or the new one removed, and the earlier managed record is put back or the
 new one removed, so the session ends exactly as it was before the batch. The
 error names the target whose write failed, and a failure during the rollback
 is reported together with the original error so the caller can say the target
-may be inconsistent. Register-CompleterRegistration writes the targets of one
-call through this helper and Import-CompleterSet writes a whole set through
-it, so an eager, a lazy, and a completer set registration share one
-transaction.
+may be inconsistent. Register-CompleterRegistration writes each target through
+this helper on its own, so every target of a call stays its own transaction,
+and Import-CompleterSet writes a whole set through it, so an eager, a lazy,
+and a completer set registration share one write path.
 
 .PARAMETER Registration
 The CompleterActions.CompleterRegistration records to store, in write order.
@@ -4110,9 +4099,11 @@ The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same key sees the earlier
 one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
-Register-CompleterRegistration throws the first reported problem and
-Resolve-CompleterSetEntry collects them, so a completer set is validated
-against the same rules its registrations are held to.
+Register-CompleterRegistration resolves one record at a time, after the
+earlier targets of its call have been written, and throws the reported
+problem; Resolve-CompleterSetEntry resolves an entry's records together and
+collects the problems, so a completer set is validated against the same rules
+its registrations are held to.
 
 .PARAMETER Registration
 The CompleterActions.CompleterRegistration records that are about to be

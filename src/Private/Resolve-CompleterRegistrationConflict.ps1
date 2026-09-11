@@ -17,9 +17,11 @@ The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same key sees the earlier
 one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
-Register-CompleterRegistration throws the first reported problem and
-Resolve-CompleterSetEntry collects them, so a completer set is validated
-against the same rules its registrations are held to.
+Register-CompleterRegistration resolves one record at a time, after the
+earlier targets of its call have been written, and throws the reported
+problem; Resolve-CompleterSetEntry resolves an entry's records together and
+collects the problems, so a completer set is validated against the same rules
+its registrations are held to.
 
 .PARAMETER Registration
 The CompleterActions.CompleterRegistration records that are about to be

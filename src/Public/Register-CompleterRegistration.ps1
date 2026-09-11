@@ -10,13 +10,12 @@ state. Existing managed or runtime registrations are preserved unless you use
 managed is idempotent only while the managed record still matches the live
 runtime value; when the runtime registration was replaced or removed outside
 this module, the managed record is stale and the command fails until you
-reconcile it with -Force. The targets of one call are registered as one
-transaction: if the runtime or managed write for any of them fails, the
-previous runtime and managed state of every target the call had changed is
-restored and any rollback failure is reported alongside the original error.
-The command supports array inputs for command and parameter targets, and it
-can also accept pipeline InputObject values that describe the target and
-expose a ScriptBlock property.
+reconcile it with -Force. Each target is updated transactionally: if the
+runtime or managed write fails, the previous runtime and managed state are
+restored and any rollback failure is reported alongside the original error. The
+command supports array inputs for command and parameter targets, and it can
+also accept pipeline InputObject values that describe the target and expose a
+ScriptBlock property.
 
 With -Path or -LiteralPath and -Lazy the command registers a completer script
 without running it. The runtime entry for each target is a small stub that
@@ -303,37 +302,27 @@ function Register-CompleterRegistration
             }
 
             $targetState = if ($isLazy) { 'Pending' } else { 'Active' }
-            $registrations = @(
-                foreach ($resolvedInput in $resolvedInputs)
-                {
-                    New-CompleterRegistrationRecord -Target $resolvedInput.Target -ScriptBlock $resolvedInput.ScriptBlock -Source 'Managed' -ImportModule $resolvedInput.ImportModule -State $targetState -ScriptPath $resolvedInput.ScriptPath -Trusted:([bool] $resolvedInput.Trusted)
-                }
-            )
-            $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Force:$Force)
-            $confirmedRegistrations = [System.Collections.Generic.List[psobject]]::new()
-            $confirmedConflicts = [System.Collections.Generic.List[psobject]]::new()
 
-            for ($index = 0; $index -lt $registrations.Count; $index++)
+            foreach ($resolvedInput in $resolvedInputs)
             {
-                if ($null -ne $conflicts[$index].Problem)
+                $registration = New-CompleterRegistrationRecord -Target $resolvedInput.Target -ScriptBlock $resolvedInput.ScriptBlock -Source 'Managed' -ImportModule $resolvedInput.ImportModule -State $targetState -ScriptPath $resolvedInput.ScriptPath -Trusted:([bool] $resolvedInput.Trusted)
+                $conflict = Resolve-CompleterRegistrationConflict -Registration $registration -Force:$Force
+
+                if ($null -ne $conflict.Problem)
                 {
-                    throw "Failed to register the completer '$($registrations[$index].RuntimeKey)'. $($conflicts[$index].Problem)"
+                    throw "Failed to register the completer '$($registration.RuntimeKey)'. $($conflict.Problem)"
                 }
 
-                if (-not $conflicts[$index].IsExisting -and -not $PSCmdlet.ShouldProcess($registrations[$index].RuntimeKey, 'Register completer registration'))
+                if (-not $conflict.IsExisting -and -not $PSCmdlet.ShouldProcess($registration.RuntimeKey, 'Register completer registration'))
                 {
                     continue
                 }
 
-                $confirmedRegistrations.Add($registrations[$index])
-                $confirmedConflicts.Add($conflicts[$index])
-            }
+                $storedRegistration = Add-CompleterRegistration -Registration $registration -Conflict $conflict
 
-            foreach ($registration in @(Add-CompleterRegistration -Registration $confirmedRegistrations -Conflict $confirmedConflicts))
-            {
                 if ($PassThru)
                 {
-                    $PSCmdlet.WriteObject($registration)
+                    $PSCmdlet.WriteObject($storedRegistration)
                 }
             }
         }
