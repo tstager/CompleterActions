@@ -1,0 +1,198 @@
+<#
+.SYNOPSIS
+Validates one completer set entry and resolves its script path and targets.
+
+.DESCRIPTION
+Normalizes a raw entry hashtable from a completer set into a record that
+Import-CompleterSet can register, collecting every problem instead of stopping
+at the first so the caller can report all of them at once. A relative Path
+resolves against the set file's directory. Trusted defaults to false. Trusted
+entries must declare Targets because the script is not parsed. Strict entries
+must pass the strict import grammar; their targets are derived from the script
+and, when the entry also declares Targets, the two lists must match. The
+script is never executed.
+
+.PARAMETER Entry
+The raw entry value from the set file's Entries array.
+
+.PARAMETER Index
+The one-based position of the entry in the set file, used in messages.
+
+.PARAMETER SetDirectory
+The directory that relative entry paths resolve against.
+
+.OUTPUTS
+CompleterActions.CompleterSetEntry
+#>
+function Resolve-CompleterSetEntry
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [object] $Entry,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(1, [int]::MaxValue)]
+        [int] $Index,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $SetDirectory
+    )
+
+    $problems = [System.Collections.Generic.List[string]]::new()
+    $declaredPath = $null
+    $resolvedPath = $null
+    $scriptIsUsable = $false
+    $trusted = $false
+    $declaredTargets = $null
+    $targets = @()
+
+    if ($Entry -isnot [System.Collections.IDictionary])
+    {
+        $problems.Add('The entry is not a hashtable with Path, Trusted, and Targets keys.')
+    }
+    else
+    {
+        if (-not $Entry.Contains('Path') -or [string]::IsNullOrWhiteSpace([string] $Entry['Path']))
+        {
+            $problems.Add('The entry has no Path.')
+        }
+        else
+        {
+            $declaredPath = [string] $Entry['Path']
+            $candidatePath = if ([System.IO.Path]::IsPathRooted($declaredPath)) { $declaredPath } else { Join-Path -Path $SetDirectory -ChildPath $declaredPath }
+            $resolvedPath = [System.IO.Path]::GetFullPath($candidatePath)
+
+            if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
+            {
+                $problems.Add("The file '$resolvedPath' does not exist.")
+            }
+            elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
+            {
+                $problems.Add("The file '$resolvedPath' is not a .ps1 script.")
+            }
+            else
+            {
+                $scriptIsUsable = $true
+            }
+        }
+
+        if ($Entry.Contains('Trusted'))
+        {
+            if ($Entry['Trusted'] -isnot [bool])
+            {
+                $problems.Add('Trusted must be $true or $false.')
+            }
+            else
+            {
+                $trusted = $Entry['Trusted']
+            }
+        }
+
+        if ($Entry.Contains('Targets') -and @($Entry['Targets']).Count -gt 0)
+        {
+            $declaredTargets = @(
+                foreach ($targetEntry in @($Entry['Targets']))
+                {
+                    if ($targetEntry -isnot [System.Collections.IDictionary])
+                    {
+                        $problems.Add('Each target must be a hashtable with CommandName and either Native = $true or ParameterName.')
+                        continue
+                    }
+
+                    $commandName = if ($targetEntry.Contains('CommandName')) { [string] $targetEntry['CommandName'] } else { $null }
+
+                    if ([string]::IsNullOrWhiteSpace($commandName))
+                    {
+                        $problems.Add('A target has no CommandName.')
+                        continue
+                    }
+
+                    try
+                    {
+                        if ($targetEntry.Contains('Native') -and $targetEntry['Native'] -eq $true)
+                        {
+                            Resolve-CompleterTarget -CommandName $commandName -Native
+                        }
+                        elseif ($targetEntry.Contains('ParameterName') -and -not [string]::IsNullOrWhiteSpace([string] $targetEntry['ParameterName']))
+                        {
+                            Resolve-CompleterTarget -CommandName $commandName -ParameterName ([string] $targetEntry['ParameterName'])
+                        }
+                        else
+                        {
+                            $problems.Add("Target '$commandName' must declare Native = `$true or a ParameterName.")
+                        }
+                    }
+                    catch
+                    {
+                        $problems.Add($_.Exception.Message)
+                    }
+                }
+            )
+        }
+
+        if ($trusted)
+        {
+            if ($null -eq $declaredTargets)
+            {
+                $problems.Add('Trusted entries must declare Targets, because a trusted script is not parsed for them.')
+            }
+            else
+            {
+                $targets = $declaredTargets
+            }
+        }
+        elseif ($scriptIsUsable)
+        {
+            $findings = @(Get-CompleterScriptFinding -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error')
+
+            if ($findings.Count -gt 0)
+            {
+                foreach ($finding in $findings)
+                {
+                    $problems.Add(('The script does not conform to the strict import grammar. Line {0}, column {1} ({2}): {3} {4}' -f $finding.Line, $finding.Column, $finding.Construct, $finding.Message, $finding.Hint))
+                }
+            }
+            else
+            {
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath)
+
+                if ($null -eq $declaredTargets)
+                {
+                    $targets = $derivedTargets
+                }
+                else
+                {
+                    $declaredKeys = @($declaredTargets | ForEach-Object { [string] $_.Key })
+                    $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
+                    $mismatch = @($declaredKeys | Where-Object { $_ -notin $derivedKeys }).Count -gt 0 -or @($derivedKeys | Where-Object { $_ -notin $declaredKeys }).Count -gt 0
+
+                    if ($mismatch)
+                    {
+                        $declaredList = @($declaredTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                        $derivedList = @($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                        $problems.Add("The declared Targets do not match the script. Declared: $declaredList. Script registers: $derivedList.")
+                    }
+                    else
+                    {
+                        $targets = $derivedTargets
+                    }
+                }
+            }
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName   = 'CompleterActions.CompleterSetEntry'
+        Index        = $Index
+        DeclaredPath = $declaredPath
+        Path         = $resolvedPath
+        Trusted      = $trusted
+        Targets      = @($targets)
+        Problems     = @($problems)
+        IsValid      = $problems.Count -eq 0
+    }
+}

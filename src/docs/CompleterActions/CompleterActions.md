@@ -16,6 +16,10 @@ title: CompleterActions Module
 
 ## CompleterActions
 
+### [Export-CompleterSet](Export-CompleterSet.md)
+
+Writes a completer set file from registrations that came from scripts.
+
 ### [Get-CompleterRegistration](Get-CompleterRegistration.md)
 
 Gets completer registrations known to the module or discovered at runtime.
@@ -23,6 +27,10 @@ Gets completer registrations known to the module or discovered at runtime.
 ### [Import-CompleterScript](Import-CompleterScript.md)
 
 Imports self-contained completer scripts into registration input objects.
+
+### [Import-CompleterSet](Import-CompleterSet.md)
+
+Validates a completer set file and registers every script it lists.
 
 ### [Register-CompleterRegistration](Register-CompleterRegistration.md)
 

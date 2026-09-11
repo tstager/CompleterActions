@@ -1,0 +1,430 @@
+BeforeAll {
+    function Invoke-TestRuntimeCompleterCleanup
+    {
+        param(
+            [Parameter(Mandatory)]
+            [string] $CommandName,
+
+            [Parameter()]
+            [string] $ParameterName,
+
+            [Parameter(Mandatory)]
+            [ValidateSet('Parameter', 'Native')]
+            [string] $CompleterType
+        )
+
+        $engineField = $ExecutionContext.GetType().GetField(
+            '_context',
+            [System.Reflection.BindingFlags]::Instance -bor [System.Reflection.BindingFlags]::NonPublic
+        )
+
+        if ($null -eq $engineField)
+        {
+            return
+        }
+
+        $engineExecutionContext = $engineField.GetValue($ExecutionContext)
+        if ($null -eq $engineExecutionContext)
+        {
+            return
+        }
+
+        $bindingFlags = [System.Reflection.BindingFlags]::Instance -bor
+            [System.Reflection.BindingFlags]::NonPublic -bor
+            [System.Reflection.BindingFlags]::Public
+
+        $propertyName = if ($CompleterType -eq 'Native') { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
+        $property = $engineExecutionContext.GetType().GetProperty($propertyName, $bindingFlags)
+        if ($null -eq $property)
+        {
+            return
+        }
+
+        $registrations = $property.GetValue($engineExecutionContext)
+        $targetKey = if ($CompleterType -eq 'Native') { $CommandName } else { '{0}:{1}' -f $CommandName, $ParameterName }
+
+        foreach ($candidateKey in @($registrations.Keys))
+        {
+            if ($candidateKey -ieq $targetKey)
+            {
+                $null = $registrations.Remove($candidateKey)
+                break
+            }
+        }
+    }
+
+    function Write-TestCompleterSet
+    {
+        param(
+            [Parameter(Mandatory)]
+            [string] $Path,
+
+            [Parameter(Mandatory)]
+            [string[]] $Entry
+        )
+
+        $content = @(
+            '@{'
+            '    Version = 1'
+            '    Entries = @('
+            foreach ($entryText in $Entry) { "        $entryText" }
+            '    )'
+            '}'
+        )
+
+        Set-Content -LiteralPath $Path -Value $content -Encoding utf8
+    }
+
+    $script:FixtureRoot = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures'
+    $script:ImportFixtureRoot = Join-Path -Path $script:FixtureRoot -ChildPath 'ImportCompleterScript'
+    $script:ParameterFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'ParameterCompleter.ps1'
+    $script:NativeFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1'
+    $script:TrustedFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'TrustedOnlyCompleter.ps1'
+    $script:UnsafeFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'UnsafeTopLevelScript.ps1'
+    $script:SetCleanupTargets = @(
+        @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+        @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+        @{ CommandName = 'importfixture'; CompleterType = 'Native' },
+        @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+    )
+}
+
+Describe 'Completer sets' {
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:SetCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+
+        function global:Test-ImportedFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        function global:Test-TrustedFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $script:SetRoot = Join-Path -Path $TestDrive -ChildPath ('sets-{0}' -f ([guid]::NewGuid().ToString('N')))
+        New-Item -Path $script:SetRoot -ItemType Directory | Out-Null
+        $script:SetPath = Join-Path -Path $script:SetRoot -ChildPath 'completers.psd1'
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:SetCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    Context 'Export-CompleterSet' {
+        It 'writes the set schema with a path relative to the set file and one target per registration' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+
+            $written = Import-CompleterScript -Path $scriptPath | Export-CompleterSet -Path $script:SetPath -PassThru
+
+            $written.FullName | Should -Be $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+
+            $data.Version | Should -Be 1
+            @($data.Entries).Count | Should -Be 1
+            $data.Entries[0].Path | Should -Be (Join-Path -Path 'scripts' -ChildPath 'Native.ps1')
+            $data.Entries[0].Trusted | Should -BeFalse
+            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            @($data.Entries[0].Targets.Native | Select-Object -Unique) | Should -Be @($true)
+        }
+
+        It 'records the trust tier per script and groups targets by script' {
+            $records = @(Import-CompleterScript -Path $script:ParameterFixturePath) + @(Import-CompleterScript -Path $script:TrustedFixturePath -Trusted)
+
+            $records | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+
+            @($data.Entries).Count | Should -Be 2
+
+            $strictEntry = $data.Entries | Where-Object { -not $_.Trusted }
+            $strictEntry.Targets[0].CommandName | Should -Be 'Test-ImportedFixtureTool'
+            $strictEntry.Targets[0].ParameterName | Should -Be 'Name'
+            [System.IO.Path]::GetFullPath((Join-Path -Path $script:SetRoot -ChildPath $strictEntry.Path)) | Should -Be $script:ParameterFixturePath
+
+            $trustedEntry = $data.Entries | Where-Object { $_.Trusted }
+            $trustedEntry.Targets[0].CommandName | Should -Be 'Test-TrustedFixtureTool'
+            [System.IO.Path]::GetFullPath((Join-Path -Path $script:SetRoot -ChildPath $trustedEntry.Path)) | Should -Be $script:TrustedFixturePath
+        }
+
+        It 'accepts managed registration records that expose ScriptPath and Trusted' {
+            $record = [pscustomobject] @{
+                CommandName = 'importfixture'
+                IsNative    = $true
+                ScriptPath  = $script:NativeFixturePath
+                Trusted     = $true
+            }
+
+            $record | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+
+            @($data.Entries).Count | Should -Be 1
+            $data.Entries[0].Trusted | Should -BeTrue
+            $data.Entries[0].Targets[0].CommandName | Should -Be 'importfixture'
+            $data.Entries[0].Targets[0].Native | Should -BeTrue
+        }
+
+        It 'throws when nothing with a script path is available to export' {
+            { Export-CompleterSet -Path $script:SetPath } | Should -Throw '*No registrations with a script path*'
+            Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+            $scriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+            }
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; ScriptBlock = $scriptBlock } | Export-CompleterSet -Path $script:SetPath
+            } | Should -Throw '*ScriptPath or SourcePath*'
+        }
+
+        It 'requires a .psd1 path' {
+            {
+                Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path (Join-Path -Path $script:SetRoot -ChildPath 'completers.json')
+            } | Should -Throw '*must be .psd1 files*'
+        }
+
+        It 'supports WhatIf without writing the file' {
+            Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path $script:SetPath -WhatIf
+
+            Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+        }
+    }
+
+    Context 'Import-CompleterSet' {
+        It 'restores the same targets after an Export then Import round trip' {
+            $imported = @(Import-CompleterScript -Path $script:ParameterFixturePath) +
+                @(Import-CompleterScript -Path $script:NativeFixturePath) +
+                @(Import-CompleterScript -Path $script:TrustedFixturePath -Trusted)
+            $imported | Export-CompleterSet -Path $script:SetPath
+
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            @($registered.Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
+            $registered[0].PSTypeNames | Should -Contain 'CompleterActions.CompleterRegistration'
+            @($registered.State | Select-Object -Unique) | Should -Be @('Active')
+            @((Get-CompleterRegistration -ManagedOnly).Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
+
+            $trustedInput = 'Test-TrustedFixtureTool -Name trusted'
+            $trustedCompletion = TabExpansion2 -InputScript $trustedInput -CursorColumn $trustedInput.Length
+            $trustedCompletion.CompletionMatches.CompletionText | Should -Contain 'trusted-alpha'
+
+            $nativeInput = 'importfixture a'
+            $nativeCompletion = TabExpansion2 -InputScript $nativeInput -CursorColumn $nativeInput.Length
+            $nativeCompletion.CompletionMatches.CompletionText | Should -Contain 'alpha'
+        }
+
+        It 'resolves relative paths against the set file directory, not the current location' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            Copy-Item -LiteralPath $script:ParameterFixturePath -Destination (Join-Path -Path $scriptFolder -ChildPath 'Relative.ps1')
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'scripts/Relative.ps1' }"
+
+            Push-Location -LiteralPath $TestDrive
+            try
+            {
+                $registered = @(Import-CompleterSet -Path $script:SetPath)
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-importedfixturetool:name'
+        }
+
+        It 'reports every invalid entry in one error and registers nothing' {
+            Set-Content -LiteralPath (Join-Path -Path $script:SetRoot -ChildPath 'notes.txt') -Value 'not a script' -Encoding utf8
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = 'missing.ps1' }"
+                "@{ Path = 'notes.txt' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true }"
+                "@{ Path = '$script:UnsafeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+            )
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Match 'has 4 invalid entries and nothing was registered'
+            $thrown.Exception.Message | Should -Match "Entry 1 \('missing\.ps1'\): The file '.*missing\.ps1' does not exist\."
+            $thrown.Exception.Message | Should -Match "Entry 2 \('notes\.txt'\): The file '.*notes\.txt' is not a \.ps1 script\."
+            $thrown.Exception.Message | Should -Match 'Entry 3 \(.*TrustedOnlyCompleter\.ps1.\): Trusted entries must declare Targets'
+            $thrown.Exception.Message | Should -Match "Entry 4 \(.*UnsafeTopLevelScript\.ps1.\): The script does not conform to the strict import grammar\. Line 1, column 1 \(CommandAst\): The script uses unsupported top-level command 'Get-Date'"
+            $thrown.Exception.Message | Should -Not -Match 'Entry 5'
+
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'reports a strict entry whose declared Targets do not match the script' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath'; Targets = @( @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Other' } ) }"
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw "*The declared Targets do not match the script. Declared: 'Test-ImportedFixtureTool:Other'. Script registers: 'Test-ImportedFixtureTool:Name'.*"
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+        }
+
+        It 'registers the valid entries and warns about the rest with -SkipInvalid' {
+            Set-Content -LiteralPath (Join-Path -Path $script:SetRoot -ChildPath 'notes.txt') -Value 'not a script' -Encoding utf8
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = 'missing.ps1' }"
+                "@{ Path = 'notes.txt' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true }"
+                "@{ Path = '$script:UnsafeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+            )
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningVariable warnings -WarningAction SilentlyContinue)
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-importedfixturetool:name'
+
+            $warningText = @($warnings | ForEach-Object { $_.Message })
+            @($warningText | Where-Object { $_ -match "skipped Entry 1 \('missing\.ps1'\)" }).Count | Should -Be 1
+            @($warningText | Where-Object { $_ -match "skipped Entry 2 \('notes\.txt'\)" }).Count | Should -Be 1
+            @($warningText | Where-Object { $_ -match 'skipped Entry 3 \(.*\): Trusted entries must declare Targets' }).Count | Should -Be 1
+            @($warningText | Where-Object { $_ -match 'skipped Entry 4 \(.*\): The script does not conform' }).Count | Should -BeGreaterThan 0
+            @($warningText | Where-Object { $_ -match 'Entry 5' }).Count | Should -Be 0
+
+            (Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').Source | Should -Be 'Managed'
+        }
+
+        It 'registers a trusted entry through the trusted tier when it declares its targets' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-trustedfixturetool:name'
+
+            $inputScript = 'Test-TrustedFixtureTool -Name trusted'
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            $completion.CompletionMatches.CompletionText | Should -Contain 'trusted-beta'
+        }
+
+        It 'passes -Force through to replace an existing runtime registration' {
+            $externalScriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+
+                [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
+            }
+
+            Register-ArgumentCompleter -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*Use -Force*'
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath -Force)
+
+            $registered.Count | Should -Be 1
+            $registered[0].Source | Should -Be 'Managed'
+
+            $inputScript = 'Test-ImportedFixtureTool -Name imported'
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            $completion.CompletionMatches.CompletionText | Should -Be @('imported-alpha')
+        }
+
+        It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {
+            $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 1; Entries = @( (New-Item -ItemType File -Path '$probePath') ) }" -Encoding utf8
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*dynamic expressions*'
+
+            Test-Path -LiteralPath $probePath | Should -BeFalse
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            Mock -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -MockWith { throw 'reader sentinel' }
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*reader sentinel*'
+            Should -Invoke -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -Times 1 -Exactly
+        }
+
+        It 'supports WhatIf without importing or registering anything' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+
+            Import-CompleterSet -Path $script:SetPath -WhatIf | Should -BeNullOrEmpty
+
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+        }
+
+        It 'rejects files that are not .psd1 and sets without Version 1 or Entries' {
+            $jsonPath = Join-Path -Path $script:SetRoot -ChildPath 'completers.json'
+            Set-Content -LiteralPath $jsonPath -Value '{}' -Encoding utf8
+            { Import-CompleterSet -Path $jsonPath } | Should -Throw '*must be .psd1 files*'
+
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 2; Entries = @( @{ Path = '$script:ParameterFixturePath' } ) }" -Encoding utf8
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*must declare Version = 1*'
+
+            Set-Content -LiteralPath $script:SetPath -Value '@{ Version = 1; Entries = @() }' -Encoding utf8
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*has no Entries*'
+
+            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+        }
+
+        It 'leaves PSReadLine key handlers unchanged' {
+            Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
+
+            if ($null -eq (Get-Module -Name 'PSReadLine'))
+            {
+                Set-ItResult -Skipped -Because 'PSReadLine is not loaded in this session'
+            }
+
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:NativeFixturePath' }"
+            )
+
+            $before = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+            $null = @(Import-CompleterSet -Path $script:SetPath)
+            Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path (Join-Path -Path $script:SetRoot -ChildPath 'again.psd1')
+
+            $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+            $before.Count | Should -BeGreaterThan 0
+            $after | Should -Be $before
+        }
+    }
+
+    It 'loads the about help topic for completer sets' {
+        $help = Get-Help -Name 'about_Completer_Sets' -ErrorAction Stop
+
+        $help.Name | Should -Be 'about_Completer_Sets'
+        $help.Synopsis | Should -Match 'completer set'
+    }
+}

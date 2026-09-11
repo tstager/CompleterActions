@@ -1,0 +1,252 @@
+TOPIC
+    about_Completer_Sets
+
+SYNOPSIS
+    Explains completer set files: the schema, the per-entry trust tier, how
+    Import-CompleterSet validates and registers a set, the Pending and Failed
+    lifecycle of lazily loaded completers, and the module's PSReadLine
+    neutrality promise.
+
+LONG DESCRIPTION
+
+    A completer set is a data file that lists completer scripts and the
+    targets each one registers. It turns a profile that walks a completer
+    repository, imports every script, and registers the results into one
+    line:
+
+        Import-CompleterSet -Path ~\Completers\completers.psd1
+
+    Two commands work with sets:
+
+    - `Export-CompleterSet` writes a set from registration records, either
+      the managed registrations that came from scripts or records piped in
+      from `Get-CompleterRegistration` or `Import-CompleterScript`.
+    - `Import-CompleterSet` reads a set, validates every entry up front, and
+      registers each valid entry's targets.
+
+    A set never contains code. It is a PowerShell data file (`.psd1`) that
+    both commands read with `Import-PowerShellDataFile`, which evaluates data
+    only and refuses expressions, so a set file cannot execute a completer
+    script or anything else when it is read.
+
+THE SET FILE SCHEMA
+
+    A set file is a hashtable with a `Version` and an `Entries` array. Each
+    entry names one script:
+
+        @{
+            Version = 1
+            Entries = @(
+                @{
+                    Path    = 'git_completer.ps1'
+                    Trusted = $false
+                    Targets = @(
+                        @{ CommandName = 'git'; Native = $true }
+                    )
+                }
+                @{
+                    Path    = 'tools\Invoke-DemoTool.Completer.ps1'
+                    Trusted = $true
+                    Targets = @(
+                        @{ CommandName = 'Invoke-DemoTool'; ParameterName = 'Name' }
+                    )
+                }
+            )
+        }
+
+    - `Version`
+      Required. This module reads version 1.
+
+    - `Entries`
+      Required and non-empty. One hashtable per script.
+
+    - `Path`
+      Required. The completer script, which must exist and be a `.ps1` file.
+      A relative path resolves against the directory that contains the set
+      file, not the current location, so a repository can carry its set file
+      next to its scripts. An absolute path is used as written.
+
+    - `Trusted`
+      Optional, default `$false`. Selects the import tier for the entry. See
+      THE TRUST TIER PER ENTRY.
+
+    - `Targets`
+      The completer targets the script registers. Each target is a hashtable
+      with `CommandName` and either `Native = $true` for a native command
+      completer or `ParameterName` for a command parameter completer.
+      `Targets` is required for trusted entries and optional for strict
+      entries; see the next section for why.
+
+    `Export-CompleterSet` always writes `Targets`, and writes `Path` relative
+    to the set file whenever the script shares a root with it.
+
+THE TRUST TIER PER ENTRY
+
+    Each entry chooses its own import tier, and strict is the default. This
+    is the same choice `Import-CompleterScript` offers with `-Trusted`, made
+    once per script and recorded in the set, so a set that points at a script
+    from elsewhere stays safe while your own scripts can keep shapes the
+    strict grammar does not allow. `about_Import_Completers` describes the
+    two tiers in full.
+
+    Strict entries (`Trusted = $false` or omitted):
+
+    - The script must pass the strict import grammar. `Import-CompleterSet`
+      runs the same check as `Test-CompleterScript` and reports every Error
+      finding with its line, column, construct, and hint.
+    - The targets are derived from the script without running it. The strict
+      grammar requires literal `-CommandName`, `-ParameterName`, and `-Native`
+      arguments, so the targets can be read from the parsed script.
+    - `Targets` may be omitted. When present, it must match what the script
+      declares, or the entry is reported as a mismatch. Declaring targets is
+      a way to notice that a script changed underneath the set.
+
+    Trusted entries (`Trusted = $true`):
+
+    - The grammar is skipped and the script is dot-sourced as-is when it
+      loads, exactly as `Import-CompleterScript -Trusted` does.
+    - `Targets` is required. A trusted script is not parsed for its targets
+      because its registrations may be built dynamically, so the set has to
+      say which targets the script provides.
+
+VALIDATION BEFORE REGISTRATION
+
+    `Import-CompleterSet` checks every entry before it registers anything:
+
+    - the entry is a hashtable with a `Path`
+    - the file exists and is a `.ps1` script
+    - `Trusted`, when present, is `$true` or `$false`
+    - each target has a `CommandName` and either `Native = $true` or a
+      `ParameterName`
+    - trusted entries declare `Targets`
+    - strict entries pass the strict import grammar
+    - strict entries that declare `Targets` match the script
+
+    When any entry fails, the command throws one error that lists every
+    problem, numbered by entry, and registers nothing:
+
+        Completer set 'C:\Completers\completers.psd1' has 2 invalid entries
+        and nothing was registered. Fix the entries or use -SkipInvalid to
+        register the valid ones.
+        Entry 3 ('old_completer.ps1'): The file 'C:\Completers\old_completer
+        .ps1' does not exist.
+        Entry 7 ('mine.ps1'): Trusted entries must declare Targets, because a
+        trusted script is not parsed for them.
+
+    With `-SkipInvalid` the same problems are written as warnings and the
+    valid entries register. `-Force` passes through to the registration and
+    replaces existing managed or runtime registrations for the set's targets.
+    The command supports `-WhatIf`, and validation never executes a completer
+    script.
+
+    The returned objects are the `CompleterActions.CompleterRegistration`
+    records for the set's targets, the same records `Get-CompleterRegistration`
+    returns.
+
+LAZY LOADING, PENDING, AND FAILED
+
+    Registering a set does not run the scripts it lists. Each target gets a
+    small stub in the runtime completer table and a managed record whose
+    `State` is `Pending`. The record also carries `ScriptPath`, the script
+    the stub will load, and `Trusted`, the tier it will load under.
+
+    On the first tab press for a target, inside the ordinary completer call,
+    the stub imports the script through the same machinery as
+    `Import-CompleterScript`, strict or trusted per the record, finds the
+    real script block for its own target, replaces the runtime entry with it,
+    moves the record to `Active`, and delegates that first call to the real
+    block. Later presses hit the real completer directly. A session that
+    never uses a completer never pays for loading it.
+
+    If the script fails to load on that first press, the press returns no
+    completions, no error reaches the host, and the prompt is never
+    interrupted. The stub stores the error message on the managed record as
+    `LoadError`, sets `State` to `Failed`, and removes its runtime entry, so
+    later presses on that command get PowerShell's default completion
+    exactly as if no completer had been registered. `Get-CompleterRegistration`
+    shows the `Failed` record and its `LoadError`; `-ManagedOnly` includes
+    both `Pending` and `Failed` records. Registering the script again with
+    `-Force` retries the load.
+
+    The full state list is therefore:
+
+    - `Pending`     registered lazily and not loaded yet
+    - `Active`      the record describes the live runtime value
+    - `Failed`      the script failed to load; see `LoadError`
+    - `Stale`       a managed record whose runtime value was replaced or
+                    removed outside this module
+    - `Conflicted`  a live runtime value that replaced a managed registration
+                    outside this module
+
+THE PSREADLINE NEUTRALITY PROMISE
+
+    Nothing the module does alters PSReadLine's default behaviour. Lazy
+    loading runs entirely inside the normal argument completer call that
+    `TabExpansion2` makes. The module never hooks PSReadLine key handlers,
+    never replaces `TabExpansion2`, and never touches PSReadLine options or
+    prediction. `Get-PSReadLineKeyHandler` returns the same handlers before
+    and after `Import-CompleterSet`, and after a failed load, tab on that
+    command behaves exactly as it would with no completer registered.
+
+WORKFLOW
+
+    Build the set once from a completer repository, without registering
+    anything in the current session:
+
+        Get-ChildItem -Path ~\Completers -Recurse -Filter *_completer.ps1 |
+            Import-CompleterScript |
+            Export-CompleterSet -Path ~\Completers\completers.psd1
+
+    Or write it from the registrations a session already has:
+
+        Export-CompleterSet -Path ~\Completers\completers.psd1
+
+    Then replace the import pipeline in the profile with one line:
+
+        Import-CompleterSet -Path ~\Completers\completers.psd1
+
+    Scripts that need the trusted tier are marked once in the set file, with
+    their targets, and stay marked. Run `Test-CompleterScript` over the
+    repository when a script changes; a strict entry that stops conforming is
+    reported the next time the set is imported.
+
+EXAMPLE 1
+
+    Import a set and inspect what it registered:
+
+        Import-CompleterSet -Path ~\Completers\completers.psd1 |
+            Format-Table Command, Parameter, Type, State
+
+EXAMPLE 2
+
+    Import a set that has a broken entry, keeping the rest:
+
+        Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid
+
+    Each invalid entry is written as a warning with its entry number and the
+    reason.
+
+EXAMPLE 3
+
+    Check what a set would do without changing the session:
+
+        Import-CompleterSet -Path ~\Completers\completers.psd1 -WhatIf
+
+    Validation runs in full, so an invalid set still fails here.
+
+EXAMPLE 4
+
+    Find records that did not load and see why:
+
+        Get-CompleterRegistration -ManagedOnly |
+            Where-Object State -eq Failed |
+            Format-List Command, ScriptPath, LoadError
+
+SEE ALSO
+
+    Get-Help Import-CompleterSet -Full
+    Get-Help Export-CompleterSet -Full
+    Get-Help Register-CompleterRegistration -Full
+    Get-Help Get-CompleterRegistration -Full
+    Get-Help Test-CompleterScript -Full
+    about_Import_Completers
