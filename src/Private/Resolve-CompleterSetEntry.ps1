@@ -11,7 +11,12 @@ entries must declare Targets because the script is not parsed. Strict entries
 must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
 two lists must match; the strict import grammar itself runs when the script
-loads. The script is never executed.
+loads. Every target is then held to the rules Register-CompleterRegistration
+applies through Resolve-CompleterRegistrationConflict, so a target that already
+carries a different registration is a problem unless -Force is given, and a
+target that an earlier valid entry of the same set already claimed is always a
+problem. A valid entry claims its targets in ClaimedTargets for the entries
+after it. The script is never executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -21,6 +26,14 @@ The one-based position of the entry in the set file, used in messages.
 
 .PARAMETER SetDirectory
 The directory that relative entry paths resolve against.
+
+.PARAMETER ClaimedTargets
+The dictionary, shared by every entry of one set, that maps a claimed target
+key to the index of the valid entry that claimed it.
+
+.PARAMETER Force
+Indicates that the set is imported with -Force, so existing registrations for
+its targets are replaced rather than reported.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
@@ -40,7 +53,14 @@ function Resolve-CompleterSetEntry
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $SetDirectory
+        [string] $SetDirectory,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Collections.IDictionary] $ClaimedTargets,
+
+        [Parameter()]
+        [switch] $Force
     )
 
     $problems = [System.Collections.Generic.List[string]]::new()
@@ -183,6 +203,29 @@ function Resolve-CompleterSetEntry
                     }
                 }
             }
+        }
+    }
+
+    foreach ($target in $targets)
+    {
+        $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptPath $resolvedPath -Trusted:$trusted -Lazy -Force:$Force
+
+        if ($null -ne $conflict.Problem)
+        {
+            $problems.Add($conflict.Problem)
+        }
+
+        if ($ClaimedTargets.Contains([string] $target.Key))
+        {
+            $problems.Add("Target '$($target.RuntimeKey)' is also listed by entry $($ClaimedTargets[[string] $target.Key]).")
+        }
+    }
+
+    if ($problems.Count -eq 0)
+    {
+        foreach ($target in $targets)
+        {
+            $ClaimedTargets[[string] $target.Key] = $Index
         }
     }
 

@@ -42,7 +42,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   entry is validated before anything registers: the file exists and is a
   `.ps1`, `Trusted` entries declare their `Targets`, strict entries expose
   literal targets that are derived from the parsed script and compared
-  against any the entry declares. One terminating error lists every problem;
+  against any the entry declares, no target is listed by two entries, and
+  without `-Force` no target already carries a managed or runtime
+  registration for a different completer, the same rules
+  `Register-CompleterRegistration` applies. One terminating error lists every
+  problem;
   `-SkipInvalid` writes them as warnings and registers the valid entries.
   Relative paths resolve against the set file's directory, `-Force` passes
   through to the registration, and the command returns the registration

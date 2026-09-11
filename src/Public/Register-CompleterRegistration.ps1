@@ -316,47 +316,23 @@ function Register-CompleterRegistration
 
                 try
                 {
-                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
-                    $existingManagedRegistration = $registrationState.ManagedRegistration
-                    $existingRuntimeRegistration = $registrationState.RuntimeRegistration
+                    $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptText $targetScriptBlock.ToString() -ScriptPath $targetScriptPath -Trusted:$targetTrusted -Lazy:$isLazy -Force:$Force
+                    $existingManagedRegistration = $conflict.ManagedRegistration
+                    $existingRuntimeRegistration = $conflict.RuntimeRegistration
 
-                    if ($null -ne $existingManagedRegistration -and -not $Force)
+                    if ($null -ne $conflict.Problem)
                     {
-                        if ($registrationState.ManagedState -eq 'Stale')
-                        {
-                            throw "The module-managed completer registration for '$($target.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
-                        }
-
-                        if ($registrationState.ManagedState -eq 'Failed')
-                        {
-                            throw "The module-managed completer registration for '$($target.RuntimeKey)' failed to load '$($existingManagedRegistration.ScriptPath)': $($existingManagedRegistration.LoadError) Use -Force to retry the lazy load."
-                        }
-
-                        $isSameRegistration = if ($isLazy)
-                        {
-                            $existingManagedRegistration.ScriptPath -eq $targetScriptPath -and [bool] $existingManagedRegistration.Trusted -eq $targetTrusted
-                        }
-                        else
-                        {
-                            $existingManagedRegistration.ScriptText -eq $targetScriptBlock.ToString()
-                        }
-
-                        if ($isSameRegistration)
-                        {
-                            if ($PassThru)
-                            {
-                                $PSCmdlet.WriteObject($existingManagedRegistration)
-                            }
-
-                            continue
-                        }
-
-                        throw "A module-managed completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
+                        throw $conflict.Problem
                     }
 
-                    if ($null -eq $existingManagedRegistration -and $null -ne $existingRuntimeRegistration -and -not $Force)
+                    if ($conflict.IsExisting)
                     {
-                        throw "A runtime completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
+                        if ($PassThru)
+                        {
+                            $PSCmdlet.WriteObject($existingManagedRegistration)
+                        }
+
+                        continue
                     }
 
                     if (-not $PSCmdlet.ShouldProcess($target.RuntimeKey, 'Register completer registration'))

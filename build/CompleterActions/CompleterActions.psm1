@@ -657,14 +657,18 @@ executes a completer script.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a .ps1, Trusted entries must declare their Targets because the
-script is not parsed, and strict entries must name their targets with literal
+script is not parsed, strict entries must name their targets with literal
 Register-ArgumentCompleter arguments so the targets can be derived from the
-parsed script and compared against any Targets the entry declares. The strict
-import grammar runs when a script loads, so a set import costs one parse per
-script; run Test-CompleterScript over the repository to find grammar findings
-ahead of time. When one or more entries are invalid the command throws a
-single error that lists every problem and registers nothing. With -SkipInvalid
-each problem is written as a warning instead and the valid entries register.
+parsed script and compared against any Targets the entry declares, no target
+may be listed by two entries of the set, and without -Force no target may
+already carry a managed or runtime registration for a different completer. An
+entry that repeats a registration the session already has is reused. The
+strict import grammar runs when a script loads, so a set import costs one
+parse per script; run Test-CompleterScript over the repository to find grammar
+findings ahead of time. When one or more entries are invalid the command
+throws a single error that lists every problem and registers nothing. With
+-SkipInvalid each problem is written as a warning instead and the valid
+entries register.
 
 Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
@@ -758,12 +762,13 @@ function Import-CompleterSet
             foreach ($setPath in $resolvedPaths)
             {
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+                $claimedTargets = @{}
                 $entryIndex = 0
                 $entries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Force:$Force
                     }
                 )
 
@@ -1133,47 +1138,23 @@ function Register-CompleterRegistration
 
                 try
                 {
-                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
-                    $existingManagedRegistration = $registrationState.ManagedRegistration
-                    $existingRuntimeRegistration = $registrationState.RuntimeRegistration
+                    $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptText $targetScriptBlock.ToString() -ScriptPath $targetScriptPath -Trusted:$targetTrusted -Lazy:$isLazy -Force:$Force
+                    $existingManagedRegistration = $conflict.ManagedRegistration
+                    $existingRuntimeRegistration = $conflict.RuntimeRegistration
 
-                    if ($null -ne $existingManagedRegistration -and -not $Force)
+                    if ($null -ne $conflict.Problem)
                     {
-                        if ($registrationState.ManagedState -eq 'Stale')
-                        {
-                            throw "The module-managed completer registration for '$($target.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
-                        }
-
-                        if ($registrationState.ManagedState -eq 'Failed')
-                        {
-                            throw "The module-managed completer registration for '$($target.RuntimeKey)' failed to load '$($existingManagedRegistration.ScriptPath)': $($existingManagedRegistration.LoadError) Use -Force to retry the lazy load."
-                        }
-
-                        $isSameRegistration = if ($isLazy)
-                        {
-                            $existingManagedRegistration.ScriptPath -eq $targetScriptPath -and [bool] $existingManagedRegistration.Trusted -eq $targetTrusted
-                        }
-                        else
-                        {
-                            $existingManagedRegistration.ScriptText -eq $targetScriptBlock.ToString()
-                        }
-
-                        if ($isSameRegistration)
-                        {
-                            if ($PassThru)
-                            {
-                                $PSCmdlet.WriteObject($existingManagedRegistration)
-                            }
-
-                            continue
-                        }
-
-                        throw "A module-managed completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
+                        throw $conflict.Problem
                     }
 
-                    if ($null -eq $existingManagedRegistration -and $null -ne $existingRuntimeRegistration -and -not $Force)
+                    if ($conflict.IsExisting)
                     {
-                        throw "A runtime completer registration already exists for '$($target.RuntimeKey)'. Use -Force to replace it."
+                        if ($PassThru)
+                        {
+                            $PSCmdlet.WriteObject($existingManagedRegistration)
+                        }
+
+                        continue
                     }
 
                     if (-not $PSCmdlet.ShouldProcess($target.RuntimeKey, 'Register completer registration'))
@@ -4029,6 +4010,128 @@ function Resolve-CompleterInputObject
 }
 <#
 .SYNOPSIS
+Decides whether a completer target can be registered over the current managed and runtime state.
+
+.DESCRIPTION
+Reconciles the target through Resolve-CompleterRegistrationState and applies
+the module's replacement rules in one place. Without -Force an existing managed
+record blocks the registration when it is stale, when its lazy load failed, or
+when it describes a different completer, and an unmanaged runtime registration
+blocks it as well. A managed record that already describes the same completer,
+the same script block text for an eager registration or the same script and
+tier for a lazy one, is reported as existing so the caller can reuse it.
+Register-CompleterRegistration throws the reported problem and
+Resolve-CompleterSetEntry collects it, so a completer set is validated against
+the same rules its registrations are held to.
+
+.PARAMETER Target
+The resolved completer target. It must expose Key and RuntimeKey.
+
+.PARAMETER ScriptText
+The text of the script block being registered eagerly, compared against an
+existing managed record.
+
+.PARAMETER ScriptPath
+The script a lazy registration loads, compared against an existing managed
+record.
+
+.PARAMETER Trusted
+The tier a lazy registration loads under, compared against an existing managed
+record.
+
+.PARAMETER Lazy
+Indicates a lazy registration, which matches an existing record by ScriptPath
+and Trusted rather than by script text.
+
+.PARAMETER Force
+Indicates that existing registrations are replaced, so nothing is reported as
+a problem.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns an object with Key, ManagedRegistration, RuntimeRegistration,
+IsExisting (the managed record already describes this completer), and Problem
+(the message that blocks the registration, or null).
+#>
+function Resolve-CompleterRegistrationConflict
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Target,
+
+        [Parameter()]
+        [string] $ScriptText,
+
+        [Parameter()]
+        [string] $ScriptPath,
+
+        [Parameter()]
+        [switch] $Trusted,
+
+        [Parameter()]
+        [switch] $Lazy,
+
+        [Parameter()]
+        [switch] $Force
+    )
+
+    $registrationState = Resolve-CompleterRegistrationState -Key $Target.Key
+    $existingManagedRegistration = $registrationState.ManagedRegistration
+    $existingRuntimeRegistration = $registrationState.RuntimeRegistration
+    $isExisting = $false
+    $problem = $null
+
+    if (-not $Force)
+    {
+        if ($null -ne $existingManagedRegistration)
+        {
+            if ($registrationState.ManagedState -eq 'Stale')
+            {
+                $problem = "The module-managed completer registration for '$($Target.RuntimeKey)' is stale: the runtime registration was replaced or removed outside this module. Use -Force to replace the live registration and reconcile the managed record."
+            }
+            elseif ($registrationState.ManagedState -eq 'Failed')
+            {
+                $problem = "The module-managed completer registration for '$($Target.RuntimeKey)' failed to load '$($existingManagedRegistration.ScriptPath)': $($existingManagedRegistration.LoadError) Use -Force to retry the lazy load."
+            }
+            else
+            {
+                $isExisting = if ($Lazy)
+                {
+                    $existingManagedRegistration.ScriptPath -eq $ScriptPath -and [bool] $existingManagedRegistration.Trusted -eq [bool] $Trusted
+                }
+                else
+                {
+                    $existingManagedRegistration.ScriptText -eq $ScriptText
+                }
+
+                if (-not $isExisting)
+                {
+                    $problem = "A module-managed completer registration already exists for '$($Target.RuntimeKey)'. Use -Force to replace it."
+                }
+            }
+        }
+        elseif ($null -ne $existingRuntimeRegistration)
+        {
+            $problem = "A runtime completer registration already exists for '$($Target.RuntimeKey)'. Use -Force to replace it."
+        }
+    }
+
+    return [pscustomobject] [ordered] @{
+        Key                 = [string] $Target.Key
+        ManagedRegistration = $existingManagedRegistration
+        RuntimeRegistration = $existingRuntimeRegistration
+        IsExisting          = $isExisting
+        Problem             = $problem
+    }
+}
+<#
+.SYNOPSIS
 Reconciles a managed registration record with the live runtime value for a target.
 
 .DESCRIPTION
@@ -4244,7 +4347,12 @@ entries must declare Targets because the script is not parsed. Strict entries
 must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
 two lists must match; the strict import grammar itself runs when the script
-loads. The script is never executed.
+loads. Every target is then held to the rules Register-CompleterRegistration
+applies through Resolve-CompleterRegistrationConflict, so a target that already
+carries a different registration is a problem unless -Force is given, and a
+target that an earlier valid entry of the same set already claimed is always a
+problem. A valid entry claims its targets in ClaimedTargets for the entries
+after it. The script is never executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -4254,6 +4362,14 @@ The one-based position of the entry in the set file, used in messages.
 
 .PARAMETER SetDirectory
 The directory that relative entry paths resolve against.
+
+.PARAMETER ClaimedTargets
+The dictionary, shared by every entry of one set, that maps a claimed target
+key to the index of the valid entry that claimed it.
+
+.PARAMETER Force
+Indicates that the set is imported with -Force, so existing registrations for
+its targets are replaced rather than reported.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
@@ -4276,7 +4392,14 @@ function Resolve-CompleterSetEntry
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $SetDirectory
+        [string] $SetDirectory,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Collections.IDictionary] $ClaimedTargets,
+
+        [Parameter()]
+        [switch] $Force
     )
 
     $problems = [System.Collections.Generic.List[string]]::new()
@@ -4419,6 +4542,29 @@ function Resolve-CompleterSetEntry
                     }
                 }
             }
+        }
+    }
+
+    foreach ($target in $targets)
+    {
+        $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptPath $resolvedPath -Trusted:$trusted -Lazy -Force:$Force
+
+        if ($null -ne $conflict.Problem)
+        {
+            $problems.Add($conflict.Problem)
+        }
+
+        if ($ClaimedTargets.Contains([string] $target.Key))
+        {
+            $problems.Add("Target '$($target.RuntimeKey)' is also listed by entry $($ClaimedTargets[[string] $target.Key]).")
+        }
+    }
+
+    if ($problems.Count -eq 0)
+    {
+        foreach ($target in $targets)
+        {
+            $ClaimedTargets[[string] $target.Key] = $Index
         }
     }
 

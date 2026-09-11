@@ -127,6 +127,10 @@ VALIDATION BEFORE REGISTRATION
     - strict entries expose literal targets that can be derived without
       running the script
     - strict entries that declare `Targets` match the script
+    - no target is listed by two entries of the set
+    - without `-Force`, no target already carries a managed or runtime
+      registration for a different completer; an entry that repeats a
+      registration the session already has is reused
 
     When any entry fails, the command throws one error that lists every
     problem, numbered by entry, and registers nothing:

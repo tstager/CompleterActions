@@ -11,14 +11,18 @@ executes a completer script.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a .ps1, Trusted entries must declare their Targets because the
-script is not parsed, and strict entries must name their targets with literal
+script is not parsed, strict entries must name their targets with literal
 Register-ArgumentCompleter arguments so the targets can be derived from the
-parsed script and compared against any Targets the entry declares. The strict
-import grammar runs when a script loads, so a set import costs one parse per
-script; run Test-CompleterScript over the repository to find grammar findings
-ahead of time. When one or more entries are invalid the command throws a
-single error that lists every problem and registers nothing. With -SkipInvalid
-each problem is written as a warning instead and the valid entries register.
+parsed script and compared against any Targets the entry declares, no target
+may be listed by two entries of the set, and without -Force no target may
+already carry a managed or runtime registration for a different completer. An
+entry that repeats a registration the session already has is reused. The
+strict import grammar runs when a script loads, so a set import costs one
+parse per script; run Test-CompleterScript over the repository to find grammar
+findings ahead of time. When one or more entries are invalid the command
+throws a single error that lists every problem and registers nothing. With
+-SkipInvalid each problem is written as a warning instead and the valid
+entries register.
 
 Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
@@ -109,12 +113,13 @@ function Import-CompleterSet
             foreach ($setPath in $resolvedPaths)
             {
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+                $claimedTargets = @{}
                 $entryIndex = 0
                 $entries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Force:$Force
                     }
                 )
 
