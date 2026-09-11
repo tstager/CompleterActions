@@ -262,8 +262,8 @@ Describe 'Lazy completer registration' {
         }
 
         @($firstCompletion.CompletionMatches.CompletionText) | Should -Not -Contain 'never'
-        @($firstCompletion.CompletionMatches.CompletionText) | Should -Contain '.\lazy-fallback-marker.txt'
-        @($secondCompletion.CompletionMatches.CompletionText) | Should -Contain '.\lazy-fallback-marker.txt'
+        @($firstCompletion.CompletionMatches.CompletionText) | Should -Contain (Join-Path -Path '.' -ChildPath 'lazy-fallback-marker.txt')
+        @($secondCompletion.CompletionMatches.CompletionText) | Should -Contain (Join-Path -Path '.' -ChildPath 'lazy-fallback-marker.txt')
 
         Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name' | Should -BeNullOrEmpty
 

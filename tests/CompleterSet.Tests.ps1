@@ -195,11 +195,11 @@ Describe 'Completer sets' {
             $strictEntry = $data.Entries | Where-Object { -not $_.Trusted }
             $strictEntry.Targets[0].CommandName | Should -Be 'Test-ImportedFixtureTool'
             $strictEntry.Targets[0].ParameterName | Should -Be 'Name'
-            [System.IO.Path]::GetFullPath((Join-Path -Path $script:SetRoot -ChildPath $strictEntry.Path)) | Should -Be $script:ParameterFixturePath
+            [System.IO.Path]::GetFullPath($strictEntry.Path, $script:SetRoot) | Should -Be $script:ParameterFixturePath
 
             $trustedEntry = $data.Entries | Where-Object { $_.Trusted }
             $trustedEntry.Targets[0].CommandName | Should -Be 'Test-TrustedFixtureTool'
-            [System.IO.Path]::GetFullPath((Join-Path -Path $script:SetRoot -ChildPath $trustedEntry.Path)) | Should -Be $script:TrustedFixturePath
+            [System.IO.Path]::GetFullPath($trustedEntry.Path, $script:SetRoot) | Should -Be $script:TrustedFixturePath
         }
 
         It 'accepts managed registration records that expose ScriptPath and Trusted' {
@@ -293,7 +293,7 @@ Describe 'Completer sets' {
 
             foreach ($entry in $exported.Entries)
             {
-                $entriesByScript[[System.IO.Path]::GetFullPath((Join-Path -Path $script:SetRoot -ChildPath $entry.Path))] = $entry
+                $entriesByScript[[System.IO.Path]::GetFullPath($entry.Path, $script:SetRoot)] = $entry
             }
 
             @($entriesByScript.Keys | Sort-Object) | Should -Be @($script:NativeFixturePath, $script:TrustedFixturePath | Sort-Object)
@@ -336,8 +336,8 @@ Describe 'Completer sets' {
             }
 
             @($firstCompletion.CompletionMatches.CompletionText) | Should -Not -Contain 'never'
-            @($firstCompletion.CompletionMatches.CompletionText) | Should -Contain '.\set-fallback-marker.txt'
-            @($secondCompletion.CompletionMatches.CompletionText) | Should -Contain '.\set-fallback-marker.txt'
+            @($firstCompletion.CompletionMatches.CompletionText) | Should -Contain (Join-Path -Path '.' -ChildPath 'set-fallback-marker.txt')
+            @($secondCompletion.CompletionMatches.CompletionText) | Should -Contain (Join-Path -Path '.' -ChildPath 'set-fallback-marker.txt')
 
             $failed = Get-CompleterRegistration -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name'
             $failed.State | Should -Be 'Failed'
