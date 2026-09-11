@@ -81,9 +81,11 @@ BeforeAll {
     $script:NativeFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1'
     $script:TrustedFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'TrustedOnlyCompleter.ps1'
     $script:UnsafeFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'UnsafeTopLevelScript.ps1'
+    $script:ThrowingStrictFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath (Join-Path -Path 'LazyRegistration' -ChildPath 'ThrowingStrictCompleter.ps1')
     $script:SetCleanupTargets = @(
         @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+        @{ CommandName = 'Test-LazyStrictSetTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'importfixture'; CompleterType = 'Native' },
         @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
     )
@@ -100,6 +102,7 @@ Describe 'Completer sets' {
 
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-LazyStrictSetTool' -ErrorAction SilentlyContinue
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
 
@@ -112,6 +115,14 @@ Describe 'Completer sets' {
         }
 
         function global:Test-TrustedFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        function global:Test-LazyStrictSetTool
         {
             [CmdletBinding()]
             param(
@@ -132,6 +143,7 @@ Describe 'Completer sets' {
 
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
         Remove-Item -Path 'Function:\global:Test-TrustedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-LazyStrictSetTool' -ErrorAction SilentlyContinue
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
@@ -222,7 +234,7 @@ Describe 'Completer sets' {
     }
 
     Context 'Import-CompleterSet' {
-        It 'restores the same targets after an Export then Import round trip' {
+        It 'restores the same targets as Pending records after an Export then Import round trip and loads them on first tab' {
             $imported = @(Import-CompleterScript -Path $script:ParameterFixturePath) +
                 @(Import-CompleterScript -Path $script:NativeFixturePath) +
                 @(Import-CompleterScript -Path $script:TrustedFixturePath -Trusted)
@@ -244,6 +256,86 @@ Describe 'Completer sets' {
             $nativeInput = 'importfixture a'
             $nativeCompletion = TabExpansion2 -InputScript $nativeInput -CursorColumn $nativeInput.Length
             $nativeCompletion.CompletionMatches.CompletionText | Should -Contain 'alpha'
+
+            (Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name').State | Should -Be 'Active'
+            (Get-CompleterRegistration -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+            (Get-CompleterRegistration -CommandName 'importfixture.exe' -Native).State | Should -Be 'Active'
+            (Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').State | Should -Be 'Pending'
+        }
+
+        It 'round-trips a lazily imported set through Get-CompleterRegistration and Export-CompleterSet' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            $null = @(Import-CompleterSet -Path $script:SetPath)
+
+            $exportPath = Join-Path -Path $script:SetRoot -ChildPath 'exported.psd1'
+            Get-CompleterRegistration -ManagedOnly | Export-CompleterSet -Path $exportPath
+
+            $exported = Import-PowerShellDataFile -LiteralPath $exportPath
+            $entriesByScript = @{}
+
+            foreach ($entry in $exported.Entries)
+            {
+                $entriesByScript[[System.IO.Path]::GetFullPath((Join-Path -Path $script:SetRoot -ChildPath $entry.Path))] = $entry
+            }
+
+            @($entriesByScript.Keys | Sort-Object) | Should -Be @($script:NativeFixturePath, $script:TrustedFixturePath | Sort-Object)
+            $entriesByScript[$script:NativeFixturePath].Trusted | Should -BeFalse
+            @($entriesByScript[$script:NativeFixturePath].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            $entriesByScript[$script:TrustedFixturePath].Trusted | Should -BeTrue
+            $entriesByScript[$script:TrustedFixturePath].Targets[0].CommandName | Should -Be 'Test-TrustedFixtureTool'
+            $entriesByScript[$script:TrustedFixturePath].Targets[0].ParameterName | Should -Be 'Name'
+
+            Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false
+
+            $reimported = @(Import-CompleterSet -Path $exportPath)
+
+            @($reimported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe', 'test-trustedfixturetool:name')
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+        }
+
+        It 'marks a strict entry Failed and leaves default completion working when its script throws while loading' {
+            $fallbackMarker = Join-Path -Path $script:SetRoot -ChildPath 'set-fallback-marker.txt'
+            Set-Content -LiteralPath $fallbackMarker -Value 'marker' -Encoding utf8
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ThrowingStrictFixturePath' }"
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-lazystrictsettool:name'
+            $registered[0].State | Should -Be 'Pending'
+
+            $inputScript = 'Test-LazyStrictSetTool -Name '
+
+            Push-Location -LiteralPath $script:SetRoot
+            try
+            {
+                $firstCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+                $secondCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            @($firstCompletion.CompletionMatches.CompletionText) | Should -Not -Contain 'never'
+            @($firstCompletion.CompletionMatches.CompletionText) | Should -Contain '.\set-fallback-marker.txt'
+            @($secondCompletion.CompletionMatches.CompletionText) | Should -Contain '.\set-fallback-marker.txt'
+
+            $failed = Get-CompleterRegistration -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name'
+            $failed.State | Should -Be 'Failed'
+            $failed.IsRuntimeRegistered | Should -BeFalse
+            $failed.ScriptPath | Should -Be $script:ThrowingStrictFixturePath
+            $failed.LoadError | Should -Match 'CompleterActionsLazyFixtureMissing'
+            Get-CompleterRegistration -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*failed to load*Use -Force to retry*'
+
+            $retried = @(Import-CompleterSet -Path $script:SetPath -Force)
+            $retried[0].State | Should -Be 'Pending'
+            $retried[0].LoadError | Should -BeNullOrEmpty
         }
 
         It 'resolves relative paths against the set file directory, not the current location' {
@@ -396,7 +488,7 @@ Describe 'Completer sets' {
             Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
         }
 
-        It 'leaves PSReadLine key handlers unchanged' {
+        It 'leaves PSReadLine key handlers unchanged across import, first tab, and export' {
             Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
 
             if ($null -eq (Get-Module -Name 'PSReadLine'))
@@ -412,7 +504,9 @@ Describe 'Completer sets' {
             $before = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
 
             $null = @(Import-CompleterSet -Path $script:SetPath)
-            Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path (Join-Path -Path $script:SetRoot -ChildPath 'again.psd1')
+            $null = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
+            (Get-CompleterRegistration -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+            Get-CompleterRegistration -ManagedOnly | Export-CompleterSet -Path (Join-Path -Path $script:SetRoot -ChildPath 'again.psd1')
 
             $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
 
