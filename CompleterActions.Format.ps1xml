@@ -24,6 +24,12 @@
                     <TableColumnHeader>
                         <Label>State</Label>
                     </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>ScriptPath</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
+                        <Label>LoadError</Label>
+                    </TableColumnHeader>
                 </TableHeaders>
                 <TableRowEntries>
                     <TableRowEntry>
@@ -42,6 +48,12 @@
                             </TableColumnItem>
                             <TableColumnItem>
                                 <PropertyName>State</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>ScriptPath</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>LoadError</PropertyName>
                             </TableColumnItem>
                         </TableColumnItems>
                     </TableRowEntry>

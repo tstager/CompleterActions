@@ -297,7 +297,7 @@ Describe 'Completer registration public API' {
         $registration.ScriptBlock | Should -Not -BeNullOrEmpty
         $registration.ScriptText | Should -Match 'eta'
 
-        $defaultOutput | Should -Match '(?m)^\s*Command\s+Parameter\s+Type\s+Source\s+State\s*$'
+        $defaultOutput | Should -Match '(?m)^\s*Command\s+Parameter\s+Type\s+Source\s+State\s+ScriptPath\s+LoadError\s*$'
         $defaultOutput | Should -Match 'Test-ManagedTool'
         $defaultOutput | Should -Not -Match '(?m)^\s*ScriptBlock\s*:'
         $defaultOutput | Should -Not -Match '(?m)^\s*ScriptText\s*:'

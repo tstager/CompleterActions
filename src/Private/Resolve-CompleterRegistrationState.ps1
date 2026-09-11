@@ -6,10 +6,13 @@ Reconciles a managed registration record with the live runtime value for a targe
 Looks up both the module-managed record and the live runtime registration for a
 normalized key and reports whether the managed record still describes what
 PowerShell is actually using. A managed record is authoritative only while the
-runtime holds the same script block, or a script block with identical text.
-When the runtime value was replaced or removed outside this module, the managed
-record is reported as stale so public commands can surface the live value,
-refuse silent reuse, and apply the unmanaged-removal gate.
+runtime holds the same script block, or a script block with identical text; it
+is reported as 'Pending' when that script block is still a lazy stub and
+'Active' otherwise. A managed record whose lazy load failed is reported as
+'Failed' regardless of the runtime, because its runtime entry was removed on
+purpose. When the runtime value was replaced or removed outside this module,
+the managed record is reported as stale so public commands can surface the
+live value, refuse silent reuse, and apply the unmanaged-removal gate.
 
 .PARAMETER Key
 The normalized or runtime key for the completer target to reconcile.
@@ -17,8 +20,9 @@ The normalized or runtime key for the completer target to reconcile.
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns an object with ManagedRegistration, RuntimeRegistration, and
-ManagedState ('None', 'Active', or 'Stale') properties. The registration
-properties hold the exact stored objects so callers can restore them unchanged.
+ManagedState ('None', 'Active', 'Pending', 'Failed', or 'Stale') properties.
+The registration properties hold the exact stored objects so callers can
+restore them unchanged.
 
 .EXAMPLE
 PS> $state = Resolve-CompleterRegistrationState -Key 'get-item:path'
@@ -43,11 +47,15 @@ function Resolve-CompleterRegistrationState
     {
         'None'
     }
+    elseif ($managedRegistration.State -eq 'Failed')
+    {
+        'Failed'
+    }
     elseif ($null -ne $runtimeRegistration -and
         ([object]::ReferenceEquals($managedRegistration.ScriptBlock, $runtimeRegistration.ScriptBlock) -or
             $managedRegistration.ScriptText -eq $runtimeRegistration.ScriptText))
     {
-        'Active'
+        if ($managedRegistration.State -eq 'Pending') { 'Pending' } else { 'Active' }
     }
     else
     {

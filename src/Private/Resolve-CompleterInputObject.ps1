@@ -6,7 +6,9 @@ Resolves a pipeline input object into a completer target definition.
 Normalizes public pipeline input into the target metadata used by the module's
 registration, lookup, and removal commands. The helper accepts module
 registration records and custom objects that expose either key-based target
-properties or command/parameter metadata.
+properties or command/parameter metadata. A ScriptBlock, ImportModule,
+ScriptPath or SourcePath, and Trusted property are carried through when present
+so imported and managed records round-trip into Register-CompleterRegistration.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -47,6 +49,8 @@ function Resolve-CompleterInputObject
         $isNative = $false
         $scriptBlock = $null
         $importModule = $null
+        $scriptPath = $null
+        $trusted = $false
         $target = $null
 
         try
@@ -102,6 +106,22 @@ function Resolve-CompleterInputObject
             if ($null -ne $importModuleProperty -and $importModuleProperty.Value -is [System.Management.Automation.PSModuleInfo])
             {
                 $importModule = [System.Management.Automation.PSModuleInfo] $importModuleProperty.Value
+            }
+
+            foreach ($propertyName in 'ScriptPath', 'SourcePath')
+            {
+                $property = $InputObject.PSObject.Properties[$propertyName]
+                if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
+                {
+                    $scriptPath = [string] $property.Value
+                    break
+                }
+            }
+
+            $trustedProperty = $InputObject.PSObject.Properties['Trusted']
+            if ($null -ne $trustedProperty)
+            {
+                $trusted = [bool] $trustedProperty.Value
             }
 
             if ($RequireScriptBlock -and $null -eq $scriptBlock)
@@ -173,6 +193,8 @@ function Resolve-CompleterInputObject
                 Target = $target
                 ScriptBlock = $scriptBlock
                 ImportModule = $importModule
+                ScriptPath = $scriptPath
+                Trusted = $trusted
             }
         }
         catch
@@ -187,6 +209,8 @@ function Resolve-CompleterInputObject
             $parameterName = $null
             $scriptBlock = $null
             $importModule = $null
+            $scriptPath = $null
+            $trusted = $false
             $target = $null
         }
     }

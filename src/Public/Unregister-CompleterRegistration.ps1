@@ -11,9 +11,11 @@ removed. The same gate applies when a managed record is stale because the
 runtime registration was replaced outside this module: the live value is only
 removed with -AllowUnmanaged, and the stale managed record is dropped with it.
 When the runtime registration was already removed outside this module, only
-the stale managed record remains and it is removed without the gate. The
-command supports array inputs for keys and target fields, plus pipeline input
-from Get-CompleterRegistration output.
+the stale managed record remains and it is removed without the gate. A Pending
+lazy registration is removed like any managed registration, stub and record
+together. A Failed lazy registration has no runtime entry of its own, so only
+its managed record is removed. The command supports array inputs for keys and
+target fields, plus pipeline input from Get-CompleterRegistration output.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
@@ -139,20 +141,20 @@ function Unregister-CompleterRegistration
                     $managedRegistration = $registrationState.ManagedRegistration
                     $runtimeRegistration = $registrationState.RuntimeRegistration
 
-                    if ($registrationState.ManagedState -eq 'Active')
+                    if ($registrationState.ManagedState -in 'Active', 'Pending')
                     {
                         $registrationToRemove = $managedRegistration
                     }
-                    elseif ($registrationState.ManagedState -eq 'Stale' -and $null -ne $runtimeRegistration)
+                    elseif ($registrationState.ManagedState -in 'Stale', 'Failed' -and $null -ne $runtimeRegistration)
                     {
                         if (-not $AllowUnmanaged)
                         {
-                            throw "The module-managed completer registration for '$($runtimeRegistration.RuntimeKey)' is stale: the runtime registration was replaced outside this module. Re-run with -AllowUnmanaged to remove the live runtime registration and the stale managed record."
+                            throw "The module-managed completer registration for '$($runtimeRegistration.RuntimeKey)' is $($registrationState.ManagedState.ToLowerInvariant()): the live runtime registration was created outside this module. Re-run with -AllowUnmanaged to remove the live runtime registration and the managed record."
                         }
 
                         $registrationToRemove = $runtimeRegistration
                     }
-                    elseif ($registrationState.ManagedState -eq 'Stale')
+                    elseif ($registrationState.ManagedState -in 'Stale', 'Failed')
                     {
                         $registrationToRemove = $managedRegistration
                     }

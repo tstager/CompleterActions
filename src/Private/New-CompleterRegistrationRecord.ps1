@@ -25,10 +25,24 @@ from Import-CompleterScript.
 
 .PARAMETER State
 Describes how the record relates to the live runtime. 'Active' records describe
-the value PowerShell is currently using. 'Stale' marks a managed record whose
-stored script no longer matches the runtime because the target was replaced or
-removed outside this module. 'Conflicted' marks a discovered runtime value that
-shadows a stale managed record for the same target.
+the value PowerShell is currently using. 'Pending' marks a lazy registration
+whose runtime value is still the stub that loads the script on first use.
+'Failed' marks a lazy registration whose script failed to load; its runtime
+entry was removed and LoadError holds the reason. 'Stale' marks a managed
+record whose stored script no longer matches the runtime because the target
+was replaced or removed outside this module. 'Conflicted' marks a discovered
+runtime value that shadows a stale managed record for the same target.
+
+.PARAMETER ScriptPath
+The completer script the registration came from: the file a lazy registration
+loads on first use, or the source of an Import-CompleterScript record.
+
+.PARAMETER Trusted
+Indicates that the script is imported through the trusted tier, which
+dot-sources it without validating it against the strict import grammar.
+
+.PARAMETER LoadError
+The error message from the failed lazy load of a 'Failed' record.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
@@ -62,8 +76,17 @@ function New-CompleterRegistrationRecord
         [System.Management.Automation.PSModuleInfo] $ImportModule,
 
         [Parameter()]
-        [ValidateSet('Active', 'Stale', 'Conflicted')]
-        [string] $State = 'Active'
+        [ValidateSet('Active', 'Pending', 'Failed', 'Stale', 'Conflicted')]
+        [string] $State = 'Active',
+
+        [Parameter()]
+        [string] $ScriptPath,
+
+        [Parameter()]
+        [switch] $Trusted,
+
+        [Parameter()]
+        [string] $LoadError
     )
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
@@ -87,7 +110,10 @@ function New-CompleterRegistrationRecord
         Source              = $Source
         State               = $State
         IsManaged           = $Source -eq 'Managed'
-        IsRuntimeRegistered = $State -ne 'Stale'
+        IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
+        ScriptPath          = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
+        Trusted             = [bool] $Trusted
+        LoadError           = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
         ImportModule        = $ImportModule
         ScriptBlock         = $ScriptBlock
         ScriptText          = $ScriptBlock.ToString()
