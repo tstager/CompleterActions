@@ -309,16 +309,10 @@ function Register-CompleterRegistration
                 $targetScriptPath = $resolvedInput.ScriptPath
                 $targetTrusted = [bool] $resolvedInput.Trusted
                 $targetState = if ($isLazy) { 'Pending' } else { 'Active' }
-                $existingManagedRegistration = $null
-                $existingRuntimeRegistration = $null
-                $registration = $null
-                $rollbackError = $null
 
                 try
                 {
                     $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptText $targetScriptBlock.ToString() -ScriptPath $targetScriptPath -Trusted:$targetTrusted -Lazy:$isLazy -Force:$Force
-                    $existingManagedRegistration = $conflict.ManagedRegistration
-                    $existingRuntimeRegistration = $conflict.RuntimeRegistration
 
                     if ($null -ne $conflict.Problem)
                     {
@@ -329,7 +323,7 @@ function Register-CompleterRegistration
                     {
                         if ($PassThru)
                         {
-                            $PSCmdlet.WriteObject($existingManagedRegistration)
+                            $PSCmdlet.WriteObject($conflict.ManagedRegistration)
                         }
 
                         continue
@@ -341,41 +335,7 @@ function Register-CompleterRegistration
                     }
 
                     $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed' -ImportModule $targetImportModule -State $targetState -ScriptPath $targetScriptPath -Trusted:$targetTrusted
-
-                    try
-                    {
-                        $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
-                        $registration = Add-ManagedCompleterRegistration -Registration $registration
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            if ($null -ne $existingRuntimeRegistration)
-                            {
-                                $null = Add-RuntimeCompleterRegistration -Target $existingRuntimeRegistration -ScriptBlock $existingRuntimeRegistration.ScriptBlock
-                            }
-                            else
-                            {
-                                $null = Remove-RuntimeCompleterRegistration -Key $target.Key
-                            }
-
-                            if ($null -ne $existingManagedRegistration)
-                            {
-                                $null = Add-ManagedCompleterRegistration -Registration $existingManagedRegistration
-                            }
-                            else
-                            {
-                                $null = Remove-ManagedCompleterRegistration -Key $target.Key
-                            }
-                        }
-                        catch
-                        {
-                            $rollbackError = $_
-                        }
-
-                        throw
-                    }
+                    $registration = Add-CompleterRegistration -Registration $registration -Conflict $conflict
 
                     if ($PassThru)
                     {
@@ -384,20 +344,7 @@ function Register-CompleterRegistration
                 }
                 catch
                 {
-                    if ($null -ne $rollbackError)
-                    {
-                        throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message) Rollback of the previous runtime and managed state also failed, so the target may be inconsistent: $($rollbackError.Exception.Message)"
-                    }
-
                     throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
-                }
-                finally
-                {
-                    $existingManagedRegistration = $null
-                    $existingRuntimeRegistration = $null
-                    $registration = $null
-                    $rollbackError = $null
-                    $targetImportModule = $null
                 }
             }
         }

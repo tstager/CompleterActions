@@ -664,21 +664,21 @@ may be listed by two entries of the set, and without -Force no target may
 already carry a managed or runtime registration for a different completer. An
 entry that repeats a registration the session already has is reused. The
 strict import grammar does not run here; it runs when a script loads.
-Validating a strict entry parses its script once and
-Register-CompleterRegistration -Lazy parses it again to derive the same
-targets, so a set import parses each strict script twice and walks none of
-them; run Test-CompleterScript over the repository to find grammar findings
-ahead of time. When one or more entries are invalid the command throws a
-single error that lists every problem and registers nothing. With
--SkipInvalid each problem is written as a warning instead and the valid
+Validating a strict entry parses its script once and registration reuses the
+targets that validation derived, so a set import parses each strict script
+once and walks none of them; run Test-CompleterScript over the repository to
+find grammar findings ahead of time. When one or more entries are invalid the
+command throws a single error that lists every problem and registers nothing.
+With -SkipInvalid each problem is written as a warning instead and the valid
 entries register.
 
 Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-through Register-CompleterRegistration -Lazy under the entry's trust tier, so
-each target gets a stub and a managed record in state Pending. The first tab
+lazily under the entry's trust tier, exactly as Register-CompleterRegistration
+-Lazy registers a script, so each target gets a stub and a managed record in
+state Pending. The first tab
 press for a target loads the script and moves the record to Active; a script
 that fails to load moves to Failed with the message in LoadError, and the
 completion engine's default completion applies as if no completer were
@@ -1134,16 +1134,10 @@ function Register-CompleterRegistration
                 $targetScriptPath = $resolvedInput.ScriptPath
                 $targetTrusted = [bool] $resolvedInput.Trusted
                 $targetState = if ($isLazy) { 'Pending' } else { 'Active' }
-                $existingManagedRegistration = $null
-                $existingRuntimeRegistration = $null
-                $registration = $null
-                $rollbackError = $null
 
                 try
                 {
                     $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptText $targetScriptBlock.ToString() -ScriptPath $targetScriptPath -Trusted:$targetTrusted -Lazy:$isLazy -Force:$Force
-                    $existingManagedRegistration = $conflict.ManagedRegistration
-                    $existingRuntimeRegistration = $conflict.RuntimeRegistration
 
                     if ($null -ne $conflict.Problem)
                     {
@@ -1154,7 +1148,7 @@ function Register-CompleterRegistration
                     {
                         if ($PassThru)
                         {
-                            $PSCmdlet.WriteObject($existingManagedRegistration)
+                            $PSCmdlet.WriteObject($conflict.ManagedRegistration)
                         }
 
                         continue
@@ -1166,41 +1160,7 @@ function Register-CompleterRegistration
                     }
 
                     $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $targetScriptBlock -Source 'Managed' -ImportModule $targetImportModule -State $targetState -ScriptPath $targetScriptPath -Trusted:$targetTrusted
-
-                    try
-                    {
-                        $null = Add-RuntimeCompleterRegistration -Target $target -ScriptBlock $targetScriptBlock
-                        $registration = Add-ManagedCompleterRegistration -Registration $registration
-                    }
-                    catch
-                    {
-                        try
-                        {
-                            if ($null -ne $existingRuntimeRegistration)
-                            {
-                                $null = Add-RuntimeCompleterRegistration -Target $existingRuntimeRegistration -ScriptBlock $existingRuntimeRegistration.ScriptBlock
-                            }
-                            else
-                            {
-                                $null = Remove-RuntimeCompleterRegistration -Key $target.Key
-                            }
-
-                            if ($null -ne $existingManagedRegistration)
-                            {
-                                $null = Add-ManagedCompleterRegistration -Registration $existingManagedRegistration
-                            }
-                            else
-                            {
-                                $null = Remove-ManagedCompleterRegistration -Key $target.Key
-                            }
-                        }
-                        catch
-                        {
-                            $rollbackError = $_
-                        }
-
-                        throw
-                    }
+                    $registration = Add-CompleterRegistration -Registration $registration -Conflict $conflict
 
                     if ($PassThru)
                     {
@@ -1209,20 +1169,7 @@ function Register-CompleterRegistration
                 }
                 catch
                 {
-                    if ($null -ne $rollbackError)
-                    {
-                        throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message) Rollback of the previous runtime and managed state also failed, so the target may be inconsistent: $($rollbackError.Exception.Message)"
-                    }
-
                     throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
-                }
-                finally
-                {
-                    $existingManagedRegistration = $null
-                    $existingRuntimeRegistration = $null
-                    $registration = $null
-                    $rollbackError = $null
-                    $targetImportModule = $null
                 }
             }
         }
@@ -1761,6 +1708,91 @@ function Unregister-CompleterRegistration
         {
             $resolvedTargets = @()
         }
+    }
+}
+<#
+.SYNOPSIS
+Writes one completer registration to the runtime and the managed state transactionally.
+
+.DESCRIPTION
+Performs the write half of a registration after the caller has resolved the
+target's conflicts and confirmed the operation. The record's script block is
+added to the live completer dictionary, the record is stored in the managed
+registration table, and the stored record is returned. If either write fails,
+the previous runtime and managed state carried on the conflict result are
+restored: the earlier runtime value is put back or the new one removed, and the
+earlier managed record is put back or the new one removed. A failure during
+that rollback is reported together with the original error so the caller can
+say the target may be inconsistent. Register-CompleterRegistration and
+Register-CompleterSetEntry both write through this helper, so an eager, a lazy,
+and a completer set registration share one transaction.
+
+.PARAMETER Registration
+The CompleterActions.CompleterRegistration record to store. Its ScriptBlock is
+the value written to the runtime dictionary.
+
+.PARAMETER Conflict
+The result Resolve-CompleterRegistrationConflict returned for the same target.
+Its RuntimeRegistration and ManagedRegistration are the state restored when a
+write fails.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns the record as stored in the managed registration table.
+#>
+function Add-CompleterRegistration
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Registration,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Conflict
+    )
+
+    try
+    {
+        $null = Add-RuntimeCompleterRegistration -Target $Registration -ScriptBlock $Registration.ScriptBlock
+
+        return Add-ManagedCompleterRegistration -Registration $Registration
+    }
+    catch
+    {
+        $registrationError = $_
+
+        try
+        {
+            if ($null -ne $Conflict.RuntimeRegistration)
+            {
+                $null = Add-RuntimeCompleterRegistration -Target $Conflict.RuntimeRegistration -ScriptBlock $Conflict.RuntimeRegistration.ScriptBlock
+            }
+            else
+            {
+                $null = Remove-RuntimeCompleterRegistration -Key $Registration.Key
+            }
+
+            if ($null -ne $Conflict.ManagedRegistration)
+            {
+                $null = Add-ManagedCompleterRegistration -Registration $Conflict.ManagedRegistration
+            }
+            else
+            {
+                $null = Remove-ManagedCompleterRegistration -Key $Registration.Key
+            }
+        }
+        catch
+        {
+            throw "$($registrationError.Exception.Message) Rollback of the previous runtime and managed state also failed, so the target may be inconsistent: $($_.Exception.Message)"
+        }
+
+        throw $registrationError
     }
 }
 <#
@@ -3466,12 +3498,15 @@ Registers the targets of one validated completer set entry lazily.
 .DESCRIPTION
 Import-CompleterSet calls this helper once per valid entry, after every entry
 in the set has been validated, and it is the single place where a set entry
-becomes managed registrations. The entry's script is registered through
-Register-CompleterRegistration -Lazy under the entry's trust tier, so the
-script is not executed until the first tab press for one of its targets. A
-trusted entry names its targets explicitly because a trusted script is not
-parsed; a strict entry lets the lazy path derive them from the script, which
-validation has already matched against the entry.
+becomes managed registrations. The entry's Targets are the CompleterTarget
+records Resolve-CompleterSetEntry already resolved, derived from the parsed
+script for a strict entry and declared for a trusted one, so nothing is parsed
+again here. Each target is registered exactly as Register-CompleterRegistration
+-Lazy registers it: its conflicts are resolved against the current managed and
+runtime state, an existing record that already describes the same script and
+tier is reused, and otherwise a lazy stub is written to the runtime with a
+Pending record in the managed table through the same transaction. The script
+is not executed until the first tab press for one of its targets.
 
 .PARAMETER Entry
 A valid CompleterActions.CompleterSetEntry record from Resolve-CompleterSetEntry.
@@ -3500,31 +3535,31 @@ function Register-CompleterSetEntry
         [switch] $Force
     )
 
-    $registerParameters = @{
-        LiteralPath = $Entry.Path
-        Lazy        = $true
-        Trusted     = $Entry.Trusted
-        Force       = $Force
-        PassThru    = $true
-        Confirm     = $false
-    }
-
-    if (-not $Entry.Trusted)
+    foreach ($target in $Entry.Targets)
     {
-        Register-CompleterRegistration @registerParameters
-        return
-    }
+        try
+        {
+            $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptPath $Entry.Path -Trusted:$Entry.Trusted -Lazy -Force:$Force
 
-    $nativeTargets = @($Entry.Targets | Where-Object -Property IsNative -EQ -Value $true)
+            if ($null -ne $conflict.Problem)
+            {
+                throw $conflict.Problem
+            }
 
-    if ($nativeTargets.Count -gt 0)
-    {
-        Register-CompleterRegistration @registerParameters -CommandName @($nativeTargets.CommandName) -Native
-    }
+            if ($conflict.IsExisting)
+            {
+                $conflict.ManagedRegistration
+                continue
+            }
 
-    foreach ($parameterGroup in @($Entry.Targets | Where-Object -Property IsNative -EQ -Value $false | Group-Object -Property ParameterName))
-    {
-        Register-CompleterRegistration @registerParameters -CommandName @($parameterGroup.Group.CommandName) -ParameterName $parameterGroup.Name
+            $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $Entry.Path -Trusted:$Entry.Trusted
+
+            Add-CompleterRegistration -Registration $registration -Conflict $conflict
+        }
+        catch
+        {
+            throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
+        }
     }
 }
 <#
@@ -4359,7 +4394,9 @@ applies through Resolve-CompleterRegistrationConflict, so a target that already
 carries a different registration is a problem unless -Force is given, and a
 target that an earlier valid entry of the same set already claimed is always a
 problem. A valid entry claims its targets in ClaimedTargets for the entries
-after it. The script is never executed.
+after it, and its Targets are the resolved records Register-CompleterSetEntry
+registers, so a strict script is parsed once per import. The script is never
+executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.

@@ -5,12 +5,15 @@ Registers the targets of one validated completer set entry lazily.
 .DESCRIPTION
 Import-CompleterSet calls this helper once per valid entry, after every entry
 in the set has been validated, and it is the single place where a set entry
-becomes managed registrations. The entry's script is registered through
-Register-CompleterRegistration -Lazy under the entry's trust tier, so the
-script is not executed until the first tab press for one of its targets. A
-trusted entry names its targets explicitly because a trusted script is not
-parsed; a strict entry lets the lazy path derive them from the script, which
-validation has already matched against the entry.
+becomes managed registrations. The entry's Targets are the CompleterTarget
+records Resolve-CompleterSetEntry already resolved, derived from the parsed
+script for a strict entry and declared for a trusted one, so nothing is parsed
+again here. Each target is registered exactly as Register-CompleterRegistration
+-Lazy registers it: its conflicts are resolved against the current managed and
+runtime state, an existing record that already describes the same script and
+tier is reused, and otherwise a lazy stub is written to the runtime with a
+Pending record in the managed table through the same transaction. The script
+is not executed until the first tab press for one of its targets.
 
 .PARAMETER Entry
 A valid CompleterActions.CompleterSetEntry record from Resolve-CompleterSetEntry.
@@ -36,30 +39,30 @@ function Register-CompleterSetEntry
         [switch] $Force
     )
 
-    $registerParameters = @{
-        LiteralPath = $Entry.Path
-        Lazy        = $true
-        Trusted     = $Entry.Trusted
-        Force       = $Force
-        PassThru    = $true
-        Confirm     = $false
-    }
-
-    if (-not $Entry.Trusted)
+    foreach ($target in $Entry.Targets)
     {
-        Register-CompleterRegistration @registerParameters
-        return
-    }
+        try
+        {
+            $conflict = Resolve-CompleterRegistrationConflict -Target $target -ScriptPath $Entry.Path -Trusted:$Entry.Trusted -Lazy -Force:$Force
 
-    $nativeTargets = @($Entry.Targets | Where-Object -Property IsNative -EQ -Value $true)
+            if ($null -ne $conflict.Problem)
+            {
+                throw $conflict.Problem
+            }
 
-    if ($nativeTargets.Count -gt 0)
-    {
-        Register-CompleterRegistration @registerParameters -CommandName @($nativeTargets.CommandName) -Native
-    }
+            if ($conflict.IsExisting)
+            {
+                $conflict.ManagedRegistration
+                continue
+            }
 
-    foreach ($parameterGroup in @($Entry.Targets | Where-Object -Property IsNative -EQ -Value $false | Group-Object -Property ParameterName))
-    {
-        Register-CompleterRegistration @registerParameters -CommandName @($parameterGroup.Group.CommandName) -ParameterName $parameterGroup.Name
+            $registration = New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $Entry.Path -Trusted:$Entry.Trusted
+
+            Add-CompleterRegistration -Registration $registration -Conflict $conflict
+        }
+        catch
+        {
+            throw "Failed to register the completer '$($target.RuntimeKey)'. $($_.Exception.Message)"
+        }
     }
 }

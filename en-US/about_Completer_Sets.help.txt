@@ -100,10 +100,10 @@ THE TRUST TIER PER ENTRY
       of the offending argument.
     - The script must pass the strict import grammar when it loads, exactly as
       `Import-CompleterScript` requires. `Import-CompleterSet` does not run the
-      grammar itself: it parses each strict script twice, once to validate the
-      entry and once inside `Register-CompleterRegistration -Lazy`, and walks
-      none of them; a script that fails the grammar moves to `Failed` on its
-      first tab press with the findings in `LoadError`. Run
+      grammar itself: it parses each strict script once, to validate the
+      entry, registers the targets that parse derived, and walks none of
+      them; a script that fails the grammar moves to `Failed` on its first
+      tab press with the findings in `LoadError`. Run
       `Test-CompleterScript` over the repository to catch that ahead of time.
     - `Targets` may be omitted. When present, it must match what the script
       declares, or the entry is reported as a mismatch. Declaring targets is

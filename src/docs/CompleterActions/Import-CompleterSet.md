@@ -48,21 +48,21 @@ may be listed by two entries of the set, and without `-Force` no target may
 already carry a managed or runtime registration for a different completer. An
 entry that repeats a registration the session already has is reused. The
 strict import grammar does not run here; it runs when a script loads.
-Validating a strict entry parses its script once and
-`Register-CompleterRegistration -Lazy` parses it again to derive the same
-targets, so a set import parses each strict script twice and walks none of
-them; run `Test-CompleterScript` over the repository to find grammar findings
-ahead of time. When one or more entries are invalid the command throws a
-single error that lists every problem and registers nothing. With
-`-SkipInvalid` each problem is written as a warning instead and the valid
+Validating a strict entry parses its script once and registration reuses the
+targets that validation derived, so a set import parses each strict script
+once and walks none of them; run `Test-CompleterScript` over the repository to
+find grammar findings ahead of time. When one or more entries are invalid the
+command throws a single error that lists every problem and registers nothing.
+With `-SkipInvalid` each problem is written as a warning instead and the valid
 entries register.
 
 Relative `Path` values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-through `Register-CompleterRegistration -Lazy` under the entry's trust tier, so
-each target gets a stub and a managed record in state `Pending`. The first tab
+lazily under the entry's trust tier, exactly as `Register-CompleterRegistration
+-Lazy` registers a script, so each target gets a stub and a managed record in
+state `Pending`. The first tab
 press for a target loads the script and moves the record to `Active`; a script
 that fails to load moves to `Failed` with the message in `LoadError`, and the
 completion engine's default completion applies as if no completer were

@@ -583,6 +583,26 @@ Describe 'Completer sets' {
             $completion.CompletionMatches.CompletionText | Should -Be @('imported-alpha')
         }
 
+        It 'parses a strict entry once, during validation, and registers the targets that parse derived' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            Mock -CommandName 'Get-CompleterScriptTarget' -ModuleName 'CompleterActions' -MockWith {
+                & (Get-Module -Name 'CompleterActions') { Resolve-CompleterTarget -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' }
+            }
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            Should -Invoke -CommandName 'Get-CompleterScriptTarget' -ModuleName 'CompleterActions' -Times 1 -Exactly
+            @($registered.Key) | Should -Be @('test-importedfixturetool:name', 'test-trustedfixturetool:name')
+            @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
+            $registered[0].ScriptPath | Should -Be $script:ParameterFixturePath
+            $registered[0].Trusted | Should -BeFalse
+            $registered[1].ScriptPath | Should -Be $script:TrustedFixturePath
+            $registered[1].Trusted | Should -BeTrue
+        }
+
         It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
             Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 1; Entries = @( (New-Item -ItemType File -Path '$probePath') ) }" -Encoding utf8

@@ -18,7 +18,9 @@ applies through Resolve-CompleterRegistrationConflict, so a target that already
 carries a different registration is a problem unless -Force is given, and a
 target that an earlier valid entry of the same set already claimed is always a
 problem. A valid entry claims its targets in ClaimedTargets for the entries
-after it. The script is never executed.
+after it, and its Targets are the resolved records Register-CompleterSetEntry
+registers, so a strict script is parsed once per import. The script is never
+executed.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
