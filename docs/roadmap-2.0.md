@@ -3,14 +3,14 @@
 Drafted: 2026-09-08
 Baseline: 1.2.0, merge commit `4318821`
 Live page: https://claude.ai/code/artifact/55cc8aca-46d5-4180-a763-c36c5505dd3a
-Status (2026-09-11): milestones 1 and 2 shipped; milestone 3 is implemented and in review.
+Status (2026-09-11): milestones 1, 2, and 3 shipped; next up is milestone 4.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 1 Safety net | 1.3.0 | Shipped 2026-09-09, tag v1.3.0, PR #2 |
 | 2 Author tooling and trust tiers | 1.4.0 | Shipped 2026-09-10, tag v1.4.0, PR #3 |
-| 3 Lazy loading and completer sets | 2.0.0-preview1 | In review: implemented on feat/milestone-3-lazy-loading; lazy 1316 ms vs eager 7063 ms, ratio 0.19 |
-| 4 Breaking surface and release | 2.0.0 | Planned |
+| 3 Lazy loading and completer sets | 2.0.0-preview1 | Shipped 2026-09-11, tag v2.0.0-preview1, PR #4; lazy 1316 ms vs eager 7063 ms, ratio 0.19 |
+| 4 Breaking surface and release | 2.0.0 | Next |
 
 Four milestones from the 1.2.0 baseline to a major release. The first two ship on the 1.x line so users get value early; the breaking surface lands last and all at once.
 
@@ -68,7 +68,7 @@ Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
 
 ## Milestone 3: Lazy loading and completer sets (2.0.0-preview1, additive)
 
-**In review 2026-09-11.** All six items are implemented on feat/milestone-3-lazy-loading. Startup benchmark over the 169-script set, five samples each: eager median 7063 ms, lazy 1316 ms, ratio 0.19 against the 0.25 target. Grammar timing changed per decision 5 below.
+**Shipped 2026-09-11 as v2.0.0-preview1** (PR #4, merge bc66619, release commit 3f6f89c). All six items landed. Startup benchmark over the 169-script set, five samples each: eager median 7063 ms, lazy 1316 ms, ratio 0.19 against the 0.25 target. Grammar timing changed per decision 5 below.
 
 This is the reason 2.0 exists. A profile that imports 169 scripts pays parse, validate, dynamic module, and dot-source for each one on every session start. Register a stub instead and load the real completer on the first tab press.
 
