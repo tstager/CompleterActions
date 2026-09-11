@@ -63,8 +63,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   median, minimum, maximum, and ratio per leg. On the 169-script, 355-target
   repository with five samples per leg: eager median 6557.8 ms, lazy median
   2382.4 ms, ratio 0.36. The roadmap target of 0.25 is not met yet; the
-  remaining lazy cost is one parse per script, done once for validation and
-  once inside `Register-CompleterRegistration`, plus the per-target
+  remaining lazy cost is two parses per strict script, one for validation and
+  one inside `Register-CompleterRegistration`, plus the per-target
   registration bookkeeping.
 
 ### Changed
@@ -73,8 +73,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `LoadError` columns after `State`.
 - `Import-CompleterScript` runs its strict conformance gate through
   `Assert-CompleterScriptConformance`. A lazily registered strict script goes
-  through that gate when it loads rather than at registration, so registering
-  a script or a set lazily costs one parse per script; a script that fails the
+  through that gate when it loads rather than at registration, so
+  `Register-CompleterRegistration -Lazy` costs one parse per script and
+  `Import-CompleterSet` two, one to validate the entry and one inside the
+  registration, with no conformance walk in either; a script that fails the
   grammar moves to `Failed` on its first tab press with the findings in
   `LoadError`.
 - `Find-RuntimeCompleterRegistration -Key` compares the stored dictionary

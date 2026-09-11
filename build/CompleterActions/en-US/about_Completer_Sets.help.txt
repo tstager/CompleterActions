@@ -100,9 +100,10 @@ THE TRUST TIER PER ENTRY
       of the offending argument.
     - The script must pass the strict import grammar when it loads, exactly as
       `Import-CompleterScript` requires. `Import-CompleterSet` does not run the
-      grammar itself, so importing a set costs one parse per script instead of
-      a full conformance walk; a script that fails the grammar moves to
-      `Failed` on its first tab press with the findings in `LoadError`. Run
+      grammar itself: it parses each strict script twice, once to validate the
+      entry and once inside `Register-CompleterRegistration -Lazy`, and walks
+      none of them; a script that fails the grammar moves to `Failed` on its
+      first tab press with the findings in `LoadError`. Run
       `Test-CompleterScript` over the repository to catch that ahead of time.
     - `Targets` may be omitted. When present, it must match what the script
       declares, or the entry is reported as a mismatch. Declaring targets is
@@ -223,8 +224,11 @@ WORKFLOW
 
     Scripts that need the trusted tier are marked once in the set file, with
     their targets, and stay marked. Run `Test-CompleterScript` over the
-    repository when a script changes; a strict entry that stops conforming is
-    reported the next time the set is imported.
+    repository when a script changes: importing the set does not run the
+    grammar, so a strict script that stops conforming still imports as
+    `Pending` and is only reported, as `Failed` with the findings in
+    `LoadError`, on its first tab press. A strict script whose targets change
+    is caught at import when its entry declares `Targets`.
 
 EXAMPLE 1
 

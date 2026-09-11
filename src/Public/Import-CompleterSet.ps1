@@ -17,10 +17,13 @@ parsed script and compared against any Targets the entry declares, no target
 may be listed by two entries of the set, and without -Force no target may
 already carry a managed or runtime registration for a different completer. An
 entry that repeats a registration the session already has is reused. The
-strict import grammar runs when a script loads, so a set import costs one
-parse per script; run Test-CompleterScript over the repository to find grammar
-findings ahead of time. When one or more entries are invalid the command
-throws a single error that lists every problem and registers nothing. With
+strict import grammar does not run here; it runs when a script loads.
+Validating a strict entry parses its script once and
+Register-CompleterRegistration -Lazy parses it again to derive the same
+targets, so a set import parses each strict script twice and walks none of
+them; run Test-CompleterScript over the repository to find grammar findings
+ahead of time. When one or more entries are invalid the command throws a
+single error that lists every problem and registers nothing. With
 -SkipInvalid each problem is written as a warning instead and the valid
 entries register.
 

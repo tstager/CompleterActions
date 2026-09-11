@@ -5,9 +5,11 @@ Throws when a completer script does not conform to the strict import grammar.
 .DESCRIPTION
 Runs Get-CompleterScriptFinding over a completer script and throws one error
 that lists every Error finding with its line, column, construct, message, and
-hint. Import-CompleterScript and the strict lazy registration path share this
-gate so the two report identical findings and neither executes a script the
-grammar rejects. A conforming script returns without output.
+hint. Import-CompleterScript runs this gate under the strict tier, both for an
+eager import and when a lazy stub loads its script on the first tab press, so
+no strict path executes a script the grammar rejects and every path reports
+the same findings as Test-CompleterScript. A conforming script returns without
+output.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.

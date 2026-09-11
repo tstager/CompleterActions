@@ -663,10 +663,13 @@ parsed script and compared against any Targets the entry declares, no target
 may be listed by two entries of the set, and without -Force no target may
 already carry a managed or runtime registration for a different completer. An
 entry that repeats a registration the session already has is reused. The
-strict import grammar runs when a script loads, so a set import costs one
-parse per script; run Test-CompleterScript over the repository to find grammar
-findings ahead of time. When one or more entries are invalid the command
-throws a single error that lists every problem and registers nothing. With
+strict import grammar does not run here; it runs when a script loads.
+Validating a strict entry parses its script once and
+Register-CompleterRegistration -Lazy parses it again to derive the same
+targets, so a set import parses each strict script twice and walks none of
+them; run Test-CompleterScript over the repository to find grammar findings
+ahead of time. When one or more entries are invalid the command throws a
+single error that lists every problem and registers nothing. With
 -SkipInvalid each problem is written as a warning instead and the valid
 entries register.
 
@@ -1981,9 +1984,11 @@ Throws when a completer script does not conform to the strict import grammar.
 .DESCRIPTION
 Runs Get-CompleterScriptFinding over a completer script and throws one error
 that lists every Error finding with its line, column, construct, message, and
-hint. Import-CompleterScript and the strict lazy registration path share this
-gate so the two report identical findings and neither executes a script the
-grammar rejects. A conforming script returns without output.
+hint. Import-CompleterScript runs this gate under the strict tier, both for an
+eager import and when a lazy stub loads its script on the first tab press, so
+no strict path executes a script the grammar rejects and every path reports
+the same findings as Test-CompleterScript. A conforming script returns without
+output.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
