@@ -61,11 +61,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   pipeline against `Import-CompleterSet` of a set exported from the same
   scripts, each sample in a fresh `pwsh -NoProfile` process, and reports the
   median, minimum, maximum, and ratio per leg. On the 169-script, 355-target
-  repository with five samples per leg: eager median 6557.8 ms, lazy median
-  2382.4 ms, ratio 0.36. The roadmap target of 0.25 is not met yet; the
+  repository with five samples per leg: eager median 7026.4 ms, lazy median
+  2566.2 ms, ratio 0.37. The roadmap target of 0.25 is not met yet; the
   remaining lazy cost is two parses per strict script, one for validation and
   one inside `Register-CompleterRegistration`, plus the per-target
-  registration bookkeeping.
+  registration bookkeeping and conflict check.
 
 ### Changed
 
