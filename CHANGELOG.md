@@ -7,6 +7,43 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- Lazy registration. `Register-CompleterRegistration -Path` or `-LiteralPath`
+  with `-Lazy` registers a completer script without running it: the runtime
+  entry for each target is a stub that imports the script through
+  `Import-CompleterScript` on the first tab press, replaces itself with the
+  real completer, and delegates that first call to it. Under the default strict
+  tier the targets are read from the script's literal
+  `Register-ArgumentCompleter` arguments, so the file is parsed but never
+  executed at registration time; `-Trusted` selects the trusted tier for the
+  load and requires the targets to be named with `-CommandName` and `-Native`
+  or `-ParameterName`. A script that registers several targets is executed once
+  and every Pending sibling is swapped from the same import.
+- `Pending` and `Failed` registration states. A lazy record reports `Pending`
+  until its script loads and `Active` afterwards. If the load fails, the tab
+  press returns no completions, the runtime entry is removed so the completion
+  engine's default completion applies exactly as with no completer registered,
+  and the record moves to `Failed` with the message in `LoadError`; nothing is
+  written to the host. `Register-CompleterRegistration -Force` retries the
+  load. `Get-CompleterRegistration` returns both states by default and with
+  `-ManagedOnly`; `Unregister-CompleterRegistration` removes a Pending stub with
+  its record and a Failed record on its own.
+- `ScriptPath`, `Trusted`, and `LoadError` properties on
+  `CompleterActions.CompleterRegistration` records. Registrations made from
+  `Import-CompleterScript` records carry the script's path and tier too, so an
+  eager session exposes the same file information as a lazy one.
+- Lazy loading never hooks PSReadLine key handlers, replaces `TabExpansion2`,
+  or changes PSReadLine options; the tests snapshot
+  `Get-PSReadLineKeyHandler` around registration, first tab, and removal.
+
+### Changed
+
+- The default table view for registration records adds `ScriptPath` and
+  `LoadError` columns after `State`.
+- `Import-CompleterScript` and the strict lazy path share one conformance gate,
+  `Assert-CompleterScriptConformance`, so the two report identical findings.
+
 ## [1.4.0] - 2026-09-10
 
 ### Added

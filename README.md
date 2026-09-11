@@ -36,7 +36,7 @@
 | --- | --- |
 | `Get-CompleterRegistration` | Lists completer registrations known to the module or discovered from the current runtime |
 | `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-CompleterRegistration -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
-| `Register-CompleterRegistration` | Registers a managed completer and records it in module state |
+| `Register-CompleterRegistration` | Registers a managed completer and records it in module state; `-Path -Lazy` registers a completer script that loads on its first tab press |
 | `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches |
 | `Test-CompleterScript` | Checks completer scripts against the strict import grammar and returns findings with line, column, construct, and a fix hint |
 | `Unregister-CompleterRegistration` | Removes completer registrations from runtime and, when applicable, from module state |
@@ -145,6 +145,19 @@ Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
     Register-CompleterRegistration
 ```
 
+### Register a script lazily
+
+```powershell
+# Strict tier: the targets are read from the script, which runs on the first tab press
+Register-CompleterRegistration -Path .\7z_completer.ps1 -Lazy
+
+# Trusted tier: name the targets, because a trusted script is not parsed
+Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+
+# Pending until the first tab press; Failed, with LoadError, if the script did not load
+Get-CompleterRegistration -ManagedOnly | Where-Object State -in Pending, Failed
+```
+
 ### Verify a registration
 
 ```powershell
@@ -210,8 +223,10 @@ Registration records use the `CompleterActions.CompleterRegistration` type and h
 - `Type`
 - `Source`
 - `State`
+- `ScriptPath`
+- `LoadError`
 
-`State` is `Active` for records that describe the live runtime value. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-CompleterRegistration` returns the live value as `Conflicted`, `Register-CompleterRegistration` requires `-Force` to reconcile, and `Unregister-CompleterRegistration` requires `-AllowUnmanaged` before it removes the live value together with the stale record.
+`State` is `Active` for records that describe the live runtime value. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-CompleterRegistration` returns the live value as `Conflicted`, `Register-CompleterRegistration` requires `-Force` to reconcile, and `Unregister-CompleterRegistration` requires `-AllowUnmanaged` before it removes the live value together with the stale record. A lazy registration is `Pending` until its script loads on the first tab press. If that load fails, the press returns no completions and default completion applies exactly as with no completer registered; the record becomes `Failed` with the message in `LoadError`, its runtime entry is removed, and `Register-CompleterRegistration -Force` retries. `ScriptPath` names the completer script behind a lazy or imported registration. Lazy loading runs inside the ordinary completer call and never touches PSReadLine key handlers, `TabExpansion2`, or PSReadLine options.
 
 `Test-CompleterScript` returns `CompleterActions.CompleterScriptFinding` records shown as a list grouped by script path, with `Line`, `Column`, `Severity`, `Construct`, `Message`, and `Hint`. A conforming script returns nothing. `Test-CompleterRegistration` returns `CompleterActions.CompletionMatch` records shown as a table grouped by target key, with `CompletionText`, `ListItemText`, `ResultType`, and `ToolTip`.
 
