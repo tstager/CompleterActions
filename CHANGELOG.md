@@ -61,11 +61,11 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   pipeline against `Import-CompleterSet` of a set exported from the same
   scripts, each sample in a fresh `pwsh -NoProfile` process, and reports the
   median, minimum, maximum, and ratio per leg. On the 169-script, 355-target
-  repository with five samples per leg: eager median 7026.4 ms, lazy median
-  2566.2 ms, ratio 0.37. The roadmap target of 0.25 is not met yet; the
-  remaining lazy cost is two parses per strict script, one for validation and
-  one inside `Register-CompleterRegistration`, plus the per-target
-  registration bookkeeping and conflict check.
+  repository with five samples per leg: eager median 7427.7 ms, lazy median
+  1806.1 ms, ratio 0.24. That sits at the roadmap target of 0.25 with a thin
+  margin, since the eager leg moves by a few hundred milliseconds between
+  runs; the remaining lazy cost is one parse per strict script plus the
+  per-target conflict check and registration bookkeeping.
 
 ### Changed
 
@@ -74,11 +74,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 - `Import-CompleterScript` runs its strict conformance gate through
   `Assert-CompleterScriptConformance`. A lazily registered strict script goes
   through that gate when it loads rather than at registration, so
-  `Register-CompleterRegistration -Lazy` costs one parse per script and
-  `Import-CompleterSet` two, one to validate the entry and one inside the
-  registration, with no conformance walk in either; a script that fails the
-  grammar moves to `Failed` on its first tab press with the findings in
+  `Register-CompleterRegistration -Lazy` and `Import-CompleterSet` each cost
+  one parse per strict script with no conformance walk; a script that fails
+  the grammar moves to `Failed` on its first tab press with the findings in
   `LoadError`.
+- `Import-CompleterSet` registers each entry from the targets its validation
+  derived instead of calling `Register-CompleterRegistration -Lazy`, which
+  parsed every strict script a second time. Both paths write registrations
+  through one shared transactional helper, so conflict rules, record shapes,
+  and rollback are unchanged. On the 169-script repository the lazy startup
+  median dropped from 2566.2 ms to 1806.1 ms.
 - `Find-RuntimeCompleterRegistration -Key` compares the stored dictionary
   keys directly instead of normalizing every key on each lookup, which removed
   a quadratic cost from registering many targets: the eager 169-script import
