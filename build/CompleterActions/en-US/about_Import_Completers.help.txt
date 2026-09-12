@@ -194,7 +194,10 @@ OUTPUT OBJECTS
 
     - `ScriptBlock`
       The imported script block. It preserves the temporary module context that
-      contains helper functions and script-scope state from the source script.
+      contains helper functions and script-scope state from the source script,
+      and it keeps the source script as its file, so `$PSScriptRoot` and
+      `$PSCommandPath` inside the completer name the script's directory and
+      path exactly as they do when the script is dot-sourced.
 
     - `ScriptText`
       The script block text, which is useful for inspection and debugging.
@@ -220,6 +223,11 @@ THE STRICT GRAMMAR
     - Call the built-in `Register-ArgumentCompleter` command directly, at
       script scope. Do not wrap it in a function, do not call it from inside
       a function or script block, and do not put it inside `try`/`catch`.
+    - Do not define a function named `Get-Variable`,
+      `Register-ArgumentCompleter`, or `Set-StrictMode`, with or without a
+      scope qualifier such as `script:`, `local:`, or `global:`. A definition
+      by any of those names shadows the built-in the grammar allows, and its
+      body would run at import time.
     - Use only `-CommandName`, `-ParameterName`, the bare `-Native` switch, and
       `-ScriptBlock`, always by name. Positional arguments and splatting are
       not supported.
@@ -662,9 +670,10 @@ COMMON FINDINGS
       lazy initializer (shapes 1 and 2).
     - `TryStatementAst`, `ForEachStatementAst`, `SwitchStatementAst`, or any
       other control flow at script scope: move it into a function (shape 2).
-    - `FunctionDefinitionAst` named `Register-ArgumentCompleter` or
-      `Get-Variable`: rename the wrapper and call the built-in directly
-      (shape 3).
+    - `FunctionDefinitionAst` named `Register-ArgumentCompleter`,
+      `Get-Variable`, or `Set-StrictMode`, with or without a scope qualifier
+      such as `script:` or `global:`: rename the wrapper and call the
+      built-in directly (shape 3).
     - `VariableExpressionAst` as a `-ScriptBlock`, `-CommandName`, or
       `-ParameterName` value, or as a splatted argument: make the argument a
       literal (shape 3).

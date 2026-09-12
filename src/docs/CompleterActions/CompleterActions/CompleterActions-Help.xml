@@ -22,7 +22,17 @@ the command exports every managed registration that records a `ScriptPath`.
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file
 alongside its scripts; paths on another drive stay absolute. The `Trusted` flag of each entry is taken from the records, and
-records for the same script must agree on it.</maml:para>
+records for the same script must agree on it.
+
+A strict entry must list every target its script registers, because
+`Import-CompleterSet` compares a strict entry's `Targets` with the targets
+derived from the parsed script and rejects a mismatch. The command derives
+those targets the same way before writing and refuses, naming the missing
+targets and leaving the output untouched, when the records for a strict script
+cover only some of them, as they do after
+`Register-CompleterRegistration -Lazy -CommandName` selected a subset. Trusted
+entries are written with the targets the records carry, so a subset of a
+trusted script's targets exports and imports as given.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -220,7 +230,15 @@ runtime entry and carries the error in LoadError. Both are returned by default
 and by -ManagedOnly.
 The command accepts arrays for key, command, and parameter
 lookup scenarios and supports property-name pipeline binding for key-based and
-target-based lookups.</maml:para>
+target-based lookups.
+
+Discovery covers the two target kinds this module manages: command-parameter
+completers and native command completers. A completer registered with
+`Register-ArgumentCompleter -ParameterName` alone, without `-CommandName`,
+applies to every command with that parameter and is stored under the bare
+parameter name; such registrations are not returned and are reported with
+`-Verbose` as they are skipped, so they never prevent the supported
+registrations from being listed.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -628,7 +646,9 @@ selected with `-Trusted`, skips the grammar and dot-sources the script as-is
 inside the same capture module, so use it only for scripts you wrote or
 reviewed. Imported script blocks preserve the temporary module context that
 contains any helper functions and script-scope state defined by the source
-script under either tier.
+script under either tier, and they keep the script as their source file, so
+`$PSScriptRoot` and `$PSCommandPath` inside a completer name the script's
+directory and path exactly as they do when the script is dot-sourced.
 
 ## COMPATIBLE COMPLETER SCRIPT SPECIFICATION
 

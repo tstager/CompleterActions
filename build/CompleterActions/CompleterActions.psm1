@@ -17,6 +17,16 @@ set file alongside its scripts; paths on another drive stay absolute. The
 Trusted flag of each entry is taken from the records, and records for the same
 script must agree on it.
 
+A strict entry must list every target its script registers, because
+Import-CompleterSet compares a strict entry's Targets with the targets derived
+from the parsed script and rejects a mismatch. The command derives those
+targets the same way before writing and refuses, naming the missing targets
+and leaving the output untouched, when the records for a strict script cover
+only some of them, as they do after Register-CompleterRegistration -Lazy
+-CommandName selected a subset. Trusted entries are written with the targets
+the records carry, so a subset of a trusted script's targets exports and
+imports as given.
+
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
 
@@ -152,6 +162,41 @@ function Export-CompleterSet
                 throw 'No registrations with a script path were found to export.'
             }
 
+            # Import-CompleterSet holds a strict entry's Targets to the script's full
+            # derived target list, so a strict group that covers only some of those
+            # targets would write a set that cannot be imported. Check it here,
+            # before anything is written, with the same derivation the import uses.
+            foreach ($entry in $entriesByPath.Values)
+            {
+                if ($entry.Trusted)
+                {
+                    continue
+                }
+
+                $derivedKeys = @(Get-CompleterScriptTarget -LiteralPath $entry.Path | ForEach-Object { [string] $_.Key })
+                $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
+                $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
+
+                if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
+                {
+                    continue
+                }
+
+                $problem = "The strict entry for '$($entry.Path)' cannot be imported as a set entry because its targets do not match the script."
+
+                if ($missingTargets.Count -gt 0)
+                {
+                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$_'" }) -join ', ')."
+                }
+
+                if ($unknownTargets.Count -gt 0)
+                {
+                    $problem += " Not registered by the script: $(@($unknownTargets | ForEach-Object { "'$($entry.Targets[$_].RuntimeKey)'" }) -join ', ')."
+                }
+
+                throw "$problem Export the registrations for every target the script registers, or register the script with -Trusted, whose entries take their targets as given. Nothing was written."
+            }
+
             $lines = [System.Collections.Generic.List[string]]::new()
             $lines.Add('@{')
             $lines.Add('    Version = 1')
@@ -226,6 +271,14 @@ that load failed; a Failed record has no runtime entry and carries the error
 in LoadError. Both are returned by default and by -ManagedOnly. The command
 accepts arrays for key, command, and parameter lookup scenarios and supports
 property-name pipeline binding for key-based and target-based lookups.
+
+Discovery covers the two target kinds this module manages: command-parameter
+completers and native command completers. A completer registered with
+Register-ArgumentCompleter -ParameterName alone, without -CommandName, applies
+to every command with that parameter and is stored under the bare parameter
+name; such registrations are not returned and are reported with -Verbose as
+they are skipped, so they never prevent the supported registrations from being
+listed.
 
 .PARAMETER Key
 Gets the registrations that match one or more registration keys. A key without
@@ -514,7 +567,9 @@ The trusted tier, selected with -Trusted, skips the grammar and dot-sources the
 script as-is inside the same capture module, so use it only for scripts you
 wrote or reviewed. Imported ScriptBlock objects keep the temporary module
 context that contains helper functions and script-scope state defined by the
-source script under either tier.
+source script under either tier, and they keep the script as their source
+file, so $PSScriptRoot and $PSCommandPath inside a completer name the script's
+directory and path exactly as they do when the script is dot-sourced.
 
 Compatible strict-tier completer scripts must be self-contained and must keep script scope
 limited to Set-StrictMode, function definitions, importer-safe if statements,
@@ -2197,6 +2252,12 @@ Because the underlying data comes from PowerShell runtime internals, the result
 represents the current session only and depends on internal dictionary shapes
 remaining stable.
 
+A completer registered with Register-ArgumentCompleter -ParameterName alone,
+without -CommandName, sits in the custom dictionary under the bare parameter
+name. The module does not manage that target kind, so enumeration skips such
+entries with a verbose message and key lookups never match them; they cannot
+abort discovery of the supported targets.
+
 .PARAMETER Key
 The normalized registration key used by the module when matching a discovered
 runtime registration.
@@ -2283,6 +2344,12 @@ function Find-RuntimeCompleterRegistration
         {
             foreach ($entry in $runtime.CustomArgumentCompleters.GetEnumerator())
             {
+                if (Test-CompleterParameterOnlyKey -Key ([string] $entry.Key))
+                {
+                    Write-Verbose -Message "Skipping the parameter-only completer registration '$($entry.Key)': it was registered with Register-ArgumentCompleter -ParameterName without -CommandName, and CompleterActions manages command-parameter and native targets only."
+                    continue
+                }
+
                 $target = Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key)
                 $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered'))
             }
@@ -2312,6 +2379,11 @@ function Find-RuntimeCompleterRegistration
             {
                 foreach ($entryKey in $runtime.CustomArgumentCompleters.Keys)
                 {
+                    if ((Test-CompleterParameterOnlyKey -Key ([string] $entryKey)))
+                    {
+                        continue
+                    }
+
                     if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
                         return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
@@ -2522,7 +2594,10 @@ its own when the caller passes none, and Import-CompleterSet takes one
 snapshot per set so validating and registering hundreds of targets costs one
 runtime read. The snapshot holds references to the live table and
 dictionaries: it describes the session at the moment it was taken and is meant
-to be consumed before the same batch writes.
+to be consumed before the same batch writes. Parameter-only entries of the
+custom dictionary, registered with Register-ArgumentCompleter -ParameterName
+alone, are left out of the index because the module does not manage them and
+a native-shaped key must never resolve against one.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
@@ -2559,6 +2634,11 @@ function Get-CompleterRegistrationSnapshot
             {
                 foreach ($entryKey in $view.Dictionary.Keys)
                 {
+                    if (-not $view.IsNative -and (Test-CompleterParameterOnlyKey -Key ([string] $entryKey)))
+                    {
+                        continue
+                    }
+
                     $keys[[string] $entryKey] = [string] $entryKey
                 }
             }
@@ -2944,9 +3024,12 @@ Executes a completer script in a controlled capture module.
 
 .DESCRIPTION
 Creates a temporary dynamic module that shadows Register-ArgumentCompleter so the
-target script can run without mutating the live runtime completer tables. The
-captured registration definitions preserve the imported script block behavior and
-module scope so helper functions and script state remain available later.
+target script can run without mutating the live runtime completer tables. Each
+captured script block is the script's own block rebound to the capture module,
+so helper functions and script state remain available later and the block
+keeps its source file: $PSScriptRoot and $PSCommandPath inside the completer
+name the script's directory and path, as they do when the script is
+dot-sourced.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -3004,7 +3087,10 @@ function Import-CompleterScriptDefinition
 
                 process
                 {
-                    $capturedScriptBlock = $ExecutionContext.SessionState.InvokeCommand.NewScriptBlock($ScriptBlock.ToString())
+                    # Rebinding the original block to this module keeps its source file, so
+                    # $PSScriptRoot and $PSCommandPath inside the completer still name the
+                    # script; rebuilding it from text would drop that association.
+                    $capturedScriptBlock = $ExecutionContext.SessionState.Module.NewBoundScriptBlock($ScriptBlock)
 
                     $script:CapturedCompleterDefinitions.Add(
                         [pscustomobject] [ordered] @{
@@ -3122,8 +3208,11 @@ block for its own target, replaces the runtime dictionary entry with it, and
 moves the managed record to Active. Every other Pending record that points at
 the same script and tier, and whose runtime entry is still its own stub, is
 swapped from the same import so a script that registers several targets is
-executed once. The call that triggered the load is then delegated to the real
-script block and its results are returned.
+executed once. When the script registers the same target more than once, the
+last definition wins for that target, as it does when the script is
+dot-sourced and Register-ArgumentCompleter overwrites the earlier entry. The
+call that triggered the load is then delegated to the real script block and
+its results are returned.
 
 A load in flight owns its record. The helper tracks the keys it is loading on
 the current call stack, so a nested completion for the same target, such as a
@@ -3199,16 +3288,26 @@ function Invoke-CompleterLazyStub
 
             try
             {
-                $importedRegistrations = @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted)
-                $ownRegistration = $importedRegistrations | Where-Object -Property Key -EQ -Value $registration.Key | Select-Object -First 1
+                # Register-ArgumentCompleter lets the last registration for a target
+                # win, so a script that registers the same target twice is reduced
+                # to its last definition per key before the initiating target is
+                # selected and the siblings are swapped from the same collection.
+                $importedRegistrationsByKey = [ordered] @{}
 
-                if ($null -eq $ownRegistration)
+                foreach ($importedRegistration in @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted))
                 {
-                    $importedKeys = ($importedRegistrations | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                    $importedRegistrationsByKey[[string] $importedRegistration.Key] = $importedRegistration
+                }
+
+                if (-not $importedRegistrationsByKey.Contains($registration.Key))
+                {
+                    $importedKeys = @($importedRegistrationsByKey.Values | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                     throw "The script '$($registration.ScriptPath)' did not register a completer for '$($registration.RuntimeKey)'. It registered: $importedKeys."
                 }
 
-                foreach ($importedRegistration in $importedRegistrations)
+                $ownRegistration = $importedRegistrationsByKey[$registration.Key]
+
+                foreach ($importedRegistration in $importedRegistrationsByKey.Values)
                 {
                     $pendingRegistration = Find-ManagedCompleterRegistration -Key $importedRegistration.Key
 
@@ -5079,6 +5178,55 @@ function Test-CompleterNativeKeyShape
 }
 <#
 .SYNOPSIS
+Determines whether a custom completer dictionary key is a parameter-only registration.
+
+.DESCRIPTION
+Register-ArgumentCompleter accepts -ParameterName without -CommandName and then
+stores the completer in the custom completer dictionary under the parameter
+name alone, so that dictionary holds two key shapes: 'Command:Parameter' for a
+command-parameter completer and a bare parameter name for a completer that
+applies to every command with that parameter. This module manages
+command-parameter and native targets only, so discovery and the registration
+snapshot use this rule to leave the parameter-only entries alone instead of
+parsing them as 'Command:Parameter' keys and failing. The rule is the engine's
+own key format, not an inference: a 'Command:Parameter' key always contains a
+colon and a parameter name never does.
+
+.PARAMETER Key
+The key as stored in the custom completer dictionary.
+
+.OUTPUTS
+System.Boolean
+Returns $true when the key names a parameter-only registration.
+
+.EXAMPLE
+Test-CompleterParameterOnlyKey -Key 'Get-Item:Path'
+
+Returns $false because the key is a command-parameter key.
+
+.EXAMPLE
+Test-CompleterParameterOnlyKey -Key 'ComputerName'
+
+Returns $true because the key came from Register-ArgumentCompleter
+-ParameterName ComputerName without a command name.
+#>
+function Test-CompleterParameterOnlyKey
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key
+    )
+
+    return $Key.IndexOf(':') -lt 0
+}
+<#
+.SYNOPSIS
 Tests whether a runtime completer dictionary contains a key.
 #>
 function Test-CompleterRuntimeDictionaryKey
@@ -5189,6 +5337,17 @@ function Test-CompleterScriptAst
         }
 
         return 'Keep script-scope values literal (strings, numbers, arrays, and hashtables) and compute everything else lazily inside a function.'
+    }
+
+    function Get-UnqualifiedFunctionName
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $Name
+        )
+
+        return $Name.Substring($Name.LastIndexOfAny([char[]] @(':', '\')) + 1)
     }
 
     function Test-IsSupportedRegisterArgumentAst
@@ -5783,19 +5942,27 @@ function Test-CompleterScriptAst
         Test-ImportSafeStatementAst -StatementAst $statement
     }
 
+    # A function definition keeps its scope qualifier in FunctionDefinitionAst.Name,
+    # so 'function script:Get-Variable' shadows Get-Variable in the capture scope
+    # while its Name is not 'Get-Variable'. Definitions are therefore compared by
+    # their unqualified name: the text after the last scope or module qualifier.
+    # Command calls are deliberately not normalized the same way, because a
+    # qualified call such as 'script:Get-Variable' or 'Foo\Get-Variable' is not the
+    # allowlisted built-in and the exact-match allowlist above already rejects it.
     $functionOverrides = @($Ast.FindAll(
             {
                 param($node)
 
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                $node.Name -in $allowedImportCommands
+                (Get-UnqualifiedFunctionName -Name $node.Name) -in $allowedImportCommands
             },
             $true
         ))
 
     foreach ($functionOverride in $functionOverrides)
     {
-        Add-Finding -Extent $functionOverride.Extent -Construct 'FunctionDefinitionAst' -Message "The script defines its own $($functionOverride.Name) function." -Hint "Rename the function; Import-CompleterScript only supports scripts that call the built-in $($functionOverride.Name) directly."
+        $unqualifiedName = Get-UnqualifiedFunctionName -Name $functionOverride.Name
+        Add-Finding -Extent $functionOverride.Extent -Construct 'FunctionDefinitionAst' -Message "The script defines its own $($functionOverride.Name) function." -Hint "Rename the function; Import-CompleterScript only supports scripts that call the built-in $unqualifiedName directly, and a scope-qualified definition such as script:$unqualifiedName or global:$unqualifiedName shadows it in the same way."
     }
 
     $dotSourcedCommands = @($Ast.FindAll(

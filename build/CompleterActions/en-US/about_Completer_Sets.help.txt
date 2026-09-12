@@ -82,7 +82,13 @@ THE SET FILE SCHEMA
 
     `Export-CompleterSet` always writes `Targets`, and writes `Path` relative
     to the set file whenever the script shares a root with it, using forward
-    slashes so the file is portable.
+    slashes so the file is portable. For a strict entry it writes every
+    target the script registers and refuses, naming the missing targets and
+    writing nothing, when the records it was given cover only some of them,
+    as they do after `Register-CompleterRegistration -Lazy -CommandName`
+    selected a subset; such an entry would fail the target check on import.
+    A trusted entry is written with the targets the records carry, so a
+    subset of a trusted script's targets exports and imports as given.
 
 THE TRUST TIER PER ENTRY
 
@@ -180,7 +186,9 @@ LAZY LOADING, PENDING, AND FAILED
     block. Later presses hit the real completer directly. A session that
     never uses a completer never pays for loading it. A script that registers
     several targets is loaded once: every other Pending target of the same
-    script is swapped in from that same import.
+    script is swapped in from that same import. When a script registers the
+    same target more than once, the last registration wins, exactly as it
+    does when the script is dot-sourced.
 
     If the script fails to load on that first press, the press returns no
     completions, no error reaches the host, and the prompt is never
