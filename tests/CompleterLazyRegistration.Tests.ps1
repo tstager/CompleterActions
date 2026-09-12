@@ -107,6 +107,9 @@ Register-ArgumentCompleter -CommandName 'Test-LazyStrictTool' -ParameterName 'Na
     $script:LazyCleanupTargets = @(
         @{ CommandName = 'importfixture'; CompleterType = 'Native' },
         @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+        @{ CommandName = 'lazyduplicate'; CompleterType = 'Native' },
+        @{ CommandName = 'lazyoverlap'; CompleterType = 'Native' },
+        @{ CommandName = 'lazyoverlap.exe'; CompleterType = 'Native' },
         @{ CommandName = 'Test-LazyStrictTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-LazyTrustedTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
@@ -218,6 +221,72 @@ Describe 'Lazy completer registration' {
 
         $verified = @(Test-CompleterRegistration -CommandName 'importfixture.exe' -Native -InputText 'importfixture.exe a')
         @($verified.CompletionText) | Should -Be @('alpha')
+    }
+
+    It 'loads the last definition when a script registers the same target twice, on the first press and after it' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyDuplicateCompleter.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+Register-ArgumentCompleter -CommandName 'lazyduplicate' -Native -ScriptBlock {
+    [System.Management.Automation.CompletionResult]::new('first-definition', 'first-definition', 'ParameterValue', 'first-definition')
+}
+
+Register-ArgumentCompleter -CommandName 'lazyduplicate' -Native -ScriptBlock {
+    [System.Management.Automation.CompletionResult]::new('last-definition', 'last-definition', 'ParameterValue', 'last-definition')
+}
+'@
+
+        $inputScript = 'lazyduplicate '
+
+        . $scriptPath
+        $direct = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($direct.CompletionMatches.CompletionText) | Should -Be @('last-definition') -Because 'dot-sourcing lets the last Register-ArgumentCompleter call win'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'lazyduplicate' -CompleterType 'Native'
+
+        $records = @(Register-CompleterRegistration -LiteralPath $scriptPath -Lazy -PassThru)
+        $records.Count | Should -Be 1
+        $records[0].State | Should -Be 'Pending'
+
+        $firstCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($firstCompletion.CompletionMatches.CompletionText) | Should -Be @('last-definition')
+
+        $loaded = Get-CompleterRegistration -CommandName 'lazyduplicate' -Native
+        $loaded.State | Should -Be 'Active'
+        $loaded.ScriptText | Should -Match 'last-definition'
+        (Get-TestRuntimeScriptBlock -Key 'lazyduplicate').ToString() | Should -Match 'last-definition'
+
+        $secondCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($secondCompletion.CompletionMatches.CompletionText) | Should -Be @('last-definition')
+    }
+
+    It 'applies last-wins per target when command-name arrays overlap and swaps the sibling from the same import' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyOverlapCompleter.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+Register-ArgumentCompleter -CommandName 'lazyoverlap', 'lazyoverlap.exe' -Native -ScriptBlock {
+    [System.Management.Automation.CompletionResult]::new('shared-definition', 'shared-definition', 'ParameterValue', 'shared-definition')
+}
+
+Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
+    [System.Management.Automation.CompletionResult]::new('exe-definition', 'exe-definition', 'ParameterValue', 'exe-definition')
+}
+'@
+
+        $records = @(Register-CompleterRegistration -LiteralPath $scriptPath -Lazy -PassThru)
+        @($records.Key | Sort-Object) | Should -Be @('lazyoverlap', 'lazyoverlap.exe')
+
+        $exeInput = 'lazyoverlap.exe '
+        $firstExeCompletion = TabExpansion2 -InputScript $exeInput -CursorColumn $exeInput.Length
+        @($firstExeCompletion.CompletionMatches.CompletionText) | Should -Be @('exe-definition')
+
+        (Get-CompleterRegistration -CommandName 'lazyoverlap.exe' -Native).State | Should -Be 'Active'
+        (Get-CompleterRegistration -CommandName 'lazyoverlap' -Native).State | Should -Be 'Active' -Because 'the sibling is swapped from the same import'
+        (Get-TestRuntimeScriptBlock -Key 'lazyoverlap').ToString() | Should -Match 'shared-definition'
+
+        $plainInput = 'lazyoverlap '
+        $plainCompletion = TabExpansion2 -InputScript $plainInput -CursorColumn $plainInput.Length
+        @($plainCompletion.CompletionMatches.CompletionText) | Should -Be @('shared-definition')
+
+        $secondExeCompletion = TabExpansion2 -InputScript $exeInput -CursorColumn $exeInput.Length
+        @($secondExeCompletion.CompletionMatches.CompletionText) | Should -Be @('exe-definition')
     }
 
     It 'requires explicit targets for -Trusted' {

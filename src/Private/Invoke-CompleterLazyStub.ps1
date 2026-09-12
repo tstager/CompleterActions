@@ -10,8 +10,11 @@ block for its own target, replaces the runtime dictionary entry with it, and
 moves the managed record to Active. Every other Pending record that points at
 the same script and tier, and whose runtime entry is still its own stub, is
 swapped from the same import so a script that registers several targets is
-executed once. The call that triggered the load is then delegated to the real
-script block and its results are returned.
+executed once. When the script registers the same target more than once, the
+last definition wins for that target, as it does when the script is
+dot-sourced and Register-ArgumentCompleter overwrites the earlier entry. The
+call that triggered the load is then delegated to the real script block and
+its results are returned.
 
 A load in flight owns its record. The helper tracks the keys it is loading on
 the current call stack, so a nested completion for the same target, such as a
@@ -84,16 +87,26 @@ function Invoke-CompleterLazyStub
 
             try
             {
-                $importedRegistrations = @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted)
-                $ownRegistration = $importedRegistrations | Where-Object -Property Key -EQ -Value $registration.Key | Select-Object -First 1
+                # Register-ArgumentCompleter lets the last registration for a target
+                # win, so a script that registers the same target twice is reduced
+                # to its last definition per key before the initiating target is
+                # selected and the siblings are swapped from the same collection.
+                $importedRegistrationsByKey = [ordered] @{}
 
-                if ($null -eq $ownRegistration)
+                foreach ($importedRegistration in @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted))
                 {
-                    $importedKeys = ($importedRegistrations | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                    $importedRegistrationsByKey[[string] $importedRegistration.Key] = $importedRegistration
+                }
+
+                if (-not $importedRegistrationsByKey.Contains($registration.Key))
+                {
+                    $importedKeys = @($importedRegistrationsByKey.Values | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                     throw "The script '$($registration.ScriptPath)' did not register a completer for '$($registration.RuntimeKey)'. It registered: $importedKeys."
                 }
 
-                foreach ($importedRegistration in $importedRegistrations)
+                $ownRegistration = $importedRegistrationsByKey[$registration.Key]
+
+                foreach ($importedRegistration in $importedRegistrationsByKey.Values)
                 {
                     $pendingRegistration = Find-ManagedCompleterRegistration -Key $importedRegistration.Key
 
