@@ -370,4 +370,5 @@ The module discovers live completer registrations by reflecting into PowerShell 
 
 - Managed registrations are tracked in module state for the current session.
 - Runtime-discovered registrations can be queried even if they were not created by this module.
+- Discovery covers the two target kinds the module manages, command-parameter and native completers. A completer registered with `Register-ArgumentCompleter -ParameterName` alone, without `-CommandName`, is stored under the bare parameter name; it is skipped with a verbose message rather than failing the query, and it is never resolved as a native target of the same name.
 - Removal of unmanaged runtime registrations is intentionally gated behind `-AllowUnmanaged`.
