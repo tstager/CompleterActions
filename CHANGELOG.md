@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Fixed
+
+- Completer set files are portable across platforms. `Export-CompleterSet`
+  writes relative paths with forward slashes, and `Import-CompleterSet`
+  accepts either separator, so a set exported on Windows imports on Linux
+  and macOS instead of failing every entry with a missing file.
+
 ## [2.0.0-preview1] - 2026-09-11
 
 ### Added

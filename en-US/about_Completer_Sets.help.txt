@@ -66,7 +66,8 @@ THE SET FILE SCHEMA
       relative path and also a drive-relative one such as `C:scripts\x.ps1`,
       resolves against the directory that contains the set file, not the
       current location, so a repository can carry its set file next to its
-      scripts.
+      scripts. Either separator is accepted, so a set written on Windows
+      imports on Linux and macOS.
 
     - `Trusted`
       Optional, default `$false`. Selects the import tier for the entry. See
@@ -80,7 +81,8 @@ THE SET FILE SCHEMA
       entries; see the next section for why.
 
     `Export-CompleterSet` always writes `Targets`, and writes `Path` relative
-    to the set file whenever the script shares a root with it.
+    to the set file whenever the script shares a root with it, using forward
+    slashes so the file is portable.
 
 THE TRUST TIER PER ENTRY
 

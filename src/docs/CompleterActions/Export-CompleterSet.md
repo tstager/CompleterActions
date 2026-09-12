@@ -35,9 +35,9 @@ repository becomes one `Import-CompleterSet` call.
 Records arrive through `-InputObject`, typically from
 `Get-CompleterRegistration` or `Import-CompleterScript`. Without `-InputObject`
 the command exports every managed registration that records a `ScriptPath`.
-Script paths are written relative to the set file when both share a root, so a
-repository can carry its set file alongside its scripts; paths on another drive
-stay absolute. The `Trusted` flag of each entry is taken from the records, and
+Script paths are written relative to the set file when both share a root, with
+forward slashes so the file is portable, so a repository can carry its set file
+alongside its scripts; paths on another drive stay absolute. The `Trusted` flag of each entry is taken from the records, and
 records for the same script must agree on it.
 
 ## EXAMPLES

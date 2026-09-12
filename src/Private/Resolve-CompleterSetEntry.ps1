@@ -101,7 +101,7 @@ function Resolve-CompleterSetEntry
         else
         {
             $declaredPath = [string] $Entry['Path']
-            $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath, $SetDirectory)
+            $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
             if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
             {

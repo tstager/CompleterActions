@@ -177,7 +177,7 @@ Describe 'Completer sets' {
 
             $data.Version | Should -Be 1
             @($data.Entries).Count | Should -Be 1
-            $data.Entries[0].Path | Should -Be (Join-Path -Path 'scripts' -ChildPath 'Native.ps1')
+            $data.Entries[0].Path | Should -Be 'scripts/Native.ps1' -Because 'a forward slash keeps the set file portable across platforms'
             $data.Entries[0].Trusted | Should -BeFalse
             @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
             @($data.Entries[0].Targets.Native | Select-Object -Unique) | Should -Be @($true)
@@ -391,6 +391,18 @@ Describe 'Completer sets' {
 
             $registered.Count | Should -Be 1
             $registered[0].Key | Should -Be 'test-importedfixturetool:name'
+        }
+
+        It 'accepts a backslash separator in a relative path on every platform' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            Copy-Item -LiteralPath $script:ParameterFixturePath -Destination (Join-Path -Path $scriptFolder -ChildPath 'Backslash.ps1')
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'scripts\Backslash.ps1' }"
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $registered.Count | Should -Be 1
+            $registered[0].ScriptPath | Should -Be (Join-Path -Path $scriptFolder -ChildPath 'Backslash.ps1')
         }
 
         It 'resolves a drive-relative path against the set file directory, not the current location' {
