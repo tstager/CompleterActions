@@ -69,6 +69,14 @@ The command accepts arrays for key, command, and parameter
 lookup scenarios and supports property-name pipeline binding for key-based and
 target-based lookups.
 
+Discovery covers the two target kinds this module manages: command-parameter
+completers and native command completers. A completer registered with
+`Register-ArgumentCompleter -ParameterName` alone, without `-CommandName`,
+applies to every command with that parameter and is stored under the bare
+parameter name; such registrations are not returned and are reported with
+`-Verbose` as they are skipped, so they never prevent the supported
+registrations from being listed.
+
 ## EXAMPLES
 
 ### EXAMPLE 1

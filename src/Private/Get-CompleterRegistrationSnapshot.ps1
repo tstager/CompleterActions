@@ -12,7 +12,10 @@ its own when the caller passes none, and Import-CompleterSet takes one
 snapshot per set so validating and registering hundreds of targets costs one
 runtime read. The snapshot holds references to the live table and
 dictionaries: it describes the session at the moment it was taken and is meant
-to be consumed before the same batch writes.
+to be consumed before the same batch writes. Parameter-only entries of the
+custom dictionary, registered with Register-ArgumentCompleter -ParameterName
+alone, are left out of the index because the module does not manage them and
+a native-shaped key must never resolve against one.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
@@ -46,6 +49,11 @@ function Get-CompleterRegistrationSnapshot
             {
                 foreach ($entryKey in $view.Dictionary.Keys)
                 {
+                    if (-not $view.IsNative -and (Test-CompleterParameterOnlyKey -Key ([string] $entryKey)))
+                    {
+                        continue
+                    }
+
                     $keys[[string] $entryKey] = [string] $entryKey
                 }
             }

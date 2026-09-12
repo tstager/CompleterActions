@@ -14,6 +14,12 @@ Because the underlying data comes from PowerShell runtime internals, the result
 represents the current session only and depends on internal dictionary shapes
 remaining stable.
 
+A completer registered with Register-ArgumentCompleter -ParameterName alone,
+without -CommandName, sits in the custom dictionary under the bare parameter
+name. The module does not manage that target kind, so enumeration skips such
+entries with a verbose message and key lookups never match them; they cannot
+abort discovery of the supported targets.
+
 .PARAMETER Key
 The normalized registration key used by the module when matching a discovered
 runtime registration.
@@ -97,6 +103,12 @@ function Find-RuntimeCompleterRegistration
         {
             foreach ($entry in $runtime.CustomArgumentCompleters.GetEnumerator())
             {
+                if (Test-CompleterParameterOnlyKey -Key ([string] $entry.Key))
+                {
+                    Write-Verbose -Message "Skipping the parameter-only completer registration '$($entry.Key)': it was registered with Register-ArgumentCompleter -ParameterName without -CommandName, and CompleterActions manages command-parameter and native targets only."
+                    continue
+                }
+
                 $target = Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key)
                 $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered'))
             }
@@ -126,6 +138,11 @@ function Find-RuntimeCompleterRegistration
             {
                 foreach ($entryKey in $runtime.CustomArgumentCompleters.Keys)
                 {
+                    if ((Test-CompleterParameterOnlyKey -Key ([string] $entryKey)))
+                    {
+                        continue
+                    }
+
                     if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
                         return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
