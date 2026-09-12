@@ -398,6 +398,51 @@ if (-not (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction Silen
 '@
         },
         @{
+            Name             = 'script-scoped shadow of an allow-listed command'
+            Message          = '*defines its own script:Get-Variable function*'
+            IsolateExecution = $true
+            Script           = @'
+function script:Get-Variable
+{
+    Set-Content -LiteralPath '{ProbePath}' -Value 'executed'
+}
+
+Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue
+
+{Registration}
+'@
+        },
+        @{
+            Name             = 'local-scoped shadow of an allow-listed command'
+            Message          = '*defines its own local:Get-Variable function*'
+            IsolateExecution = $true
+            Script           = @'
+function local:Get-Variable
+{
+    Set-Content -LiteralPath '{ProbePath}' -Value 'executed'
+}
+
+Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue
+
+{Registration}
+'@
+        },
+        @{
+            Name             = 'global-scoped shadow of an allow-listed command'
+            Message          = '*defines its own global:Get-Variable function*'
+            IsolateExecution = $true
+            Script           = @'
+function global:Get-Variable
+{
+    Set-Content -LiteralPath '{ProbePath}' -Value 'executed'
+}
+
+Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue
+
+{Registration}
+'@
+        },
+        @{
             Name    = 'redirection'
             Message = '*uses redirection*'
             Script  = @'
@@ -513,19 +558,31 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
     It 'confirms the <Name> probe fires when the script runs without validation' -TestCases $adversarialImportCases {
         param(
             [string] $Name,
-            [string] $Script
+            [string] $Script,
+            [bool] $IsolateExecution
         )
 
         $adversarial = Write-AdversarialImportScript -Name $Name -Script $Script
 
         Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
 
-        $output = @(& { . $adversarial.ScriptPath })
-        foreach ($item in $output)
+        if ($IsolateExecution)
         {
-            if ($item -is [System.IDisposable])
+            # A script- or global-scoped shadow of Get-Variable would outlive this
+            # test and break every later Get-Variable call in the run, so the
+            # unvalidated execution happens in a throwaway process. The probe is a
+            # file marker for these cases so the effect is visible from here.
+            $null = & pwsh -NoProfile -NonInteractive -Command ". '$($adversarial.ScriptPath)'" 2>&1
+        }
+        else
+        {
+            $output = @(& { . $adversarial.ScriptPath })
+            foreach ($item in $output)
             {
-                $item.Dispose()
+                if ($item -is [System.IDisposable])
+                {
+                    $item.Dispose()
+                }
             }
         }
 
