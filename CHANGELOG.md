@@ -7,6 +7,50 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+Fixes for the five findings in `docs/code-review-2026-09-12.md`.
+
+### Fixed
+
+- The strict import grammar rejects a scope-qualified definition of an
+  allow-listed command. `function script:Get-Variable`, and the `local:`,
+  `global:`, `private:`, and module-qualified forms, passed validation because
+  the definition's name kept its qualifier, and the body ran at import time
+  when the allow-listed `Get-Variable` call executed. Definitions are now
+  compared by their unqualified name; command calls stay exact-match, so a
+  qualified call is still rejected as an unsupported top-level command (R1).
+- Imported completer blocks keep their source file. The capture module rebuilt
+  each block from its text, which dropped the file association, so
+  `$PSScriptRoot` and `$PSCommandPath` were empty inside an imported completer
+  and a location-dependent completer failed once registered. The original
+  block is now rebound to the capture module, under the strict, trusted, and
+  lazy paths alike (R2).
+- A completer registered with `Register-ArgumentCompleter -ParameterName`
+  alone, without `-CommandName`, no longer makes `Get-CompleterRegistration`
+  throw for the whole session. The engine stores that shape under the bare
+  parameter name; discovery skips it with a verbose message, key lookups never
+  match it, and the registration snapshot leaves it out, so it is never
+  resolved as a native target of the same name (R3).
+- A lazily loaded script that registers the same target more than once now
+  loads the last definition, as `Register-ArgumentCompleter` does when the
+  script is dot-sourced; the first definition used to win on the first press
+  and stay in place (R4).
+- `Export-CompleterSet` refuses a strict entry that lists only some of the
+  targets its script registers, naming the missing targets and writing
+  nothing, because `Import-CompleterSet` compares a strict entry's `Targets`
+  with the parsed script and rejects the mismatch. Trusted entries are written
+  with the targets the records carry (R5).
+
+### Documentation
+
+- `about_Import_Completers` names scope-qualified shadows of allow-listed
+  commands as findings and states that imported blocks keep `$PSScriptRoot`
+  and `$PSCommandPath`; `about_Completer_Sets` covers last-wins lazy loading
+  and the strict-entry export rule; `Get-CompleterRegistration` help and the
+  README describe how parameter-only registrations are skipped.
+- `.github/copilot-instructions.md` lists the eight public commands, lazy
+  registration with the `Pending` and `Failed` states, completer sets, and the
+  own-process rule for running the tests.
+
 ## [2.0.0-preview2] - 2026-09-11
 
 ### Fixed

@@ -81,6 +81,17 @@ function Test-CompleterScriptAst
         return 'Keep script-scope values literal (strings, numbers, arrays, and hashtables) and compute everything else lazily inside a function.'
     }
 
+    function Get-UnqualifiedFunctionName
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateNotNullOrEmpty()]
+            [string] $Name
+        )
+
+        return $Name.Substring($Name.LastIndexOfAny([char[]] @(':', '\')) + 1)
+    }
+
     function Test-IsSupportedRegisterArgumentAst
     {
         param(
@@ -673,19 +684,27 @@ function Test-CompleterScriptAst
         Test-ImportSafeStatementAst -StatementAst $statement
     }
 
+    # A function definition keeps its scope qualifier in FunctionDefinitionAst.Name,
+    # so 'function script:Get-Variable' shadows Get-Variable in the capture scope
+    # while its Name is not 'Get-Variable'. Definitions are therefore compared by
+    # their unqualified name: the text after the last scope or module qualifier.
+    # Command calls are deliberately not normalized the same way, because a
+    # qualified call such as 'script:Get-Variable' or 'Foo\Get-Variable' is not the
+    # allowlisted built-in and the exact-match allowlist above already rejects it.
     $functionOverrides = @($Ast.FindAll(
             {
                 param($node)
 
                 $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-                $node.Name -in $allowedImportCommands
+                (Get-UnqualifiedFunctionName -Name $node.Name) -in $allowedImportCommands
             },
             $true
         ))
 
     foreach ($functionOverride in $functionOverrides)
     {
-        Add-Finding -Extent $functionOverride.Extent -Construct 'FunctionDefinitionAst' -Message "The script defines its own $($functionOverride.Name) function." -Hint "Rename the function; Import-CompleterScript only supports scripts that call the built-in $($functionOverride.Name) directly."
+        $unqualifiedName = Get-UnqualifiedFunctionName -Name $functionOverride.Name
+        Add-Finding -Extent $functionOverride.Extent -Construct 'FunctionDefinitionAst' -Message "The script defines its own $($functionOverride.Name) function." -Hint "Rename the function; Import-CompleterScript only supports scripts that call the built-in $unqualifiedName directly, and a scope-qualified definition such as script:$unqualifiedName or global:$unqualifiedName shadows it in the same way."
     }
 
     $dotSourcedCommands = @($Ast.FindAll(

@@ -205,6 +205,68 @@ Describe 'Completer registration public API' {
         $registration.ScriptText | Should -Match 'gamma'
     }
 
+    It 'lists managed native and parameter registrations alongside a parameter-only registration made outside the module' {
+        function Test-ManagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name,
+                [string] $CompleterActionsGlobalParam
+            )
+        }
+
+        $managedScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('managed', 'managed', 'ParameterValue', 'managed')
+        }
+
+        $nativeScriptBlock = {
+            param($wordToComplete, $commandAst, $cursorPosition)
+
+            [System.Management.Automation.CompletionResult]::new('native', 'native', 'ParameterValue', 'native')
+        }
+
+        $parameterOnlyScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('global-parameter', 'global-parameter', 'ParameterValue', 'global-parameter')
+        }
+
+        Register-ArgumentCompleter -ParameterName 'CompleterActionsGlobalParam' -ScriptBlock $parameterOnlyScriptBlock
+
+        try
+        {
+            $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock
+            $null = Register-CompleterRegistration -CommandName 'testnative-managed' -Native -ScriptBlock $nativeScriptBlock
+
+            $registrations = @(Get-CompleterRegistration -Verbose 4>&1)
+            $verboseMessages = @($registrations | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+            $records = @($registrations | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+
+            @($records.Key) | Should -Contain 'test-managedtool:name'
+            @($records.Key) | Should -Contain 'testnative-managed'
+            @($records.Key) | Should -Not -Contain 'completeractionsglobalparam'
+            @($verboseMessages | Where-Object { $_ -match "parameter-only completer registration 'CompleterActionsGlobalParam'" }).Count | Should -Be 1
+
+            @(Get-CompleterRegistration -DiscoveredOnly).Key | Should -Not -Contain 'completeractionsglobalparam'
+            Get-CompleterRegistration -CommandName 'CompleterActionsGlobalParam' -Native | Should -BeNullOrEmpty
+
+            $removed = @(Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+            @($removed.Key | Sort-Object) | Should -Be @('test-managedtool:name', 'testnative-managed')
+
+            $inputScript = 'Test-ManagedTool -CompleterActionsGlobalParam '
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            $completion.CompletionMatches.CompletionText | Should -Contain 'global-parameter' -Because 'the parameter-only registration is left untouched'
+        }
+        finally
+        {
+            & (Get-Module -Name 'CompleterActions') {
+                $null = (Get-CompleterRuntime).CustomArgumentCompleters.Remove('CompleterActionsGlobalParam')
+            }
+        }
+    }
+
     It 'unregisters managed registrations from module state and runtime' {
         $scriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)

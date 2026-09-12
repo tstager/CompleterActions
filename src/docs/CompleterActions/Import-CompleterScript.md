@@ -43,7 +43,9 @@ selected with `-Trusted`, skips the grammar and dot-sources the script as-is
 inside the same capture module, so use it only for scripts you wrote or
 reviewed. Imported script blocks preserve the temporary module context that
 contains any helper functions and script-scope state defined by the source
-script under either tier.
+script under either tier, and they keep the script as their source file, so
+`$PSScriptRoot` and `$PSCommandPath` inside a completer name the script's
+directory and path exactly as they do when the script is dot-sourced.
 
 ## COMPATIBLE COMPLETER SCRIPT SPECIFICATION
 

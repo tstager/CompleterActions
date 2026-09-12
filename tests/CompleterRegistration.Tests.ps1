@@ -347,6 +347,72 @@ Describe 'Private completer registration helpers' {
         $result.WasRemoved | Should -BeTrue
     }
 
+    It 'skips a parameter-only runtime registration instead of aborting discovery' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $parameterOnlyScriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+                [System.Management.Automation.CompletionResult]::new('global-parameter', 'global-parameter', 'ParameterValue', 'global-parameter')
+            }
+
+            $nativeScriptBlock = {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                $null = $wordToComplete, $commandAst, $cursorPosition
+                [System.Management.Automation.CompletionResult]::new('native', 'native', 'ParameterValue', 'native')
+            }
+
+            # The engine stores a -ParameterName-only registration under the bare
+            # parameter name, which is the same text as a native key for a command
+            # of that name; both shapes are present here on purpose.
+            Register-ArgumentCompleter -ParameterName 'CompleterActionsGlobalParam' -ScriptBlock $parameterOnlyScriptBlock
+            Register-ArgumentCompleter -Native -CommandName 'CompleterActionsGlobalParam' -ScriptBlock $nativeScriptBlock
+            Register-ArgumentCompleter -CommandName 'CompleterActionsParameterRuntimeTest' -ParameterName 'Name' -ScriptBlock $parameterOnlyScriptBlock
+
+            try
+            {
+                $allRuntime = @(Find-RuntimeCompleterRegistration -Verbose 4>&1)
+                $verboseMessages = @($allRuntime | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
+                $discovered = @($allRuntime | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                $byNativeKey = Find-RuntimeCompleterRegistration -Key 'completeractionsglobalparam'
+                $snapshot = Get-CompleterRegistrationSnapshot
+                $states = @(Resolve-CompleterRegistrationState -Key 'completeractionsglobalparam', 'completeractionsparameterruntimetest:name' -Snapshot $snapshot)
+
+                [pscustomobject] @{
+                    DiscoveredKeys   = @($discovered.Key)
+                    VerboseMessages  = $verboseMessages
+                    ByKeyIsNative    = $byNativeKey.IsNative
+                    ByKeyText        = $byNativeKey.ScriptText
+                    CustomIndexKeys  = @(($snapshot.Runtime | Where-Object { -not $_.IsNative }).Keys.Keys)
+                    NativeStateFound = $states[0].RuntimeRegistration.IsNative
+                    ParameterState   = $states[1].RuntimeRegistration.RuntimeKey
+                }
+            }
+            finally
+            {
+                $runtime = Get-CompleterRuntime
+                $runtime.CustomArgumentCompleters.Remove('CompleterActionsGlobalParam') | Out-Null
+                $runtime.CustomArgumentCompleters.Remove('CompleterActionsParameterRuntimeTest:Name') | Out-Null
+                $runtime.NativeArgumentCompleters.Remove('CompleterActionsGlobalParam') | Out-Null
+            }
+        }
+
+        $result.DiscoveredKeys | Should -Contain 'completeractionsglobalparam'
+        $result.DiscoveredKeys | Should -Contain 'completeractionsparameterruntimetest:name'
+        @($result.DiscoveredKeys | Where-Object { $_ -eq 'completeractionsglobalparam' }).Count | Should -Be 1 -Because 'only the native registration is a managed target kind'
+        @($result.VerboseMessages | Where-Object { $_ -match "parameter-only completer registration 'CompleterActionsGlobalParam'" }).Count | Should -Be 1
+        $result.ByKeyIsNative | Should -BeTrue
+        $result.ByKeyText | Should -Match "'native'"
+        $result.CustomIndexKeys | Should -Not -Contain 'CompleterActionsGlobalParam'
+        $result.CustomIndexKeys | Should -Contain 'CompleterActionsParameterRuntimeTest:Name'
+        $result.NativeStateFound | Should -BeTrue
+        $result.ParameterState | Should -Be 'CompleterActionsParameterRuntimeTest:Name'
+    }
+
     It 'supports IDictionary-based runtime completer dictionary helpers' {
         $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
         $module = Import-Module -Name $moduleManifestPath -Force -PassThru

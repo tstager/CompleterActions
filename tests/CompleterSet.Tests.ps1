@@ -220,6 +220,63 @@ Describe 'Completer sets' {
             $data.Entries[0].Targets[0].Native | Should -BeTrue
         }
 
+        It 'refuses a strict subset registration that Import-CompleterSet could not read back and writes nothing' {
+            $subset = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru
+            $subset.State | Should -Be 'Pending'
+
+            $thrown = { $subset | Export-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Match ([regex]::Escape("The strict entry for '$script:NativeFixturePath' cannot be imported as a set entry"))
+            $thrown.Exception.Message | Should -Match "Missing: 'importfixture'\."
+            $thrown.Exception.Message | Should -Not -Match 'importfixture\.exe'
+            $thrown.Exception.Message | Should -Match 'Nothing was written'
+            Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+            { Export-CompleterSet -Path $script:SetPath } | Should -Throw "*Missing: 'importfixture'.*" -Because 'the default export of every managed registration hits the same rule'
+            Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+            $null = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture' -Native -PassThru
+            Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1
+            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+
+            Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+            @($reimported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+        }
+
+        It 'refuses a strict record for a target the script does not register' {
+            $record = [pscustomobject] @{
+                CommandName = 'importfixture.cmd'
+                IsNative    = $true
+                ScriptPath  = $script:NativeFixturePath
+                Trusted     = $false
+            }
+
+            $thrown = { $record | Export-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Match "Missing: 'importfixture', 'importfixture\.exe'\."
+            $thrown.Exception.Message | Should -Match "Not registered by the script: 'importfixture\.cmd'\."
+            Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+        }
+
+        It 'exports a trusted subset registration as given and imports it back' {
+            $subset = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture.exe' -Native -PassThru
+
+            $subset | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $data.Entries[0].Trusted | Should -BeTrue
+            @($data.Entries[0].Targets.CommandName) | Should -Be @('importfixture.exe')
+
+            $subset | Unregister-CompleterRegistration -Confirm:$false
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+            @($reimported.Key) | Should -Be @('importfixture.exe')
+            $reimported[0].Trusted | Should -BeTrue
+        }
+
         It 'throws when nothing with a script path is available to export' {
             { Export-CompleterSet -Path $script:SetPath } | Should -Throw '*No registrations with a script path*'
             Test-Path -LiteralPath $script:SetPath | Should -BeFalse

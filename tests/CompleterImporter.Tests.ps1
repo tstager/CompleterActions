@@ -69,7 +69,9 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'locationfixture'; CompleterType = 'Native' },
+            @{ CommandName = 'namespacefixture'; CompleterType = 'Native' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
@@ -136,7 +138,9 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'locationfixture'; CompleterType = 'Native' },
+            @{ CommandName = 'namespacefixture'; CompleterType = 'Native' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
@@ -149,6 +153,99 @@ Describe 'Completer script importer public API' {
         Remove-Item -Path 'Function:\Test-ImportedArrayTwo' -ErrorAction SilentlyContinue
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'keeps the script location on the imported block so $PSScriptRoot and $PSCommandPath resolve (<Name>)' -TestCases @(
+        @{ Name = 'strict'; Trusted = $false; Lazy = $false },
+        @{ Name = 'trusted'; Trusted = $true; Lazy = $false },
+        @{ Name = 'lazy'; Trusted = $false; Lazy = $true }
+    ) {
+        param(
+            [bool] $Trusted,
+            [bool] $Lazy
+        )
+
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'ScriptLocationCompleter.ps1'
+        $inputScript = 'locationfixture '
+
+        . $fixturePath
+        $direct = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($direct.CompletionMatches.CompletionText) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath) -Because 'the dot-sourced script is the baseline'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'locationfixture' -CompleterType 'Native'
+
+        if ($Lazy)
+        {
+            $null = Register-CompleterRegistration -LiteralPath $fixturePath -Lazy
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath -Trusted:$Trusted)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $fixturePath
+            $imported[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
+            @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
+
+            $null = $imported | Register-CompleterRegistration
+        }
+
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($completion.CompletionMatches.CompletionText) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
+
+        $record = Get-CompleterRegistration -CommandName 'locationfixture' -Native
+        $record.State | Should -Be 'Active'
+        $record.ScriptBlock.File | Should -Be $fixturePath
+        $record.ScriptBlock.Module | Should -Not -BeNullOrEmpty
+        $record.Trusted | Should -Be $Trusted
+
+        @(Test-CompleterRegistration -CommandName 'locationfixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
+    }
+
+    It 'resolves the types a top-level using namespace statement names inside the imported block (<Name>)' -TestCases @(
+        @{ Name = 'strict'; Trusted = $false; Lazy = $false },
+        @{ Name = 'trusted'; Trusted = $true; Lazy = $false },
+        @{ Name = 'lazy'; Trusted = $false; Lazy = $true }
+    ) {
+        param(
+            [bool] $Trusted,
+            [bool] $Lazy
+        )
+
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'UsingNamespaceCompleter.ps1'
+        $inputScript = 'namespacefixture ns-'
+        $expected = @('ns-alpha', 'ns-beta')
+
+        . $fixturePath
+        $direct = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($direct.CompletionMatches.CompletionText) | Should -Be $expected -Because 'the dot-sourced script is the baseline'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'namespacefixture' -CompleterType 'Native'
+        Remove-Item -Path 'Function:\Get-UsingNamespaceCompletionValue' -ErrorAction SilentlyContinue
+
+        if ($Lazy)
+        {
+            $null = Register-CompleterRegistration -LiteralPath $fixturePath -Lazy
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath -Trusted:$Trusted)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $fixturePath
+            @(& $imported[0].ScriptBlock 'ns-' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
+
+            $null = $imported | Register-CompleterRegistration
+        }
+
+        Get-Command -Name 'Get-UsingNamespaceCompletionValue' -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the helper lives in the capture module, not the caller scope'
+
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($completion.CompletionMatches.CompletionText) | Should -Be $expected
+
+        $record = Get-CompleterRegistration -CommandName 'namespacefixture' -Native
+        $record.State | Should -Be 'Active'
+        $record.Trusted | Should -Be $Trusted
+
+        @(Test-CompleterRegistration -CommandName 'namespacefixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be $expected
     }
 
     It 'returns objects with the shape Register-CompleterRegistration expects' {
@@ -398,6 +495,51 @@ if (-not (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction Silen
 '@
         },
         @{
+            Name             = 'script-scoped shadow of an allow-listed command'
+            Message          = '*defines its own script:Get-Variable function*'
+            IsolateExecution = $true
+            Script           = @'
+function script:Get-Variable
+{
+    Set-Content -LiteralPath '{ProbePath}' -Value 'executed'
+}
+
+Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue
+
+{Registration}
+'@
+        },
+        @{
+            Name             = 'local-scoped shadow of an allow-listed command'
+            Message          = '*defines its own local:Get-Variable function*'
+            IsolateExecution = $true
+            Script           = @'
+function local:Get-Variable
+{
+    Set-Content -LiteralPath '{ProbePath}' -Value 'executed'
+}
+
+Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue
+
+{Registration}
+'@
+        },
+        @{
+            Name             = 'global-scoped shadow of an allow-listed command'
+            Message          = '*defines its own global:Get-Variable function*'
+            IsolateExecution = $true
+            Script           = @'
+function global:Get-Variable
+{
+    Set-Content -LiteralPath '{ProbePath}' -Value 'executed'
+}
+
+Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue
+
+{Registration}
+'@
+        },
+        @{
             Name    = 'redirection'
             Message = '*uses redirection*'
             Script  = @'
@@ -513,19 +655,31 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
     It 'confirms the <Name> probe fires when the script runs without validation' -TestCases $adversarialImportCases {
         param(
             [string] $Name,
-            [string] $Script
+            [string] $Script,
+            [bool] $IsolateExecution
         )
 
         $adversarial = Write-AdversarialImportScript -Name $Name -Script $Script
 
         Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
 
-        $output = @(& { . $adversarial.ScriptPath })
-        foreach ($item in $output)
+        if ($IsolateExecution)
         {
-            if ($item -is [System.IDisposable])
+            # A script- or global-scoped shadow of Get-Variable would outlive this
+            # test and break every later Get-Variable call in the run, so the
+            # unvalidated execution happens in a throwaway process. The probe is a
+            # file marker for these cases so the effect is visible from here.
+            $null = & pwsh -NoProfile -NonInteractive -Command ". '$($adversarial.ScriptPath)'" 2>&1
+        }
+        else
+        {
+            $output = @(& { . $adversarial.ScriptPath })
+            foreach ($item in $output)
             {
-                $item.Dispose()
+                if ($item -is [System.IDisposable])
+                {
+                    $item.Dispose()
+                }
             }
         }
 

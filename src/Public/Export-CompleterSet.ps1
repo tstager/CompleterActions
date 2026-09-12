@@ -17,6 +17,16 @@ set file alongside its scripts; paths on another drive stay absolute. The
 Trusted flag of each entry is taken from the records, and records for the same
 script must agree on it.
 
+A strict entry must list every target its script registers, because
+Import-CompleterSet compares a strict entry's Targets with the targets derived
+from the parsed script and rejects a mismatch. The command derives those
+targets the same way before writing and refuses, naming the missing targets
+and leaving the output untouched, when the records for a strict script cover
+only some of them, as they do after Register-CompleterRegistration -Lazy
+-CommandName selected a subset. Trusted entries are written with the targets
+the records carry, so a subset of a trusted script's targets exports and
+imports as given.
+
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
 
@@ -147,6 +157,41 @@ function Export-CompleterSet
             if ($entriesByPath.Count -eq 0)
             {
                 throw 'No registrations with a script path were found to export.'
+            }
+
+            # Import-CompleterSet holds a strict entry's Targets to the script's full
+            # derived target list, so a strict group that covers only some of those
+            # targets would write a set that cannot be imported. Check it here,
+            # before anything is written, with the same derivation the import uses.
+            foreach ($entry in $entriesByPath.Values)
+            {
+                if ($entry.Trusted)
+                {
+                    continue
+                }
+
+                $derivedKeys = @(Get-CompleterScriptTarget -LiteralPath $entry.Path | ForEach-Object { [string] $_.Key })
+                $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
+                $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
+
+                if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
+                {
+                    continue
+                }
+
+                $problem = "The strict entry for '$($entry.Path)' cannot be imported as a set entry because its targets do not match the script."
+
+                if ($missingTargets.Count -gt 0)
+                {
+                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$_'" }) -join ', ')."
+                }
+
+                if ($unknownTargets.Count -gt 0)
+                {
+                    $problem += " Not registered by the script: $(@($unknownTargets | ForEach-Object { "'$($entry.Targets[$_].RuntimeKey)'" }) -join ', ')."
+                }
+
+                throw "$problem Export the registrations for every target the script registers, or register the script with -Trusted, whose entries take their targets as given. Nothing was written."
             }
 
             $lines = [System.Collections.Generic.List[string]]::new()
