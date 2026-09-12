@@ -40,6 +40,16 @@ forward slashes so the file is portable, so a repository can carry its set file
 alongside its scripts; paths on another drive stay absolute. The `Trusted` flag of each entry is taken from the records, and
 records for the same script must agree on it.
 
+A strict entry must list every target its script registers, because
+`Import-CompleterSet` compares a strict entry's `Targets` with the targets
+derived from the parsed script and rejects a mismatch. The command derives
+those targets the same way before writing and refuses, naming the missing
+targets and leaving the output untouched, when the records for a strict script
+cover only some of them, as they do after
+`Register-CompleterRegistration -Lazy -CommandName` selected a subset. Trusted
+entries are written with the targets the records carry, so a subset of a
+trusted script's targets exports and imports as given.
+
 ## EXAMPLES
 
 ### EXAMPLE 1
