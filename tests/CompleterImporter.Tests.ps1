@@ -70,7 +70,8 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
             @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
-            @{ CommandName = 'locationfixture'; CompleterType = 'Native' }
+            @{ CommandName = 'locationfixture'; CompleterType = 'Native' },
+            @{ CommandName = 'namespacefixture'; CompleterType = 'Native' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
@@ -138,7 +139,8 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
             @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
-            @{ CommandName = 'locationfixture'; CompleterType = 'Native' }
+            @{ CommandName = 'locationfixture'; CompleterType = 'Native' },
+            @{ CommandName = 'namespacefixture'; CompleterType = 'Native' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
@@ -197,6 +199,53 @@ Describe 'Completer script importer public API' {
         $record.Trusted | Should -Be $Trusted
 
         @(Test-CompleterRegistration -CommandName 'locationfixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
+    }
+
+    It 'resolves the types a top-level using namespace statement names inside the imported block (<Name>)' -TestCases @(
+        @{ Name = 'strict'; Trusted = $false; Lazy = $false },
+        @{ Name = 'trusted'; Trusted = $true; Lazy = $false },
+        @{ Name = 'lazy'; Trusted = $false; Lazy = $true }
+    ) {
+        param(
+            [bool] $Trusted,
+            [bool] $Lazy
+        )
+
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'UsingNamespaceCompleter.ps1'
+        $inputScript = 'namespacefixture ns-'
+        $expected = @('ns-alpha', 'ns-beta')
+
+        . $fixturePath
+        $direct = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($direct.CompletionMatches.CompletionText) | Should -Be $expected -Because 'the dot-sourced script is the baseline'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'namespacefixture' -CompleterType 'Native'
+        Remove-Item -Path 'Function:\Get-UsingNamespaceCompletionValue' -ErrorAction SilentlyContinue
+
+        if ($Lazy)
+        {
+            $null = Register-CompleterRegistration -LiteralPath $fixturePath -Lazy
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath -Trusted:$Trusted)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $fixturePath
+            @(& $imported[0].ScriptBlock 'ns-' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
+
+            $null = $imported | Register-CompleterRegistration
+        }
+
+        Get-Command -Name 'Get-UsingNamespaceCompletionValue' -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the helper lives in the capture module, not the caller scope'
+
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($completion.CompletionMatches.CompletionText) | Should -Be $expected
+
+        $record = Get-CompleterRegistration -CommandName 'namespacefixture' -Native
+        $record.State | Should -Be 'Active'
+        $record.Trusted | Should -Be $Trusted
+
+        @(Test-CompleterRegistration -CommandName 'namespacefixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be $expected
     }
 
     It 'returns objects with the shape Register-CompleterRegistration expects' {
