@@ -15,7 +15,9 @@ The trusted tier, selected with -Trusted, skips the grammar and dot-sources the
 script as-is inside the same capture module, so use it only for scripts you
 wrote or reviewed. Imported ScriptBlock objects keep the temporary module
 context that contains helper functions and script-scope state defined by the
-source script under either tier.
+source script under either tier, and they keep the script as their source
+file, so $PSScriptRoot and $PSCommandPath inside a completer name the script's
+directory and path exactly as they do when the script is dot-sourced.
 
 Compatible strict-tier completer scripts must be self-contained and must keep script scope
 limited to Set-StrictMode, function definitions, importer-safe if statements,

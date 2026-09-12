@@ -69,7 +69,8 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'locationfixture'; CompleterType = 'Native' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
@@ -136,7 +137,8 @@ Describe 'Completer script importer public API' {
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'Test-ImportedArrayTwo'; ParameterName = 'Path'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'locationfixture'; CompleterType = 'Native' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
@@ -149,6 +151,52 @@ Describe 'Completer script importer public API' {
         Remove-Item -Path 'Function:\Test-ImportedArrayTwo' -ErrorAction SilentlyContinue
 
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'keeps the script location on the imported block so $PSScriptRoot and $PSCommandPath resolve (<Name>)' -TestCases @(
+        @{ Name = 'strict'; Trusted = $false; Lazy = $false },
+        @{ Name = 'trusted'; Trusted = $true; Lazy = $false },
+        @{ Name = 'lazy'; Trusted = $false; Lazy = $true }
+    ) {
+        param(
+            [bool] $Trusted,
+            [bool] $Lazy
+        )
+
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'ScriptLocationCompleter.ps1'
+        $inputScript = 'locationfixture '
+
+        . $fixturePath
+        $direct = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($direct.CompletionMatches.CompletionText) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath) -Because 'the dot-sourced script is the baseline'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'locationfixture' -CompleterType 'Native'
+
+        if ($Lazy)
+        {
+            $null = Register-CompleterRegistration -LiteralPath $fixturePath -Lazy
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath -Trusted:$Trusted)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $fixturePath
+            $imported[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
+            @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
+
+            $null = $imported | Register-CompleterRegistration
+        }
+
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($completion.CompletionMatches.CompletionText) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
+
+        $record = Get-CompleterRegistration -CommandName 'locationfixture' -Native
+        $record.State | Should -Be 'Active'
+        $record.ScriptBlock.File | Should -Be $fixturePath
+        $record.ScriptBlock.Module | Should -Not -BeNullOrEmpty
+        $record.Trusted | Should -Be $Trusted
+
+        @(Test-CompleterRegistration -CommandName 'locationfixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
     }
 
     It 'returns objects with the shape Register-CompleterRegistration expects' {

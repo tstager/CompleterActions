@@ -4,9 +4,12 @@ Executes a completer script in a controlled capture module.
 
 .DESCRIPTION
 Creates a temporary dynamic module that shadows Register-ArgumentCompleter so the
-target script can run without mutating the live runtime completer tables. The
-captured registration definitions preserve the imported script block behavior and
-module scope so helper functions and script state remain available later.
+target script can run without mutating the live runtime completer tables. Each
+captured script block is the script's own block rebound to the capture module,
+so helper functions and script state remain available later and the block
+keeps its source file: $PSScriptRoot and $PSCommandPath inside the completer
+name the script's directory and path, as they do when the script is
+dot-sourced.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -61,7 +64,10 @@ function Import-CompleterScriptDefinition
 
                 process
                 {
-                    $capturedScriptBlock = $ExecutionContext.SessionState.InvokeCommand.NewScriptBlock($ScriptBlock.ToString())
+                    # Rebinding the original block to this module keeps its source file, so
+                    # $PSScriptRoot and $PSCommandPath inside the completer still name the
+                    # script; rebuilding it from text would drop that association.
+                    $capturedScriptBlock = $ExecutionContext.SessionState.Module.NewBoundScriptBlock($ScriptBlock)
 
                     $script:CapturedCompleterDefinitions.Add(
                         [pscustomobject] [ordered] @{
