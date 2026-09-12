@@ -4,7 +4,8 @@ Date: 2026-09-12 (UTC)
 Reviewed commit: `73e68cf811d1ad669bc17b6e2ea136675d1afff8`  
 Branch: `main`, verified equal to `origin-main/main` after `git fetch origin-main main`  
 Release: `2.0.0-preview2` / tag `v2.0.0-preview2`  
-Mode: review only; no implementation changes
+Mode: review only; no implementation changes  
+Status: **all five findings fixed and released in `2.0.0-preview3`** (PR #5, merge `4a830f6`, tag `v2.0.0-preview3`, 2026-09-12)
 
 ## Summary
 
@@ -21,6 +22,21 @@ The existing safety net is green: **168 Pester tests passed, zero failed or skip
 | R5 | Medium / P2 | Export accepts a strict target subset that set import rejects |
 
 Address R1 before treating the strict tier as an import-time execution boundary. Address R2–R5 before the stable 2.0 release.
+
+## Resolution
+
+Every finding was fixed on branch `fix/review-2026-09-12`, merged to `main` as PR #5 (`4a830f6`), and released as `2.0.0-preview3` (release commit `336b3bb`, tag `v2.0.0-preview3`). One Fable implementer made the changes, three Sonnet reviewers ran one adversarial round (one minor gap: a missing `using namespace` test, added), and the Appendix A probe flipped on both the source and packaged manifests. The suite grew from 168 to 187 Pester cases; the 169-script compatibility gates were unchanged; the startup benchmark ratio was 0.18.
+
+| ID | Fix | Commit |
+| --- | --- | --- |
+| R1 | The validator compares the unqualified function name and rejects any definition that shadows an allow-listed import command. Qualified calls stay exact-match on purpose. Adversarial tests cover `script:`, `local:`, and `global:` with an execution marker. | `e04557f` |
+| R2 | The capture shim binds the original block to the capture module with `NewBoundScriptBlock`, keeping the file and AST so `$PSScriptRoot` and `$PSCommandPath` survive. Tested for strict, trusted, and lazy paths. | `14428ab` |
+| R3 | Discovery, key lookup, and the registration snapshot skip parameter-only engine registrations with a verbose message. They were never manageable; surfacing them would need key inference. | `695e065` |
+| R4 | Lazy loading folds imported definitions to the last per key before selecting the initiating target and swapping siblings, matching dot-source semantics. | `6338917` |
+| R5 | `Export-CompleterSet` validates each strict group against the script's derived targets and refuses with the missing and unknown targets named, writing nothing. Trusted groups export as given. | `c9e4495` |
+| Docs | `.github/copilot-instructions.md` lists the eight public commands and the lazy states; about topics, command help, README, and CHANGELOG updated. | `4789960` |
+
+Documented behaviour changes: a strict script defining a scope-qualified function named after an allow-listed command now fails import (none of the 169 standalone completers do), and `Export-CompleterSet` without `-InputObject` throws when the session holds a strict subset registration instead of writing an unimportable set.
 
 ## Context and method
 
