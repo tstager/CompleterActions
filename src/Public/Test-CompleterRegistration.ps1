@@ -51,7 +51,7 @@ The zero-based cursor position within InputText at which completion runs. The
 default is the end of the input.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompletionMatch
 Returns CompleterActions.CompletionMatch records, one per completion match,
 with Key, RuntimeKey, CommandName, ParameterName, CompleterType, InputText,
 CursorPosition, CompletionText, ListItemText, ResultType, and ToolTip
@@ -78,11 +78,11 @@ completion engine when it is invoked from this command.
 function Test-CompleterRegistration
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompletionMatch')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
         [Alias('RegistrationKey')]
@@ -187,22 +187,7 @@ function Test-CompleterRegistration
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject(
-                    [pscustomobject] [ordered] @{
-                        PSTypeName     = 'CompleterActions.CompletionMatch'
-                        Key            = [string] $target.Key
-                        RuntimeKey     = [string] $target.RuntimeKey
-                        CommandName    = [string] $target.CommandName
-                        ParameterName  = if ($target.IsNative) { $null } else { [string] $target.ParameterName }
-                        CompleterType  = if ($target.IsNative) { 'Native' } else { 'Parameter' }
-                        InputText      = $InputText
-                        CursorPosition = $resolvedCursorPosition
-                        CompletionText = $completionMatch.CompletionText
-                        ListItemText   = $completionMatch.ListItemText
-                        ResultType     = $completionMatch.ResultType
-                        ToolTip        = $completionMatch.ToolTip
-                    }
-                )
+                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition))
             }
         }
         catch

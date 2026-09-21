@@ -36,7 +36,7 @@ function New-CompleterScriptFinding
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a finding object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -63,8 +63,7 @@ function New-CompleterScriptFinding
         [string] $Severity = 'Error'
     )
 
-    [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterScriptFinding'
+    [CompleterScriptFinding] @{
         Path       = $Path
         Line       = $Extent.StartLineNumber
         Column     = $Extent.StartColumnNumber

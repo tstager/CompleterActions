@@ -65,7 +65,7 @@ function Export-CompleterSet
 
         [Parameter(ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter()]
         [switch] $PassThru

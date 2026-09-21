@@ -151,7 +151,7 @@ objects can expose Key, RegistrationKey, RuntimeKey, or
 CommandName/ParameterName plus IsNative/Native.
 
 ```yaml
-Type: System.Management.Automation.PSObject[]
+Type: System.Object[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -285,7 +285,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-### System.Management.Automation.PSObject[]
+### System.Object[]
 
 ### System.String[]
 

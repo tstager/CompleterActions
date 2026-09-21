@@ -3,7 +3,7 @@
 Creates an internal completer registration record object.
 
 .DESCRIPTION
-Builds the PSCustomObject stored in the managed registration table. The helper
+Builds the CompleterRegistration instance stored in the managed registration table. The helper
 copies the required target metadata, derives convenience properties such as
 CompleterType and IsManaged, and captures both the script block and its text so
 module internals can inspect the registered completer later.
@@ -45,8 +45,8 @@ dot-sources it without validating it against the strict import grammar.
 The error message from the failed lazy load of a 'Failed' record.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
-Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
+CompleterActions.CompleterRegistration
+Returns a CompleterRegistration instance suitable for internal storage.
 
 .EXAMPLE
 PS> $record = New-CompleterRegistrationRecord -Target $target -ScriptBlock $scriptBlock
@@ -58,7 +58,7 @@ function New-CompleterRegistrationRecord
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an in-memory registration object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -97,8 +97,7 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [pscustomobject] [ordered] @{
-        PSTypeName          = 'CompleterActions.CompleterRegistration'
+    $registration = [CompleterRegistration] @{
         Key                 = [string] $Target.Key
         RegistrationKey     = [string] $Target.Key
         RuntimeKey          = [string] $Target.RuntimeKey

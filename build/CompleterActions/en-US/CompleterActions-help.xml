@@ -50,7 +50,7 @@ trusted script's targets exports and imports as given.</maml:para>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
           <dev:type>
-            <maml:name>System.Management.Automation.PSObject[]</maml:name>
+            <maml:name>System.Object[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -93,9 +93,9 @@ trusted script's targets exports and imports as given.</maml:para>
 the script it came from through a `ScriptPath` or `SourcePath` property.
 Records without a script path cannot be expressed in a set and are rejected.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
@@ -130,7 +130,7 @@ Records without a script path cannot be expressed in a set and are rejected.</ma
     <command:inputTypes>
       <command:inputType>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>Registration records from `Get-CompleterRegistration` or
@@ -1239,7 +1239,7 @@ PSReadLine options.</maml:para>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
           <dev:type>
-            <maml:name>System.Management.Automation.PSObject[]</maml:name>
+            <maml:name>System.Object[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -1523,9 +1523,9 @@ must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
 records, are carried onto the managed record.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
@@ -1626,7 +1626,7 @@ the grammar when it loads.</maml:para>
     <command:inputTypes>
       <command:inputType>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
         <maml:description>
           <maml:para />
@@ -1821,7 +1821,7 @@ registration, and it never touches PSReadLine.</maml:para>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
           <dev:type>
-            <maml:name>System.Management.Automation.PSObject[]</maml:name>
+            <maml:name>System.Object[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -1934,9 +1934,9 @@ returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
 must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
 `CommandName`/`ParameterName` plus `IsNative`/`Native`.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
@@ -1988,7 +1988,7 @@ parameter completer.</maml:para>
     <command:inputTypes>
       <command:inputType>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>A registration record, or any object that describes a completer target.</maml:para>
@@ -2006,7 +2006,7 @@ parameter completer.</maml:para>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+          <maml:name>CompleterActions.CompletionMatch</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>Returns `CompleterActions.CompletionMatch` records, one per completion match,
@@ -2321,7 +2321,7 @@ pipeline input from Get-CompleterRegistration output.</maml:para>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
           <dev:type>
-            <maml:name>System.Management.Automation.PSObject[]</maml:name>
+            <maml:name>System.Object[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -2484,9 +2484,9 @@ Input
 objects can expose Key, RegistrationKey, RuntimeKey, or
 CommandName/ParameterName plus IsNative/Native.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.Management.Automation.PSObject[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="RegistrationKey">
@@ -2541,7 +2541,7 @@ targets.</maml:para>
     <command:inputTypes>
       <command:inputType>
         <dev:type>
-          <maml:name>System.Management.Automation.PSObject[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
         <maml:description>
           <maml:para />

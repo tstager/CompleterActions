@@ -152,7 +152,7 @@ must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
 `CommandName`/`ParameterName` plus `IsNative`/`Native`.
 
 ```yaml
-Type: System.Management.Automation.PSObject[]
+Type: System.Object[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -269,7 +269,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-### System.Management.Automation.PSObject[]
+### System.Object[]
 
 A registration record, or any object that describes a completer target.
 
@@ -279,7 +279,7 @@ A registration key or command and parameter names bound by property name.
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.CompletionMatch
 
 Returns `CompleterActions.CompletionMatch` records, one per completion match,
 with `Key`, `RuntimeKey`, `CommandName`, `ParameterName`, `CompleterType`,

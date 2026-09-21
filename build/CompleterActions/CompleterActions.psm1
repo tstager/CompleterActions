@@ -166,7 +166,7 @@ function Export-CompleterSet
 
         [Parameter(ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter()]
         [switch] $PassThru
@@ -1119,7 +1119,7 @@ function Register-CompleterRegistration
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -1372,7 +1372,7 @@ The zero-based cursor position within InputText at which completion runs. The
 default is the end of the input.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompletionMatch
 Returns CompleterActions.CompletionMatch records, one per completion match,
 with Key, RuntimeKey, CommandName, ParameterName, CompleterType, InputText,
 CursorPosition, CompletionText, ListItemText, ResultType, and ToolTip
@@ -1402,11 +1402,11 @@ function Test-CompleterRegistration
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompletionMatch')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
         [Alias('RegistrationKey')]
@@ -1511,22 +1511,7 @@ function Test-CompleterRegistration
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject(
-                    [pscustomobject] [ordered] @{
-                        PSTypeName     = 'CompleterActions.CompletionMatch'
-                        Key            = [string] $target.Key
-                        RuntimeKey     = [string] $target.RuntimeKey
-                        CommandName    = [string] $target.CommandName
-                        ParameterName  = if ($target.IsNative) { $null } else { [string] $target.ParameterName }
-                        CompleterType  = if ($target.IsNative) { 'Native' } else { 'Parameter' }
-                        InputText      = $InputText
-                        CursorPosition = $resolvedCursorPosition
-                        CompletionText = $completionMatch.CompletionText
-                        ListItemText   = $completionMatch.ListItemText
-                        ResultType     = $completionMatch.ResultType
-                        ToolTip        = $completionMatch.ToolTip
-                    }
-                )
+                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition))
             }
         }
         catch
@@ -1681,7 +1666,7 @@ function Unregister-CompleterRegistration
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
         [Alias('RegistrationKey')]
@@ -3513,7 +3498,7 @@ function New-CompleterLazyStub
 Creates an internal completer registration record object.
 
 .DESCRIPTION
-Builds the PSCustomObject stored in the managed registration table. The helper
+Builds the CompleterRegistration instance stored in the managed registration table. The helper
 copies the required target metadata, derives convenience properties such as
 CompleterType and IsManaged, and captures both the script block and its text so
 module internals can inspect the registered completer later.
@@ -3555,8 +3540,8 @@ dot-sources it without validating it against the strict import grammar.
 The error message from the failed lazy load of a 'Failed' record.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
-Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
+CompleterActions.CompleterRegistration
+Returns a CompleterRegistration instance suitable for internal storage.
 
 .EXAMPLE
 PS> $record = New-CompleterRegistrationRecord -Target $target -ScriptBlock $scriptBlock
@@ -3571,7 +3556,7 @@ function New-CompleterRegistrationRecord
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an in-memory registration object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -3610,8 +3595,7 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [pscustomobject] [ordered] @{
-        PSTypeName          = 'CompleterActions.CompleterRegistration'
+    $registration = [CompleterRegistration] @{
         Key                 = [string] $Target.Key
         RegistrationKey     = [string] $Target.Key
         RuntimeKey          = [string] $Target.RuntimeKey
@@ -3675,7 +3659,7 @@ function New-CompleterScriptFinding
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a finding object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -3702,8 +3686,7 @@ function New-CompleterScriptFinding
         [string] $Severity = 'Error'
     )
 
-    [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterScriptFinding'
+    [CompleterScriptFinding] @{
         Path       = $Path
         Line       = $Extent.StartLineNumber
         Column     = $Extent.StartColumnNumber
@@ -3711,6 +3694,79 @@ function New-CompleterScriptFinding
         Construct  = $Construct
         Message    = $Message
         Hint       = $Hint
+    }
+}
+<#
+.SYNOPSIS
+Creates a completion match record for a tested completer target.
+
+.DESCRIPTION
+Builds the CompletionMatch instance that Test-CompleterRegistration returns for
+each completion result TabExpansion2 produced. The helper copies the target
+metadata and the input that was completed alongside the completion result's
+text, list item, result type, and tooltip.
+
+.PARAMETER Target
+The resolved completer target metadata object. It must expose the Key,
+RuntimeKey, CommandName, ParameterName, and IsNative properties.
+
+.PARAMETER CompletionResult
+The completion result returned by TabExpansion2 for the target.
+
+.PARAMETER InputText
+The input text that was completed.
+
+.PARAMETER CursorPosition
+The cursor position within InputText at which completion ran.
+
+.OUTPUTS
+CompleterActions.CompletionMatch
+Returns a CompletionMatch instance for one completion result.
+
+.EXAMPLE
+PS> New-CompletionMatch -Target $target -CompletionResult $result -InputText 'git che' -CursorPosition 7
+
+Creates the completion match record for one TabExpansion2 result against the
+resolved git native completer target.
+#>
+function New-CompletionMatch
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a completion match object.')]
+    [OutputType('CompleterActions.CompletionMatch')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Target,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Management.Automation.CompletionResult] $CompletionResult,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $InputText,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(0, [int]::MaxValue)]
+        [int] $CursorPosition
+    )
+
+    [CompletionMatch] @{
+        Key            = [string] $Target.Key
+        RuntimeKey     = [string] $Target.RuntimeKey
+        CommandName    = [string] $Target.CommandName
+        ParameterName  = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+        CompleterType  = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
+        InputText      = $InputText
+        CursorPosition = $CursorPosition
+        CompletionText = $CompletionResult.CompletionText
+        ListItemText   = $CompletionResult.ListItemText
+        ResultType     = $CompletionResult.ResultType
+        ToolTip        = $CompletionResult.ToolTip
     }
 }
 <#
@@ -3749,7 +3805,7 @@ function New-ImportedCompleterRegistration
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an import object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.ImportedCompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -3771,8 +3827,7 @@ function New-ImportedCompleterRegistration
         [switch] $Trusted
     )
 
-    [pscustomobject] [ordered] @{
-        PSTypeName      = 'CompleterActions.ImportedCompleterRegistration'
+    [ImportedCompleterRegistration] @{
         Key             = [string] $Target.Key
         RegistrationKey = [string] $Target.Key
         RuntimeKey      = [string] $Target.RuntimeKey

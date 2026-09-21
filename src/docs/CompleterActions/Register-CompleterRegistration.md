@@ -239,7 +239,7 @@ must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
 records, are carried onto the managed record.
 
 ```yaml
-Type: System.Management.Automation.PSObject[]
+Type: System.Object[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -506,7 +506,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-### System.Management.Automation.PSObject[]
+### System.Object[]
 
 ### System.String[]
 

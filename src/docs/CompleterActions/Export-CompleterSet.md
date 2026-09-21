@@ -103,7 +103,7 @@ the script it came from through a `ScriptPath` or `SourcePath` property.
 Records without a script path cannot be expressed in a set and are rejected.
 
 ```yaml
-Type: System.Management.Automation.PSObject[]
+Type: System.Object[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -192,7 +192,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-### System.Management.Automation.PSObject[]
+### System.Object[]
 
 Registration records from `Get-CompleterRegistration` or
 `Import-CompleterScript`, or any object that describes a target and exposes a

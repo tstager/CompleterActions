@@ -60,7 +60,7 @@ function Unregister-CompleterRegistration
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
         [Alias('RegistrationKey')]
