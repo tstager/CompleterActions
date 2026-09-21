@@ -7,7 +7,9 @@ Emits a single Write-Warning per process for a legacy command name, naming
 the replacement command and the about_CompleterActions_Migration topic. The
 names that have already warned are tracked in the module-scope set created by
 Bootstrap.ps1, so a profile that calls a legacy name many times sees the
-warning once.
+warning once. A call whose warnings are suppressed, through -WarningAction
+SilentlyContinue or $WarningPreference, neither warns nor consumes the slot,
+so the next call that can show the warning still does.
 
 .PARAMETER LegacyName
 The deprecated command name the caller used.
@@ -31,6 +33,11 @@ function Write-CompleterDeprecationWarning
         [ValidateNotNullOrEmpty()]
         [string] $NewName
     )
+
+    if ($WarningPreference -in 'SilentlyContinue', 'Ignore')
+    {
+        return
+    }
 
     if ($script:CompleterDeprecationWarningsIssued.Add($LegacyName))
     {

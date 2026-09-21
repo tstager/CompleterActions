@@ -47,23 +47,31 @@ Import-Module -Name '{0}' -Force
 $scriptBlock = {{ param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters) }}
 Register-Completer -CommandName 'Test-DeprecationProbe' -ParameterName 'Name' -ScriptBlock $scriptBlock
 
+# The first call of each name is suppressed and must not consume the once-per-process slot;
+# the next two calls run with warnings enabled (3>$null only hides the display) and must warn once.
+$getSuppressed = $null
+$null = Get-CompleterRegistration -WarningVariable getSuppressed -WarningAction SilentlyContinue
 $getWarnings = $null
-$null = Get-CompleterRegistration -WarningVariable getWarnings -WarningAction SilentlyContinue
-$null = Get-CompleterRegistration -ManagedOnly -WarningVariable +getWarnings -WarningAction SilentlyContinue
+$null = Get-CompleterRegistration -WarningVariable getWarnings 3>$null
+$null = Get-CompleterRegistration -ManagedOnly -WarningVariable +getWarnings 3>$null
 
+$registerSuppressed = $null
+Register-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Path' -ScriptBlock $scriptBlock -WhatIf -WarningVariable registerSuppressed -WarningAction SilentlyContinue
 $registerWarnings = $null
-Register-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Path' -ScriptBlock $scriptBlock -WhatIf -WarningVariable registerWarnings -WarningAction SilentlyContinue
-Register-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Path' -ScriptBlock $scriptBlock -WhatIf -WarningVariable +registerWarnings -WarningAction SilentlyContinue
+Register-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Path' -ScriptBlock $scriptBlock -WhatIf -WarningVariable registerWarnings 3>$null
+Register-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Path' -ScriptBlock $scriptBlock -WhatIf -WarningVariable +registerWarnings 3>$null
 
+$unregisterSuppressed = $null
+Unregister-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Name' -WhatIf -WarningVariable unregisterSuppressed -WarningAction SilentlyContinue
 $unregisterWarnings = $null
-Unregister-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Name' -WhatIf -WarningVariable unregisterWarnings -WarningAction SilentlyContinue
-Unregister-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Name' -WhatIf -WarningVariable +unregisterWarnings -WarningAction SilentlyContinue
+Unregister-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Name' -WhatIf -WarningVariable unregisterWarnings 3>$null
+Unregister-CompleterRegistration -CommandName 'Test-DeprecationProbe' -ParameterName 'Name' -WhatIf -WarningVariable +unregisterWarnings 3>$null
 
 [pscustomobject] @{{
-    'Get-CompleterRegistration'        = @($getWarnings | ForEach-Object {{ $_.Message }})
-    'Register-CompleterRegistration'   = @($registerWarnings | ForEach-Object {{ $_.Message }})
-    'Unregister-CompleterRegistration' = @($unregisterWarnings | ForEach-Object {{ $_.Message }})
-}} | ConvertTo-Json -Compress
+    'Get-CompleterRegistration'        = @{{ Suppressed = @($getSuppressed).Count; Messages = @($getWarnings | ForEach-Object {{ $_.Message }}) }}
+    'Register-CompleterRegistration'   = @{{ Suppressed = @($registerSuppressed).Count; Messages = @($registerWarnings | ForEach-Object {{ $_.Message }}) }}
+    'Unregister-CompleterRegistration' = @{{ Suppressed = @($unregisterSuppressed).Count; Messages = @($unregisterWarnings | ForEach-Object {{ $_.Message }}) }}
+}} | ConvertTo-Json -Compress -Depth 3
 '@ -f $script:ManifestPath
 
             $probePath = Join-Path -Path $TestDrive -ChildPath 'deprecation-probe.ps1'
@@ -72,10 +80,12 @@ Unregister-CompleterRegistration -CommandName 'Test-DeprecationProbe' -Parameter
             $script:ProbeExitCode = $LASTEXITCODE
         }
 
-        It 'emits exactly one warning for <Alias> across two calls in a fresh process' -TestCases $script:LegacyCommands {
+        It 'emits exactly one warning for <Alias> across two calls in a fresh process, after a suppressed call consumed nothing' -TestCases $script:LegacyCommands {
             $script:ProbeExitCode | Should -Be 0 -Because ($script:ProbeOutput -join [Environment]::NewLine)
-            $warnings = @(($script:ProbeOutput[-1] | ConvertFrom-Json).$Alias)
+            $result = ($script:ProbeOutput[-1] | ConvertFrom-Json).$Alias
+            $warnings = @($result.Messages)
 
+            $result.Suppressed | Should -Be 0 -Because 'a call under -WarningAction SilentlyContinue neither warns nor consumes the once-per-process slot'
             $warnings.Count | Should -Be 1
             $warnings[0] | Should -Be "$Alias is deprecated and will be removed in 3.0; use $NewName instead. See about_CompleterActions_Migration."
         }
