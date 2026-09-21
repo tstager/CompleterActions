@@ -699,6 +699,12 @@ Describe 'Completer registration public API' {
         $command.Parameters.ContainsKey('Key') | Should -BeFalse
         $command.Parameters.ContainsKey('RegistrationKey') | Should -BeFalse
         $command.ParameterSets.Name | Should -Not -Contain 'ByKey'
+
+        $parameterAliases = @($command.Parameters.Values | ForEach-Object { $_.Aliases })
+        foreach ($keyName in 'Key', 'RegistrationKey', 'RuntimeKey')
+        {
+            $parameterAliases | Should -Not -Contain $keyName -Because "the 1.x -Key parameter carried RegistrationKey as an alias, and CommandInfo.Parameters never lists aliases"
+        }
     }
 
     It 'supports pipeline unregister from get output' {
