@@ -1737,7 +1737,9 @@ the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
 its managed record is removed. The command supports array inputs for the
-target fields, plus pipeline input from Get-Completer output. Keys
+target fields, plus pipeline input from Get-Completer output; a target the
+same call already removed, such as the Conflicted twin of a Stale record, is
+skipped rather than reported as missing. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
 the target with -CommandName plus -Native or -ParameterName instead.
 
@@ -1801,6 +1803,11 @@ function Unregister-Completer
         [switch] $PassThru
     )
 
+    begin
+    {
+        $removedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
+
     process
     {
         $resolvedTargets = @()
@@ -1837,6 +1844,11 @@ function Unregister-Completer
 
             foreach ($target in $resolvedTargets)
             {
+                if ($removedKeys.Contains($target.Key))
+                {
+                    continue
+                }
+
                 $managedRegistration = $null
                 $runtimeRegistration = $null
                 $registrationToRemove = $null
@@ -1894,6 +1906,8 @@ function Unregister-Completer
                     {
                         $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
                     }
+
+                    $null = $removedKeys.Add($target.Key)
 
                     if ($PassThru)
                     {

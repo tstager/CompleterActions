@@ -698,6 +698,41 @@ Describe 'Completer registration public API' {
         Get-Completer -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
+    It 'removes every target when unfiltered get output includes a replaced target' {
+        function Test-ManagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $managedScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('managed', 'managed', 'ParameterValue', 'managed')
+        }
+
+        $externalScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
+        }
+
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
+
+        $records = @(Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name') + @(Get-Completer -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name')
+        @($records.State) | Should -Be @('Stale', 'Conflicted', 'Active')
+
+        $removed = @($records | Unregister-Completer -AllowUnmanaged -Confirm:$false -PassThru)
+
+        @($removed.Key) | Should -Be @('test-managedtool:name', 'test-pipelineextratool:name') -Because 'the Conflicted twin of the Stale record names a key the same call already removed'
+        Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
     It 'supports unregister input objects in batches' {
         $scriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
