@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-Creates a Register-CompleterRegistration-compatible import object.
+Creates a Register-Completer-compatible import object.
 
 .DESCRIPTION
 Builds the public object emitted by Import-CompleterScript. The resulting object
 captures normalized target metadata plus the imported ScriptBlock object from the
 temporary import module so callers can pipe it directly into
-Register-CompleterRegistration -InputObject.
+Register-Completer -InputObject.
 
 .PARAMETER Target
 The normalized completer target metadata.
@@ -31,7 +31,7 @@ function New-ImportedCompleterRegistration
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an import object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.ImportedCompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -53,8 +53,7 @@ function New-ImportedCompleterRegistration
         [switch] $Trusted
     )
 
-    [pscustomobject] [ordered] @{
-        PSTypeName      = 'CompleterActions.ImportedCompleterRegistration'
+    [ImportedCompleterRegistration] @{
         Key             = [string] $Target.Key
         RegistrationKey = [string] $Target.Key
         RuntimeKey      = [string] $Target.RuntimeKey

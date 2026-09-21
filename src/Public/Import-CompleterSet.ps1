@@ -30,7 +30,7 @@ Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-lazily under the entry's trust tier, exactly as Register-CompleterRegistration
+lazily under the entry's trust tier, exactly as Register-Completer
 -Lazy registers a script, so each target gets a stub and a managed record in
 state Pending. The whole set is one transaction against one snapshot of the
 session's registrations: validation and registration read the managed table
@@ -57,7 +57,7 @@ Replaces existing managed or runtime registrations for the targets in the set,
 including Failed lazy records whose load should be retried.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 Returns the CompleterActions.CompleterRegistration records that were created
 or reused for the set's targets, in state Pending until each script loads.
 
@@ -76,7 +76,7 @@ registration for the same targets.
 function Import-CompleterSet
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]

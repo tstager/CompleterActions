@@ -182,7 +182,7 @@ Describe 'Import-CompleterScript trusted tier' {
         $fixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'TrustedOnlyCompleter.ps1'
 
         { Import-CompleterScript -Path $fixturePath } | Should -Throw '*does not conform to the strict import grammar*'
-        Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'imports the trusted-only fixture with -Trusted and registers a working completer' {
@@ -195,9 +195,9 @@ Describe 'Import-CompleterScript trusted tier' {
         $imported[0].Key | Should -Be 'test-trustedfixturetool:name'
         $imported[0].Trusted | Should -BeTrue
         $imported[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
-        Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
 
-        $registered = @($imported | Register-CompleterRegistration -PassThru)
+        $registered = @($imported | Register-Completer -PassThru)
 
         $registered.Count | Should -Be 1
         $registered[0].Key | Should -Be 'test-trustedfixturetool:name'
@@ -243,8 +243,8 @@ Describe 'Test-CompleterRegistration' {
             )
         }
 
-        $null = Import-CompleterScript -Path (Join-Path -Path $script:ImportFixtureRoot -ChildPath 'ParameterCompleter.ps1') | Register-CompleterRegistration
-        $null = Import-CompleterScript -Path (Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1') | Register-CompleterRegistration
+        $null = Import-CompleterScript -Path (Join-Path -Path $script:ImportFixtureRoot -ChildPath 'ParameterCompleter.ps1') | Register-Completer
+        $null = Import-CompleterScript -Path (Join-Path -Path $script:FixtureRoot -ChildPath 'ImportableNativeCompleter.ps1') | Register-Completer
     }
 
     AfterEach {
@@ -285,12 +285,27 @@ Describe 'Test-CompleterRegistration' {
         $matches[0].RuntimeKey | Should -Be 'importfixture'
     }
 
-    It 'accepts a piped registration record and a registration key' {
-        $piped = @(Get-CompleterRegistration -CommandName 'importfixture' -Native | Test-CompleterRegistration -InputText 'importfixture b')
+    It 'accepts a piped registration record and a key-bearing input object with a native indicator' {
+        $piped = @(Get-Completer -CommandName 'importfixture' -Native | Test-CompleterRegistration -InputText 'importfixture b')
         @($piped.CompletionText) | Should -Be @('beta')
 
-        $byKey = @(Test-CompleterRegistration -Key 'importfixture' -InputText 'importfixture b')
+        $byKey = @(Test-CompleterRegistration -InputObject ([pscustomobject] @{ Key = 'importfixture'; IsNative = $true }) -InputText 'importfixture b')
         @($byKey.CompletionText) | Should -Be @('beta')
+    }
+
+    It 'pipes a <Kind> completion match back into the target-taking commands' -TestCases @(
+        @{ Kind = 'native'; IsNative = $true; Key = 'importfixture'; Run = { Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a' } },
+        @{ Kind = 'parameter'; IsNative = $false; Key = 'test-importedfixturetool:name'; Run = { Test-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' -InputText 'Test-ImportedFixtureTool -Name imported' } }
+    ) {
+        param($IsNative, $Key, $Run)
+
+        $match = @(& $Run)[0]
+        $match.IsNative | Should -Be $IsNative
+
+        @($match | Get-Completer).Key | Should -Be $Key
+        @($match | Test-CompleterRegistration -InputText $match.InputText).Key | Should -Be $Key
+        @($match | Unregister-Completer -Confirm:$false -PassThru).Key | Should -Be $Key
+        $match | Get-Completer | Should -BeNullOrEmpty
     }
 
     It 'defaults the cursor to the end of the input and honours an explicit position' {
@@ -314,9 +329,9 @@ Describe 'Test-CompleterRegistration' {
     }
 
     It 'refuses more than one target per call instead of stamping one completion onto every target (<Name>)' -TestCases @(
-        @{ Name = 'array key'; Run = { Test-CompleterRegistration -Key 'importfixture', 'Test-ImportedFixtureTool:Name' -InputText 'importfixture a' } },
+        @{ Name = 'input object array'; Run = { Test-CompleterRegistration -InputObject @([pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true }, [pscustomobject] @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name' }) -InputText 'importfixture a' } },
         @{ Name = 'array command name'; Run = { Test-CompleterRegistration -CommandName 'importfixture', 'Test-ImportedFixtureTool' -Native -InputText 'importfixture a' } },
-        @{ Name = 'piped records'; Run = { Get-CompleterRegistration -Key 'importfixture', 'Test-ImportedFixtureTool:Name' | Test-CompleterRegistration -InputText 'importfixture a' } }
+        @{ Name = 'piped records'; Run = { @(Get-Completer -CommandName 'importfixture' -Native) + @(Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name') | Test-CompleterRegistration -InputText 'importfixture a' } }
     ) {
         param($Run)
 

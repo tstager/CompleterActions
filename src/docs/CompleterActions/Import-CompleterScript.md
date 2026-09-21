@@ -33,7 +33,7 @@ Import-CompleterScript -LiteralPath <string[]> [-Trusted] [<CommonParameters>]
 
 Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows `Register-ArgumentCompleter`, and emits objects
-that can be piped directly to `Register-CompleterRegistration -InputObject`.
+that can be piped directly to `Register-Completer -InputObject`.
 
 The command has two tiers. The strict tier is the default: it validates the
 script against a closed grammar before executing it, rejects every unsupported
@@ -91,7 +91,7 @@ remain importable through the strict tier without redesign. Run
 
 ```PowerShell
 Import-CompleterScript -Path .\7z_completer.ps1 |
-    Register-CompleterRegistration -PassThru
+    Register-Completer -PassThru
 ```
 
 Imports a supported completer script and registers the imported definitions
@@ -114,7 +114,7 @@ rather than at script scope.
 
 ```PowerShell
 Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
-    Register-CompleterRegistration
+    Register-Completer
 ```
 
 Imports a completer script you own without validating it against the strict
@@ -203,10 +203,10 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.ImportedCompleterRegistration
 
 Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
-`Register-CompleterRegistration -InputObject`. The `Trusted` property records
+`Register-Completer -InputObject`. The `Trusted` property records
 which tier produced the record.
 
 ## NOTES

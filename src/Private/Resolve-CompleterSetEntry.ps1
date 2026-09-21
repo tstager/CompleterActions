@@ -14,7 +14,7 @@ must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
 two lists must match; the strict import grammar itself runs when the script
 loads. The entry's Pending records, one lazy stub per target, are then held to
-the rules Register-CompleterRegistration applies through
+the rules Register-Completer applies through
 Resolve-CompleterRegistrationConflict against the snapshot the whole set
 shares, so a target that already carries a different registration is a
 problem unless -Force is given, and a target that an earlier valid entry of

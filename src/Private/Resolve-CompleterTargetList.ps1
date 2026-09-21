@@ -8,9 +8,6 @@ throughout the module. Command and parameter arrays are paired by position when
 they have matching lengths, or broadcast when either side contains a single
 value.
 
-.PARAMETER Key
-One or more normalized or runtime keys to resolve.
-
 .PARAMETER CommandName
 One or more command names to resolve.
 
@@ -25,13 +22,9 @@ CompleterActions.CompleterTarget
 #>
 function Resolve-CompleterTargetList
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
-
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
@@ -47,22 +40,6 @@ function Resolve-CompleterTargetList
 
     switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey'
-        {
-            foreach ($keyItem in $Key)
-            {
-                if (Test-CompleterNativeKeyShape -Key $keyItem)
-                {
-                    Resolve-CompleterTarget -RuntimeKey $keyItem -Native
-                    continue
-                }
-
-                Resolve-CompleterTarget -RuntimeKey $keyItem
-            }
-
-            break
-        }
-
         'Native'
         {
             foreach ($commandNameItem in $CommandName)

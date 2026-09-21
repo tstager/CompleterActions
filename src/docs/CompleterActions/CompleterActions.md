@@ -20,7 +20,7 @@ title: CompleterActions Module
 
 Writes a completer set file from registrations that came from scripts.
 
-### [Get-CompleterRegistration](Get-CompleterRegistration.md)
+### [Get-Completer](Get-Completer.md)
 
 Gets completer registrations known to the module or discovered at runtime.
 
@@ -32,7 +32,7 @@ Imports self-contained completer scripts into registration input objects.
 
 Validates a completer set file and registers every script it lists.
 
-### [Register-CompleterRegistration](Register-CompleterRegistration.md)
+### [Register-Completer](Register-Completer.md)
 
 Registers a managed PowerShell argument completer.
 
@@ -44,6 +44,6 @@ Runs tab completion for an input against a registered completer target.
 
 Checks completer scripts against the strict import grammar and reports findings.
 
-### [Unregister-CompleterRegistration](Unregister-CompleterRegistration.md)
+### [Unregister-Completer](Unregister-Completer.md)
 
 Removes completer registrations from runtime and, when applicable, module state.

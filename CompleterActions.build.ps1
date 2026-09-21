@@ -45,7 +45,7 @@ task clean {
 task build clean, external_help, {
 
     $sourceFolders = @(
-        @('Public', 'Private', 'Classes') |
+        @('Classes', 'Public', 'Private') |
             ForEach-Object { Join-Path -Path $sourceRoot -ChildPath $_ } |
             Where-Object { Test-Path -Path $_ -PathType Container }
     )
@@ -163,6 +163,7 @@ task build clean, external_help, {
         Copyright            = $resolvedCopyright
         Path                 = Join-Path -Path $modulePath -ChildPath "$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
+        AliasesToExport      = @($sourceManifestData.AliasesToExport)
     }
 
     if (-not [string]::IsNullOrWhiteSpace($resolvedProjectUri)) {

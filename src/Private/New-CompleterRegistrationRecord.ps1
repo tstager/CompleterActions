@@ -3,7 +3,7 @@
 Creates an internal completer registration record object.
 
 .DESCRIPTION
-Builds the PSCustomObject stored in the managed registration table. The helper
+Builds the CompleterRegistration instance stored in the managed registration table. The helper
 copies the required target metadata, derives convenience properties such as
 CompleterType and IsManaged, and captures both the script block and its text so
 module internals can inspect the registered completer later.
@@ -25,8 +25,10 @@ from Import-CompleterScript.
 
 .PARAMETER State
 Describes how the record relates to the live runtime. 'Active' records describe
-the value PowerShell is currently using. 'Pending' marks a lazy registration
-whose runtime value is still the stub that loads the script on first use.
+a managed registration whose value PowerShell is currently using. 'Discovered'
+marks a runtime value that no managed record describes. 'Pending' marks a lazy
+registration whose runtime value is still the stub that loads the script on
+first use.
 'Failed' marks a lazy registration whose script failed to load; its runtime
 entry was removed and LoadError holds the reason. 'Stale' marks a managed
 record whose stored script no longer matches the runtime because the target
@@ -45,8 +47,8 @@ dot-sources it without validating it against the strict import grammar.
 The error message from the failed lazy load of a 'Failed' record.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
-Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
+CompleterActions.CompleterRegistration
+Returns a CompleterRegistration instance suitable for internal storage.
 
 .EXAMPLE
 PS> $record = New-CompleterRegistrationRecord -Target $target -ScriptBlock $scriptBlock
@@ -58,7 +60,7 @@ function New-CompleterRegistrationRecord
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an in-memory registration object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -76,8 +78,7 @@ function New-CompleterRegistrationRecord
         [System.Management.Automation.PSModuleInfo] $ImportModule,
 
         [Parameter()]
-        [ValidateSet('Active', 'Pending', 'Failed', 'Stale', 'Conflicted')]
-        [string] $State = 'Active',
+        [CompleterState] $State = 'Active',
 
         [Parameter()]
         [string] $ScriptPath,
@@ -97,8 +98,7 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [pscustomobject] [ordered] @{
-        PSTypeName          = 'CompleterActions.CompleterRegistration'
+    $registration = [CompleterRegistration] @{
         Key                 = [string] $Target.Key
         RegistrationKey     = [string] $Target.Key
         RuntimeKey          = [string] $Target.RuntimeKey

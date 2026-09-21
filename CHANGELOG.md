@@ -7,6 +7,148 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+The 2.0.0 breaking surface. Every incompatible change of the 2.x line lands
+here at once, with aliases for the old names, so there is one migration to
+make; `about_CompleterActions_Migration` walks through it with before and
+after samples.
+
+### Changed
+
+- **Renamed commands** (breaking). The three commands with the
+  `CompleterRegistration` noun are renamed; the old names stay as exported
+  aliases until 3.0.
+
+  | 1.x | 2.0 |
+  | --- | --- |
+  | `Get-CompleterRegistration` | `Get-Completer` |
+  | `Register-CompleterRegistration` | `Register-Completer` |
+  | `Unregister-CompleterRegistration` | `Unregister-Completer` |
+
+  Each alias points at an exported legacy wrapper
+  (`Get-CompleterRegistrationLegacy`, `Register-CompleterRegistrationLegacy`,
+  `Unregister-CompleterRegistrationLegacy`) that forwards every parameter,
+  pipeline input, `-WhatIf`, and `-Confirm` to the new command and shows the
+  new command's help. The wrappers are exported because an exported alias
+  whose target function is not exported fails at the call site, so
+  `Get-Command -Module CompleterActions` lists eleven functions and three
+  aliases. The first call to each old name in a process writes one warning,
+  `<old name> is deprecated and will be removed in 3.0; use <new name>
+  instead. See about_CompleterActions_Migration.`; later calls are silent.
+- **Explicit target contract** (breaking). Keys are output-only identifiers.
+  The typed `-Key` parameter is removed from `Get-Completer`,
+  `Unregister-Completer`, and `Test-CompleterRegistration`, and the
+  inference that read a key's shape (no colon for a native command,
+  `Command:Parameter` for a parameter completer, a path separator after the
+  last colon for a native command path) is deleted together with its helper.
+  A target is named with `-CommandName` plus `-Native` or `-ParameterName`,
+  or described by an input object that carries `CommandName` with
+  `Native`/`IsNative` or `ParameterName`, or a `Key`, `RegistrationKey`, or
+  `RuntimeKey` together with `IsNative`/`Native`. A bare key input object
+  fails with `InputObject supplies the key '<key>' without an IsNative or
+  Native property ... See about_CompleterActions_Migration.` Records piped
+  back from `Get-Completer`, `Register-Completer -PassThru`,
+  `Import-CompleterScript`, `Import-CompleterSet`, and
+  `Test-CompleterRegistration` always carry `IsNative` and still round-trip;
+  `Get-Completer` gained an `InputObject` parameter set for them, matching
+  `Unregister-Completer` and `Test-CompleterRegistration`.
+  `Unregister-Completer`'s default parameter set is `CommandParameter`, so a
+  call without arguments reports the missing `CommandName` and
+  `ParameterName`. Completer set files never carried keys, so a set exported
+  by 2.0.0-preview3 imports unchanged.
+
+  ```powershell
+  # 1.x
+  Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
+  Unregister-CompleterRegistration -Key 'git'
+  # 2.0
+  Get-Completer -CommandName git -ParameterName checkout, branch
+  Unregister-Completer -CommandName git -Native
+  ```
+
+- **One `-State` filter** (breaking). `-ManagedOnly` and `-DiscoveredOnly`
+  are removed from `Get-Completer` and replaced by `-State`, a
+  `CompleterState[]` accepting `Active`, `Stale`, `Conflicted`, `Pending`,
+  `Failed`, and `Discovered` with tab completion; a scalar binds, several
+  values return the union, and no `-State` returns everything. The legacy
+  `Get-CompleterRegistration` alias keeps both switches and translates
+  `-ManagedOnly` to `-State Active, Pending, Failed, Stale` and
+  `-DiscoveredOnly` to `-State Discovered, Conflicted`; it rejects either
+  switch combined with `-State`. `Export-CompleterSet` uses the same managed
+  state list internally.
+- **A runtime-only registration now reports `State` `Discovered`, not
+  `Active`** (breaking). `Active` is reserved for managed records whose
+  stored script is the live runtime value; a live value that no managed
+  record describes is `Discovered`. A filter such as
+  `Where-Object State -eq Active` that relied on runtime-only registrations
+  being `Active` now returns managed records only; use
+  `-State Active, Discovered` for the old meaning. `Source`, `IsManaged`, and
+  `IsRuntimeRegistered` are unchanged. `Unregister-Completer -PassThru
+  -AllowUnmanaged` returns the removed runtime-only record as `Discovered`.
+- **A replaced target yields two records** (breaking). `Get-Completer`
+  computes every candidate's state once and `-State` selects among them, so
+  a managed target that was replaced outside the module returns both its
+  `Stale` managed record and the `Conflicted` live value from an unfiltered
+  call (1.x returned only the `Conflicted` record unless `-ManagedOnly`
+  revealed the `Stale` one). The same holds for a `Failed` managed record
+  whose target was re-registered externally. `Key` is unique in the output
+  except for such replaced targets.
+- **Promised sort order.** `Get-Completer` sorts by `CompleterType` (native
+  first), `CommandName`, and `ParameterName` before `-Skip` and `-First` are
+  applied, so paging across several calls neither skips nor duplicates a
+  record while unrelated targets change between pages; only a target that
+  sorts before the current window can shift it. 1.x returned insertion
+  order.
+- **Typed output** (breaking). Registration, import, finding, and
+  completion-match records are PowerShell classes (`CompleterRegistration`,
+  `ImportedCompleterRegistration`, `CompleterScriptFinding`,
+  `CompletionMatch`) backed by the `CompleterState` and `CompleterType`
+  enums, and every command declares its record type in `OutputType`. A class
+  cannot carry a dotted name, so each keeps a bare class name and inserts the
+  existing dotted `PSTypeName` (`CompleterActions.CompleterRegistration` and
+  so on) at the front of its `PSTypeNames` in the constructor; the dotted
+  name remains the contract for format views and type checks, and the
+  classes are private to the module's session state, so `-is
+  [CompleterRegistration]` only resolves inside the module. Property names
+  and order are unchanged, except that `CompletionMatch` gained `IsNative`
+  after `ParameterName` so a native match resolves as a target when it is
+  piped back. `State` and `CompleterType` are enum values that
+  still compare equal to their names (`-eq 'Failed'`, `-in Pending, Failed`).
+  String properties that were `$null` on the 1.x records are `''` on the
+  class records: `ParameterName` on a native record, `ScriptPath` and
+  `LoadError` on a record without a script, and `ToolTip` on a completion
+  match; a `-eq $null` test no longer matches. `State` and `CompleterType`
+  serialize as integers through `ConvertTo-Json` and `Export-Clixml`, where
+  1.x wrote the name strings; pass `-EnumsAsStrings` or store
+  `[string] $_.State` when persisting records (`ConvertTo-Csv` and the format
+  views still write the names). Across a remoting or job
+  boundary the records arrive as
+  `Deserialized.CompleterActions.CompleterRegistration` with `State` as a
+  plain string, as in 1.x.
+- The `InputObject` parameter of `Get-Completer`, `Register-Completer`,
+  `Unregister-Completer`, `Test-CompleterRegistration`, and
+  `Export-CompleterSet` is typed `[object[]]` instead of `[psobject[]]`, so a
+  piped class record binds by value instead of falling through to
+  property-name binding. Because every piped object binds there,
+  `Get-Completer` no longer declares property-name binding on `-CommandName`,
+  `-ParameterName`, and `-Native`; an input object describes one target, and
+  one whose `CommandName` or `ParameterName` holds several values is rejected
+  with an error instead of being joined into one name (pass arrays to
+  `-CommandName` and `-ParameterName` for several targets).
+- The source module loads `src\Classes` before `src\Private` and
+  `src\Public`, as one script block, and the packaged module defines the
+  classes before the first function.
+
+### Documentation
+
+- New `about_CompleterActions_Migration` topic: the rename table and alias
+  mechanics, the explicit target contract, the `-State` consolidation with
+  the `Discovered` change, the sort order, the typed records with the
+  class-versus-`PSTypeName` note and the deserialization caveat, and a
+  checklist for a profile. The deprecation warning and the bare-key error
+  name it.
+- README, `about_Import_Completers`, `about_Completer_Sets`, the command help,
+  and `.github/copilot-instructions.md` use the new names and `-State`.
+
 ## [2.0.0-preview3] - 2026-09-12
 
 Fixes for the five findings in `docs/code-review-2026-09-12.md`.

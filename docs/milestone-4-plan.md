@@ -17,7 +17,7 @@ Roadmap: `docs/roadmap-2.0.md`, milestone 4. Ships as `v2.0.0-rc1` first, then `
 
 ## Class and enum model
 
-New folder `src/Classes`, one file per type, loaded before `Private` and `Public` in both the source psm1 and the packaged psm1.
+New folder `src/Classes`, loaded before `Private` and `Public` in both the source psm1 and the packaged psm1. Review round 1 collapsed the six files below into one, `src/Classes/CompleterTypes.ps1`, because PSScriptAnalyzer parses each file alone and reports an enum from a sibling file as a `TypeNotFound` parse error that fails the CI lint gate.
 
 | File | Type |
 | --- | --- |
@@ -35,7 +35,7 @@ Gotchas to build against: definition before use in both load orders; classes are
 ## Alias and deprecation mechanism
 
 - Three aliases created in `src/Bootstrap.ps1` with `New-Alias`, listed in `AliasesToExport` in the source manifest, and added to the build's `Update-ModuleManifest` data.
-- Each alias points at a private legacy wrapper (`Get-CompleterRegistrationLegacy`, `Register-CompleterRegistrationLegacy`, `Unregister-CompleterRegistrationLegacy`), not at the new command. The wrapper records its own name in a module-scope `HashSet[string]` initialised in Bootstrap, emits one `Write-Warning` the first time per session naming the new command and `about_CompleterActions_Migration`, then forwards to the new command. Once per process, not per call, so a profile that calls it 169 times warns once.
+- Each alias points at an exported legacy wrapper (`Get-CompleterRegistrationLegacy`, `Register-CompleterRegistrationLegacy`, `Unregister-CompleterRegistrationLegacy`), not at the new command. The wrappers live in `src/Public` because an exported alias whose target is an unexported module function fails at the call site with "The term 'X' is not recognized" (verified on PowerShell 7.6.6 with both a plain and a module-qualified target), so the module exports eleven functions and three aliases until the wrappers go in 3.0. The wrapper records its own name in a module-scope `HashSet[string]` initialised in Bootstrap, emits one `Write-Warning` the first time per session naming the new command and `about_CompleterActions_Migration`, then forwards to the new command. Once per process, not per call, so a profile that calls it 169 times warns once.
 - The wrappers copy `SupportsShouldProcess`/`ConfirmImpact` from the commands they wrap so `-WhatIf` and `-Confirm` flow through, and take pipeline input in a `process` block.
 - The legacy Get wrapper keeps `-ManagedOnly` and `-DiscoveredOnly` as deprecated parameters and translates them: `-ManagedOnly` becomes `-State Active,Pending,Failed,Stale`; `-DiscoveredOnly` becomes `-State Discovered,Conflicted`. `Get-Completer` itself never gains those switches.
 
@@ -68,8 +68,8 @@ Tests: rewrite the colon-style `-Key` literals in the test files as explicit tar
 
 ### WP4 Rename nouns, wrappers, aliases
 
-Files: rename the three public files and functions; add the three private legacy wrappers; Bootstrap alias creation and warning set; manifest `FunctionsToExport` and `AliasesToExport`; build `AliasesToExport`; switch internal callers (`Export-CompleterSet`, help examples) to the new names.
-Acceptance: `Get-Command -Module CompleterActions` shows eight functions and three aliases; each old name warns exactly once per process (`-WarningVariable`, called twice); `-WhatIf` through an alias behaves as through the new name.
+Files: rename the three public files and functions; add the three exported legacy wrappers; Bootstrap alias creation and warning set; manifest `FunctionsToExport` and `AliasesToExport`; build `AliasesToExport`; switch internal callers (`Export-CompleterSet`, help examples) to the new names.
+Acceptance: `Get-Command -Module CompleterActions` shows eleven functions (the eight commands plus the three wrappers) and three aliases; each old name warns exactly once per process (`-WarningVariable`, called twice); `-WhatIf` through an alias behaves as through the new name.
 Tests: new deprecation test file running in its own process; mechanical rename across the six existing test files except the cases that deliberately exercise the aliases.
 
 ### WP5 State enum and single filter

@@ -20,7 +20,7 @@ LONG DESCRIPTION
 
     - `Export-CompleterSet` writes a set from registration records, either
       the managed registrations that came from scripts or records piped in
-      from `Get-CompleterRegistration` or `Import-CompleterScript`.
+      from `Get-Completer` or `Import-CompleterScript`.
     - `Import-CompleterSet` reads a set, validates every entry up front, and
       registers each valid entry's targets.
 
@@ -85,7 +85,7 @@ THE SET FILE SCHEMA
     slashes so the file is portable. For a strict entry it writes every
     target the script registers and refuses, naming the missing targets and
     writing nothing, when the records it was given cover only some of them,
-    as they do after `Register-CompleterRegistration -Lazy -CommandName`
+    as they do after `Register-Completer -Lazy -CommandName`
     selected a subset; such an entry would fail the target check on import.
     A trusted entry is written with the targets the records carry, so a
     subset of a trusted script's targets exports and imports as given.
@@ -168,7 +168,7 @@ VALIDATION BEFORE REGISTRATION
     stays registered.
 
     The returned objects are the `CompleterActions.CompleterRegistration`
-    records for the set's targets, the same records `Get-CompleterRegistration`
+    records for the set's targets, the same records `Get-Completer`
     returns.
 
 LAZY LOADING, PENDING, AND FAILED
@@ -195,9 +195,9 @@ LAZY LOADING, PENDING, AND FAILED
     interrupted. The stub stores the error message on the managed record as
     `LoadError`, sets `State` to `Failed`, and removes its runtime entry, so
     later presses on that command get PowerShell's default completion
-    exactly as if no completer had been registered. `Get-CompleterRegistration`
-    shows the `Failed` record and its `LoadError`; `-ManagedOnly` includes
-    both `Pending` and `Failed` records. Only the target whose press failed
+    exactly as if no completer had been registered. `Get-Completer`
+    shows the `Failed` record and its `LoadError`; `-State Pending, Failed`
+    selects both. Only the target whose press failed
     moves to `Failed`; the script's other targets stay `Pending` and fail the
     same way on their own first press. Registering the script again with
     `-Force`, or importing the set again with `-Force`, retries the load.
@@ -211,6 +211,7 @@ LAZY LOADING, PENDING, AND FAILED
                     removed outside this module
     - `Conflicted`  a live runtime value that replaced a managed registration
                     outside this module
+    - `Discovered`  a live runtime value that no managed record describes
 
 THE PSREADLINE NEUTRALITY PROMISE
 
@@ -252,7 +253,7 @@ EXAMPLE 1
     Import a set and inspect what it registered:
 
         Import-CompleterSet -Path ~\Completers\completers.psd1 |
-            Format-Table Command, Parameter, Type, State
+            Format-Table CommandName, ParameterName, CompleterType, State
 
 EXAMPLE 2
 
@@ -275,15 +276,15 @@ EXAMPLE 4
 
     Find records that did not load and see why:
 
-        Get-CompleterRegistration -ManagedOnly |
-            Where-Object State -eq Failed |
-            Format-List Command, ScriptPath, LoadError
+        Get-Completer -State Failed |
+            Format-List CommandName, ScriptPath, LoadError
 
 SEE ALSO
 
     Get-Help Import-CompleterSet -Full
     Get-Help Export-CompleterSet -Full
-    Get-Help Register-CompleterRegistration -Full
-    Get-Help Get-CompleterRegistration -Full
+    Get-Help Register-Completer -Full
+    Get-Help Get-Completer -Full
     Get-Help Test-CompleterScript -Full
     about_Import_Completers
+    about_CompleterActions_Migration

@@ -74,13 +74,16 @@ FormatsToProcess = @(
  # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
  FunctionsToExport = @(
      'Export-CompleterSet',
-     'Get-CompleterRegistration',
+     'Get-Completer',
+     'Get-CompleterRegistrationLegacy',
      'Import-CompleterScript',
      'Import-CompleterSet',
-     'Register-CompleterRegistration',
+     'Register-Completer',
+     'Register-CompleterRegistrationLegacy',
      'Test-CompleterRegistration',
      'Test-CompleterScript',
-     'Unregister-CompleterRegistration'
+     'Unregister-Completer',
+     'Unregister-CompleterRegistrationLegacy'
  )
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
@@ -90,7 +93,11 @@ CmdletsToExport = @()
 VariablesToExport = @()
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
-AliasesToExport = @()
+AliasesToExport = @(
+    'Get-CompleterRegistration',
+    'Register-CompleterRegistration',
+    'Unregister-CompleterRegistration'
+)
 
 # DSC resources to export from this module
 # DscResourcesToExport = @()

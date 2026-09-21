@@ -1,3 +1,107 @@
+enum CompleterState
+{
+    Active
+    Stale
+    Conflicted
+    Pending
+    Failed
+    Discovered
+}
+
+enum CompleterType
+{
+    Native
+    Parameter
+}
+
+class CompleterRegistration
+{
+    CompleterRegistration()
+    {
+        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompleterRegistration')
+    }
+
+    [string] $Key
+    [string] $RegistrationKey
+    [string] $RuntimeKey
+    [string] $CommandName
+    [string] $ParameterName
+    [bool] $IsNative
+    [CompleterType] $CompleterType
+    [string] $TargetType
+    [string] $Source
+    [CompleterState] $State
+    [bool] $IsManaged
+    [bool] $IsRuntimeRegistered
+    [string] $ScriptPath
+    [bool] $Trusted
+    [string] $LoadError
+    [System.Management.Automation.PSModuleInfo] $ImportModule = $null
+    [scriptblock] $ScriptBlock = $null
+    [string] $ScriptText
+}
+
+class ImportedCompleterRegistration
+{
+    ImportedCompleterRegistration()
+    {
+        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.ImportedCompleterRegistration')
+    }
+
+    [string] $Key
+    [string] $RegistrationKey
+    [string] $RuntimeKey
+    [string] $CommandName
+    [string] $ParameterName
+    [bool] $IsNative
+    [bool] $Native
+    [CompleterType] $CompleterType
+    [string] $TargetType
+    [string] $Source
+    [bool] $Trusted
+    [string] $Path
+    [string] $SourcePath
+    [System.Management.Automation.PSModuleInfo] $ImportModule = $null
+    [scriptblock] $ScriptBlock = $null
+    [string] $ScriptText
+}
+
+class CompleterScriptFinding
+{
+    CompleterScriptFinding()
+    {
+        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompleterScriptFinding')
+    }
+
+    [string] $Path
+    [int] $Line
+    [int] $Column
+    [string] $Severity
+    [string] $Construct
+    [string] $Message
+    [string] $Hint
+}
+
+class CompletionMatch
+{
+    CompletionMatch()
+    {
+        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompletionMatch')
+    }
+
+    [string] $Key
+    [string] $RuntimeKey
+    [string] $CommandName
+    [string] $ParameterName
+    [bool] $IsNative
+    [CompleterType] $CompleterType
+    [string] $InputText
+    [int] $CursorPosition
+    [string] $CompletionText
+    [string] $ListItemText
+    [System.Management.Automation.CompletionResultType] $ResultType
+    [string] $ToolTip
+}
 <#
 .SYNOPSIS
 Writes a completer set file from registrations that came from scripts.
@@ -9,7 +113,7 @@ tier and the targets it registers. Import-CompleterSet reads the file back and
 registers everything in it, so a profile that imports a completer repository
 becomes one Import-CompleterSet call.
 
-Records arrive through -InputObject, typically from Get-CompleterRegistration
+Records arrive through -InputObject, typically from Get-Completer
 or Import-CompleterScript. Without -InputObject the command exports every
 managed registration that records a ScriptPath. Script paths are written
 relative to the set file when both share a root, so a repository can carry its
@@ -22,7 +126,7 @@ Import-CompleterSet compares a strict entry's Targets with the targets derived
 from the parsed script and rejects a mismatch. The command derives those
 targets the same way before writing and refuses, naming the missing targets
 and leaving the output untouched, when the records for a strict script cover
-only some of them, as they do after Register-CompleterRegistration -Lazy
+only some of them, as they do after Register-Completer -Lazy
 -CommandName selected a subset. Trusted entries are written with the targets
 the records carry, so a subset of a trusted script's targets exports and
 imports as given.
@@ -68,7 +172,7 @@ function Export-CompleterSet
 
         [Parameter(ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter()]
         [switch] $PassThru
@@ -109,7 +213,7 @@ function Export-CompleterSet
         {
             if (-not $inputBound)
             {
-                $records.AddRange([psobject[]] @(Get-CompleterRegistration -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+                $records.AddRange([psobject[]] @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
             }
 
             $entriesByPath = [ordered] @{}
@@ -256,21 +360,28 @@ function Export-CompleterSet
 Gets completer registrations known to the module or discovered at runtime.
 
 .DESCRIPTION
-Returns completer registration records for all registrations, specific
-registration keys, native command completers, or command parameter completers.
-By default the command merges module-managed registrations with
-runtime-discovered registrations and prefers the managed record when both refer
-to the same target and the managed record still matches the live runtime value.
-When the runtime registration was replaced outside this module, the live
-discovered value is returned with State 'Conflicted' instead; -ManagedOnly
-returns the managed record with State 'Stale'. When the runtime registration
-was removed outside this module, the managed record is returned with State
-'Stale' and IsRuntimeRegistered false. Lazy registrations report State
-'Pending' until their script loads on the first tab press and 'Failed' when
-that load failed; a Failed record has no runtime entry and carries the error
-in LoadError. Both are returned by default and by -ManagedOnly. The command
-accepts arrays for key, command, and parameter lookup scenarios and supports
-property-name pipeline binding for key-based and target-based lookups.
+Returns completer registration records for all registrations, native command
+completers, command parameter completers, or the targets described by piped
+registration records.
+The command merges module-managed registrations with runtime-discovered
+registrations and reports each record's State once, so -State can select any
+subset. A managed record whose stored script is the live runtime value is
+'Active', or 'Pending' while a lazy registration still waits for its first tab
+press. A runtime value that no managed record describes is 'Discovered'. When
+the runtime registration was replaced outside this module, the managed record
+is returned with State 'Stale' and the live value with State 'Conflicted';
+when it was removed outside this module, the managed record is 'Stale' with
+IsRuntimeRegistered false. A lazy registration whose script failed to load is
+'Failed'; it has no runtime entry and carries the error in LoadError. Without
+-State every record is returned. Records are sorted by CompleterType, then
+CommandName, then ParameterName before -Skip and -First are applied, so paging
+across several calls stays stable while unrelated targets change; only a
+target that sorts before the current window can shift it. The command accepts
+arrays for command and parameter lookups, and records piped back from
+Get-Completer or Import-CompleterScript resolve through their Key and IsNative
+properties. Keys are output-only identifiers: a hand-typed key string is not
+accepted, so name the target with -CommandName plus -Native or -ParameterName
+instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -280,13 +391,13 @@ name; such registrations are not returned and are reported with -Verbose as
 they are skipped, so they never prevent the supported registrations from being
 listed.
 
-.PARAMETER Key
-Gets the registrations that match one or more registration keys. A key without
-a colon is treated as a native command. A key with a colon is treated as a
-'Command:Parameter' target unless the text after its last colon contains a
-path separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
-the key shape is ambiguous.
+.PARAMETER InputObject
+Supplies one or more objects that describe the registrations to get, such as
+records returned by Get-Completer or Import-CompleterScript. Every piped
+object binds here. An input object describes one target: it exposes
+CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
+or RuntimeKey together with IsNative/Native. To look up several targets at
+once, pass arrays to -CommandName and -ParameterName instead.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter
@@ -299,74 +410,78 @@ Limits results to one or more parameter completer targets.
 Indicates that the lookup target is a native command completer instead of a
 command parameter completer.
 
-.PARAMETER ManagedOnly
-Returns only registrations tracked by this module.
-
-.PARAMETER DiscoveredOnly
-Returns only registrations discovered from the current PowerShell runtime.
+.PARAMETER State
+Returns only the records whose State is one of the given values: Active,
+Stale, Conflicted, Pending, Failed, or Discovered. Several values return the
+union.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 Returns CompleterActions.CompleterRegistration records. The State property is
-'Active' for records that describe the live runtime value, 'Pending' for lazy
-registrations whose script has not loaded yet, 'Failed' for lazy registrations
-whose script failed to load, 'Stale' for managed records that no longer match
-the runtime, and 'Conflicted' for live runtime values that replaced a managed
-registration outside this module. ScriptPath names the completer script behind
-a lazy or imported registration and LoadError holds the failure message of a
-Failed record.
+'Active' for managed records that describe the live runtime value,
+'Discovered' for runtime values that no managed record describes, 'Pending'
+for lazy registrations whose script has not loaded yet, 'Failed' for lazy
+registrations whose script failed to load, 'Stale' for managed records that no
+longer match the runtime, and 'Conflicted' for live runtime values that
+replaced a managed registration outside this module. ScriptPath names the
+completer script behind a lazy or imported registration and LoadError holds
+the failure message of a Failed record.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName 'git' -Native
+PS> Get-Completer -CommandName 'git' -Native
 
 Gets the registration record for the native completer currently associated with
 git.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
+PS> Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'
 
-Gets multiple completer registrations by key in a single call.
+Gets multiple command-parameter completer registrations in a single call.
+
+.EXAMPLE
+PS> Get-Completer -State Pending, Failed
+
+Lists the lazy registrations that have not loaded yet and the ones whose script
+failed to load, with the failure message in LoadError.
+
+.EXAMPLE
+PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer
+
+Gets the live registrations for the targets a completer script defines by
+piping its import records back in.
 #>
-function Get-CompleterRegistration
+function Get-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
         [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
         [string[]] $ParameterName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Alias('IsNative')]
         [switch] $Native,
 
         [Parameter()]
-        [switch] $ManagedOnly,
-
-        [Parameter()]
-        [switch] $DiscoveredOnly
+        [ValidateNotNullOrEmpty()]
+        [CompleterState[]] $State
     )
 
     begin
     {
-        if ($ManagedOnly -and $DiscoveredOnly)
-        {
-            throw 'ManagedOnly and DiscoveredOnly cannot be used together.'
-        }
-
         $registrationsByKey = [ordered] @{}
     }
 
@@ -378,18 +493,16 @@ function Get-CompleterRegistration
 
         try
         {
-            if ($PSCmdlet.ParameterSetName -ne 'All')
+            if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+            {
+                $targets = @($InputObject | Resolve-CompleterInputObject | ForEach-Object { $_.Target })
+            }
+            elseif ($PSCmdlet.ParameterSetName -ne 'All')
             {
                 $targetParameters = @{}
 
                 switch ($PSCmdlet.ParameterSetName)
                 {
-                    'ByKey'
-                    {
-                        $targetParameters['Key'] = $Key
-                        break
-                    }
-
                     'Native'
                     {
                         $targetParameters['CommandName'] = $CommandName
@@ -408,35 +521,21 @@ function Get-CompleterRegistration
                 $targets = @(Resolve-CompleterTargetList @targetParameters)
             }
 
-            if (-not $DiscoveredOnly)
+            if ($targets.Count -eq 0)
             {
-                if ($targets.Count -eq 0)
+                $managedRegistrations = @(Find-ManagedCompleterRegistration)
+                $discoveredRegistrations = @(Find-RuntimeCompleterRegistration)
+            }
+            else
+            {
+                foreach ($target in $targets)
                 {
-                    $managedRegistrations = @(Find-ManagedCompleterRegistration)
-                }
-                else
-                {
-                    foreach ($target in $targets)
-                    {
-                        $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
-                    }
+                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
+                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
                 }
             }
 
-            if (-not $ManagedOnly)
-            {
-                if ($targets.Count -eq 0)
-                {
-                    $discoveredRegistrations = @(Find-RuntimeCompleterRegistration)
-                }
-                else
-                {
-                    foreach ($target in $targets)
-                    {
-                        $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
-                    }
-                }
-            }
+            $snapshot = Get-CompleterRegistrationSnapshot
 
             foreach ($registration in $managedRegistrations)
             {
@@ -445,55 +544,31 @@ function Get-CompleterRegistration
                     continue
                 }
 
-                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
+                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key -Snapshot $snapshot
 
-                if ($registrationState.ManagedState -in 'Active', 'Pending')
+                if ($registrationState.ManagedState -in 'Active', 'Pending', 'Failed')
                 {
-                    $registrationsByKey[[string] $registration.Key] = $registration
-                }
-                elseif ($registrationState.ManagedState -eq 'Failed' -and ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration))
-                {
-                    $registrationsByKey[[string] $registration.Key] = $registration
-                }
-                elseif ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration)
-                {
-                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                    $registrationsByKey["Managed:$($registration.Key)"] = $registration
                 }
                 else
                 {
-                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                    $registrationsByKey["Managed:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                }
+
+                if ($registrationState.ManagedState -in 'Stale', 'Failed' -and $null -ne $registrationState.RuntimeRegistration)
+                {
+                    $registrationsByKey["Discovered:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                 }
             }
 
             foreach ($registration in $discoveredRegistrations)
             {
-                if ($null -eq $registration)
+                if ($null -eq $registration -or $registrationsByKey.Contains("Managed:$($registration.Key)"))
                 {
                     continue
                 }
 
-                if ($registrationsByKey.Contains([string] $registration.Key))
-                {
-                    continue
-                }
-
-                if ($DiscoveredOnly)
-                {
-                    $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
-
-                    if ($registrationState.ManagedState -in 'Active', 'Pending')
-                    {
-                        continue
-                    }
-
-                    if ($registrationState.ManagedState -in 'Stale', 'Failed')
-                    {
-                        $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
-                        continue
-                    }
-                }
-
-                $registrationsByKey[[string] $registration.Key] = $registration
+                $registrationsByKey["Discovered:$($registration.Key)"] = $registration
             }
         }
         catch
@@ -511,6 +586,13 @@ function Get-CompleterRegistration
     end
     {
         $registrations = @($registrationsByKey.Values)
+
+        if ($PSBoundParameters.ContainsKey('State'))
+        {
+            $registrations = @($registrations | Where-Object { $State -contains $_.State })
+        }
+
+        $registrations = @($registrations | Sort-Object -Property 'CompleterType', 'CommandName', 'ParameterName' -Stable)
         $totalCount = $registrations.Count
 
         if ($PSCmdlet.PagingParameters.IncludeTotalCount)
@@ -551,13 +633,89 @@ function Get-CompleterRegistration
     }
 }
 <#
+.ForwardHelpTargetName Get-Completer
+.ForwardHelpCategory Function
+#>
+function Get-CompleterRegistrationLegacy
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [CompleterState[]] $State,
+
+        [Parameter()]
+        [switch] $ManagedOnly,
+
+        [Parameter()]
+        [switch] $DiscoveredOnly
+    )
+
+    begin
+    {
+        Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
+
+        if (($ManagedOnly -and $DiscoveredOnly) -or (($ManagedOnly -or $DiscoveredOnly) -and $PSBoundParameters.ContainsKey('State')))
+        {
+            throw 'ManagedOnly, DiscoveredOnly, and State cannot be used together.'
+        }
+
+        $forwardedParameters = [hashtable] $PSBoundParameters
+        $null = $forwardedParameters.Remove('ManagedOnly')
+        $null = $forwardedParameters.Remove('DiscoveredOnly')
+
+        if ($ManagedOnly)
+        {
+            $forwardedParameters['State'] = [CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
+        }
+        elseif ($DiscoveredOnly)
+        {
+            $forwardedParameters['State'] = [CompleterState[]] @('Discovered', 'Conflicted')
+        }
+
+        $steppablePipeline = { Get-Completer @forwardedParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process
+    {
+        $steppablePipeline.Process($_)
+    }
+
+    end
+    {
+        $steppablePipeline.End()
+    }
+}
+<#
 .SYNOPSIS
 Imports self-contained completer scripts into registration input objects.
 
 .DESCRIPTION
 Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows Register-ArgumentCompleter, and emits objects that
-can be piped directly to Register-CompleterRegistration -InputObject.
+can be piped directly to Register-Completer -InputObject.
 
 Import-CompleterScript has two tiers. The strict tier is the default: it
 validates the script against a closed grammar before executing it, rejects
@@ -601,19 +759,19 @@ would when the script is dot-sourced from a profile. The emitted records carry
 Trusted set to true.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.ImportedCompleterRegistration
 Returns CompleterActions.ImportedCompleterRegistration records compatible with
-Register-CompleterRegistration -InputObject. The Trusted property records which
+Register-Completer -InputObject. The Trusted property records which
 tier produced the record.
 
 .EXAMPLE
-PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-CompleterRegistration -PassThru
+PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-Completer -PassThru
 
 Imports a supported completer script and immediately registers the imported
 completer definitions through the module's managed registration API.
 
 .EXAMPLE
-PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-CompleterRegistration
+PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-Completer
 
 Imports a completer script you own without validating it against the strict
 grammar, then registers it.
@@ -638,7 +796,7 @@ function Import-CompleterScript
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.ImportedCompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
@@ -731,7 +889,7 @@ Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-lazily under the entry's trust tier, exactly as Register-CompleterRegistration
+lazily under the entry's trust tier, exactly as Register-Completer
 -Lazy registers a script, so each target gets a stub and a managed record in
 state Pending. The whole set is one transaction against one snapshot of the
 session's registrations: validation and registration read the managed table
@@ -758,7 +916,7 @@ Replaces existing managed or runtime registrations for the targets in the set,
 including Failed lazy records whose load should be retried.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 Returns the CompleterActions.CompleterRegistration records that were created
 or reused for the set's targets, in state Pending until each script loads.
 
@@ -780,7 +938,7 @@ function Import-CompleterSet
 #>
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
@@ -926,14 +1084,11 @@ hooks key handlers, replaces TabExpansion2, or changes PSReadLine options.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
-expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
-property whose value is a script block. When only a key is supplied and no
-IsNative/Native property is present, a key without a colon is treated as a
-native command, and a key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'. An
-explicit IsNative/Native property always wins. ScriptPath or SourcePath and
+expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native, and must expose a
+ScriptBlock property whose value is a script block. A key without a native
+indicator is rejected; keys are output-only identifiers and are never
+classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record.
 
@@ -983,45 +1138,45 @@ retried.
 Returns the managed registration records that were created or reused.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+PS> Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 
 Registers a native completer for demoexe with a script block that is already in
 memory.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 
 Reads the targets from the script's Register-ArgumentCompleter calls, registers
 a stub for each of them, and returns the Pending records. The script runs the
 first time tab completion is requested for one of its targets.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 
 Registers a script that needs the trusted tier lazily. The targets are named
 explicitly because a trusted script is not parsed.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
+PS> Get-Completer -State Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
 
 Retries every lazy registration whose script failed to load, after the scripts
 have been fixed.
 #>
-function Register-CompleterRegistration
+function Register-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -1222,6 +1377,88 @@ function Register-CompleterRegistration
     }
 }
 <#
+.ForwardHelpTargetName Register-Completer
+.ForwardHelpCategory Function
+#>
+function Register-CompleterRegistrationLegacy
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'The wrapper forwards -WhatIf and -Confirm to the wrapped command, which calls ShouldProcess.')]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [ValidateNotNull()]
+        [scriptblock] $ScriptBlock,
+
+        [Parameter(Mandatory, ParameterSetName = 'LazyPath')]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LazyLiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory, ParameterSetName = 'LazyPath')]
+        [Parameter(Mandatory, ParameterSetName = 'LazyLiteralPath')]
+        [switch] $Lazy,
+
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [switch] $Trusted,
+
+        [Parameter()]
+        [switch] $Force,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        Write-CompleterDeprecationWarning -LegacyName 'Register-CompleterRegistration' -NewName 'Register-Completer'
+
+        $steppablePipeline = { Register-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process
+    {
+        $steppablePipeline.Process($_)
+    }
+
+    end
+    {
+        $steppablePipeline.End()
+    }
+}
+<#
 .SYNOPSIS
 Runs tab completion for an input against a registered completer target.
 
@@ -1234,7 +1471,7 @@ check that used to be done by hand after every registration can be scripted
 and asserted on.
 
 One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as Get-CompleterRegistration so
+The target parameters accept the same shapes as Get-Completer so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
@@ -1243,15 +1480,9 @@ registration, and it never touches PSReadLine.
 
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
-returned by Get-CompleterRegistration or Import-CompleterScript. The object
-must expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Identifies the target by registration key. A key without a colon is treated
-as a native command. A key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'.
+returned by Get-Completer or Import-CompleterScript. The object
+must expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies the command name of the native or command-parameter completer
@@ -1274,7 +1505,7 @@ The zero-based cursor position within InputText at which completion runs. The
 default is the end of the input.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompletionMatch
 Returns CompleterActions.CompletionMatch records, one per completion match,
 with Key, RuntimeKey, CommandName, ParameterName, CompleterType, InputText,
 CursorPosition, CompletionText, ListItemText, ResultType, and ToolTip
@@ -1287,9 +1518,9 @@ Returns the completion matches the registered git completer produces for
 'git che', such as checkout, cherry, and cherry-pick.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
+PS> Get-Completer -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 
-Verifies a registration record returned by Get-CompleterRegistration by
+Verifies a registration record returned by Get-Completer by
 completing an argument for its parameter.
 
 .NOTES
@@ -1304,16 +1535,11 @@ function Test-CompleterRegistration
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompletionMatch')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -1363,12 +1589,6 @@ function Test-CompleterRegistration
 
             switch ($PSCmdlet.ParameterSetName)
             {
-                'ByKey'
-                {
-                    $targetParameters['Key'] = $Key
-                    break
-                }
-
                 'Native'
                 {
                     $targetParameters['CommandName'] = $CommandName
@@ -1413,22 +1633,7 @@ function Test-CompleterRegistration
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject(
-                    [pscustomobject] [ordered] @{
-                        PSTypeName     = 'CompleterActions.CompletionMatch'
-                        Key            = [string] $target.Key
-                        RuntimeKey     = [string] $target.RuntimeKey
-                        CommandName    = [string] $target.CommandName
-                        ParameterName  = if ($target.IsNative) { $null } else { [string] $target.ParameterName }
-                        CompleterType  = if ($target.IsNative) { 'Native' } else { 'Parameter' }
-                        InputText      = $InputText
-                        CursorPosition = $resolvedCursorPosition
-                        CompletionText = $completionMatch.CompletionText
-                        ListItemText   = $completionMatch.ListItemText
-                        ResultType     = $completionMatch.ResultType
-                        ToolTip        = $completionMatch.ToolTip
-                    }
-                )
+                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition))
             }
         }
         catch
@@ -1465,7 +1670,7 @@ One or more paths to completer script files. Wildcards are supported.
 One or more literal paths to completer script files. Wildcards are not expanded.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterScriptFinding
 Returns CompleterActions.CompleterScriptFinding records with Path, Line,
 Column, Severity, Construct, Message, and Hint properties. Every finding the
 strict grammar produces has Severity 'Error'.
@@ -1488,7 +1693,7 @@ function Test-CompleterScript
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
@@ -1523,8 +1728,8 @@ function Test-CompleterScript
 Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
-Removes completer registrations identified by registration key, native command,
-command parameter target, or pipeline InputObject values. Managed registrations
+Removes completer registrations identified by native command, command
+parameter target, or pipeline InputObject values. Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table. Runtime-only registrations require -AllowUnmanaged before they can be
 removed. The same gate applies when a managed record is stale because the
@@ -1534,21 +1739,18 @@ When the runtime registration was already removed outside this module, only
 the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
-its managed record is removed. The command supports array inputs for keys and
-target fields, plus pipeline input from Get-CompleterRegistration output.
+its managed record is removed. The command supports array inputs for the
+target fields, plus pipeline input from Get-Completer output; each target is
+decided once per call, so the Conflicted twin of a Stale record is skipped
+rather than confirmed again or reported as missing, and a declined
+confirmation stands. Keys
+are output-only identifiers: a hand-typed key string is not accepted, so name
+the target with -CommandName plus -Native or -ParameterName instead.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
-objects can expose Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Removes the registrations that match one or more registration keys. A key
-without a colon is treated as a native command. A key with a colon is treated
-as a 'Command:Parameter' target unless the text after its last colon contains
-a path separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
-the key shape is ambiguous.
+objects expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.
@@ -1569,26 +1771,21 @@ module.
 Returns the registration records that were removed.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns removed CompleterActions.CompleterRegistration
 records.
 #>
-function Unregister-CompleterRegistration
+function Unregister-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
 {
-    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'ByKey', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -1610,6 +1807,11 @@ function Unregister-CompleterRegistration
         [switch] $PassThru
     )
 
+    begin
+    {
+        $removedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    }
+
     process
     {
         $resolvedTargets = @()
@@ -1626,12 +1828,6 @@ function Unregister-CompleterRegistration
 
                 switch ($PSCmdlet.ParameterSetName)
                 {
-                    'ByKey'
-                    {
-                        $targetParameters['Key'] = $Key
-                        break
-                    }
-
                     'Native'
                     {
                         $targetParameters['CommandName'] = $CommandName
@@ -1652,6 +1848,11 @@ function Unregister-CompleterRegistration
 
             foreach ($target in $resolvedTargets)
             {
+                if ($removedKeys.Contains($target.Key))
+                {
+                    continue
+                }
+
                 $managedRegistration = $null
                 $runtimeRegistration = $null
                 $registrationToRemove = $null
@@ -1694,6 +1895,8 @@ function Unregister-CompleterRegistration
                     {
                         throw 'No completer registration was found for the requested target.'
                     }
+
+                    $null = $removedKeys.Add($target.Key)
 
                     if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
                     {
@@ -1753,6 +1956,61 @@ function Unregister-CompleterRegistration
     }
 }
 <#
+.ForwardHelpTargetName Unregister-Completer
+.ForwardHelpCategory Function
+#>
+function Unregister-CompleterRegistrationLegacy
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'The wrapper forwards -WhatIf and -Confirm to the wrapped command, which calls ShouldProcess.')]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter()]
+        [switch] $AllowUnmanaged,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        Write-CompleterDeprecationWarning -LegacyName 'Unregister-CompleterRegistration' -NewName 'Unregister-Completer'
+
+        $steppablePipeline = { Unregister-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process
+    {
+        $steppablePipeline.Process($_)
+    }
+
+    end
+    {
+        $steppablePipeline.End()
+    }
+}
+<#
 .SYNOPSIS
 Writes a batch of completer registrations to the runtime and the managed state as one transaction.
 
@@ -1771,7 +2029,7 @@ back or the new one removed, and the earlier managed record is put back or the
 new one removed, so the session ends exactly as it was before the batch. The
 error names the target whose write failed, and a failure during the rollback
 is reported together with the original error so the caller can say the target
-may be inconsistent. Register-CompleterRegistration writes each target through
+may be inconsistent. Register-Completer writes each target through
 this helper on its own, so every target of a call stays its own transaction,
 and Import-CompleterSet writes a whole set through it, so an eager, a lazy,
 and a completer set registration share one write path.
@@ -2336,7 +2594,7 @@ function Find-RuntimeCompleterRegistration
             foreach ($entry in $runtime.NativeArgumentCompleters.GetEnumerator())
             {
                 $target = Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key) -Native
-                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered'))
+                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered' -State Discovered))
             }
         }
 
@@ -2351,7 +2609,7 @@ function Find-RuntimeCompleterRegistration
                 }
 
                 $target = Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key)
-                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered'))
+                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered' -State Discovered))
             }
         }
 
@@ -2370,7 +2628,7 @@ function Find-RuntimeCompleterRegistration
                 {
                     if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
                     }
                 }
             }
@@ -2386,7 +2644,7 @@ function Find-RuntimeCompleterRegistration
 
                     if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
                     }
                 }
             }
@@ -2419,7 +2677,7 @@ function Find-RuntimeCompleterRegistration
         return
     }
 
-    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered'
+    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered' -State Discovered
 }
 <#
 .SYNOPSIS
@@ -3415,7 +3673,7 @@ function New-CompleterLazyStub
 Creates an internal completer registration record object.
 
 .DESCRIPTION
-Builds the PSCustomObject stored in the managed registration table. The helper
+Builds the CompleterRegistration instance stored in the managed registration table. The helper
 copies the required target metadata, derives convenience properties such as
 CompleterType and IsManaged, and captures both the script block and its text so
 module internals can inspect the registered completer later.
@@ -3437,8 +3695,10 @@ from Import-CompleterScript.
 
 .PARAMETER State
 Describes how the record relates to the live runtime. 'Active' records describe
-the value PowerShell is currently using. 'Pending' marks a lazy registration
-whose runtime value is still the stub that loads the script on first use.
+a managed registration whose value PowerShell is currently using. 'Discovered'
+marks a runtime value that no managed record describes. 'Pending' marks a lazy
+registration whose runtime value is still the stub that loads the script on
+first use.
 'Failed' marks a lazy registration whose script failed to load; its runtime
 entry was removed and LoadError holds the reason. 'Stale' marks a managed
 record whose stored script no longer matches the runtime because the target
@@ -3457,8 +3717,8 @@ dot-sources it without validating it against the strict import grammar.
 The error message from the failed lazy load of a 'Failed' record.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
-Returns a CompleterActions.CompleterRegistration record suitable for internal storage.
+CompleterActions.CompleterRegistration
+Returns a CompleterRegistration instance suitable for internal storage.
 
 .EXAMPLE
 PS> $record = New-CompleterRegistrationRecord -Target $target -ScriptBlock $scriptBlock
@@ -3473,7 +3733,7 @@ function New-CompleterRegistrationRecord
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an in-memory registration object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -3491,8 +3751,7 @@ function New-CompleterRegistrationRecord
         [System.Management.Automation.PSModuleInfo] $ImportModule,
 
         [Parameter()]
-        [ValidateSet('Active', 'Pending', 'Failed', 'Stale', 'Conflicted')]
-        [string] $State = 'Active',
+        [CompleterState] $State = 'Active',
 
         [Parameter()]
         [string] $ScriptPath,
@@ -3512,8 +3771,7 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [pscustomobject] [ordered] @{
-        PSTypeName          = 'CompleterActions.CompleterRegistration'
+    $registration = [CompleterRegistration] @{
         Key                 = [string] $Target.Key
         RegistrationKey     = [string] $Target.Key
         RuntimeKey          = [string] $Target.RuntimeKey
@@ -3577,7 +3835,7 @@ function New-CompleterScriptFinding
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a finding object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
@@ -3604,8 +3862,7 @@ function New-CompleterScriptFinding
         [string] $Severity = 'Error'
     )
 
-    [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterScriptFinding'
+    [CompleterScriptFinding] @{
         Path       = $Path
         Line       = $Extent.StartLineNumber
         Column     = $Extent.StartColumnNumber
@@ -3617,13 +3874,87 @@ function New-CompleterScriptFinding
 }
 <#
 .SYNOPSIS
-Creates a Register-CompleterRegistration-compatible import object.
+Creates a completion match record for a tested completer target.
+
+.DESCRIPTION
+Builds the CompletionMatch instance that Test-CompleterRegistration returns for
+each completion result TabExpansion2 produced. The helper copies the target
+metadata and the input that was completed alongside the completion result's
+text, list item, result type, and tooltip.
+
+.PARAMETER Target
+The resolved completer target metadata object. It must expose the Key,
+RuntimeKey, CommandName, ParameterName, and IsNative properties.
+
+.PARAMETER CompletionResult
+The completion result returned by TabExpansion2 for the target.
+
+.PARAMETER InputText
+The input text that was completed.
+
+.PARAMETER CursorPosition
+The cursor position within InputText at which completion ran.
+
+.OUTPUTS
+CompleterActions.CompletionMatch
+Returns a CompletionMatch instance for one completion result.
+
+.EXAMPLE
+PS> New-CompletionMatch -Target $target -CompletionResult $result -InputText 'git che' -CursorPosition 7
+
+Creates the completion match record for one TabExpansion2 result against the
+resolved git native completer target.
+#>
+function New-CompletionMatch
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a completion match object.')]
+    [OutputType('CompleterActions.CompletionMatch')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Target,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Management.Automation.CompletionResult] $CompletionResult,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $InputText,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(0, [int]::MaxValue)]
+        [int] $CursorPosition
+    )
+
+    [CompletionMatch] @{
+        Key            = [string] $Target.Key
+        RuntimeKey     = [string] $Target.RuntimeKey
+        CommandName    = [string] $Target.CommandName
+        ParameterName  = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+        IsNative       = [bool] $Target.IsNative
+        CompleterType  = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
+        InputText      = $InputText
+        CursorPosition = $CursorPosition
+        CompletionText = $CompletionResult.CompletionText
+        ListItemText   = $CompletionResult.ListItemText
+        ResultType     = $CompletionResult.ResultType
+        ToolTip        = $CompletionResult.ToolTip
+    }
+}
+<#
+.SYNOPSIS
+Creates a Register-Completer-compatible import object.
 
 .DESCRIPTION
 Builds the public object emitted by Import-CompleterScript. The resulting object
 captures normalized target metadata plus the imported ScriptBlock object from the
 temporary import module so callers can pipe it directly into
-Register-CompleterRegistration -InputObject.
+Register-Completer -InputObject.
 
 .PARAMETER Target
 The normalized completer target metadata.
@@ -3651,7 +3982,7 @@ function New-ImportedCompleterRegistration
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an import object.')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.ImportedCompleterRegistration')]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNull()]
@@ -3673,8 +4004,7 @@ function New-ImportedCompleterRegistration
         [switch] $Trusted
     )
 
-    [pscustomobject] [ordered] @{
-        PSTypeName      = 'CompleterActions.ImportedCompleterRegistration'
+    [ImportedCompleterRegistration] @{
         Key             = [string] $Target.Key
         RegistrationKey = [string] $Target.Key
         RuntimeKey      = [string] $Target.RuntimeKey
@@ -3942,7 +4272,7 @@ function Remove-RuntimeCompleterRegistration
         }
 
         $removedScriptBlock = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey
-        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $removedScriptBlock -Source 'Discovered'
+        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $removedScriptBlock -Source 'Discovered' -State Discovered
 
         return $removedRegistration
     }
@@ -3966,10 +4296,15 @@ Resolves a pipeline input object into a completer target definition.
 .DESCRIPTION
 Normalizes public pipeline input into the target metadata used by the module's
 registration, lookup, and removal commands. The helper accepts module
-registration records and custom objects that expose either key-based target
-properties or command/parameter metadata. A ScriptBlock, ImportModule,
+registration records and custom objects that expose CommandName with
+IsNative/Native or ParameterName, or a Key, RegistrationKey, or RuntimeKey
+together with IsNative/Native. An input object describes one target, so a
+CommandName or ParameterName that holds several values is rejected rather
+than joined into one name. Keys are output-only identifiers, so a key
+without a native indicator is rejected rather than classified by its shape.
+A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
-so imported and managed records round-trip into Register-CompleterRegistration.
+so imported and managed records round-trip into Register-Completer.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -3984,7 +4319,7 @@ CompleterActions.ResolvedInputObject
 .EXAMPLE
 Resolve-CompleterInputObject -InputObject $registration
 
-Resolves a completer registration object returned by Get-CompleterRegistration
+Resolves a completer registration object returned by Get-Completer
 into the normalized target metadata used by the module internals.
 #>
 function Resolve-CompleterInputObject
@@ -4006,7 +4341,6 @@ function Resolve-CompleterInputObject
     process
     {
         $keyValue = $null
-        $runtimeKey = $null
         $commandName = $null
         $parameterName = $null
         $hasNativeIndicator = $false
@@ -4024,16 +4358,17 @@ function Resolve-CompleterInputObject
                 $property = $InputObject.PSObject.Properties[$propertyName]
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                 {
-                    if ($propertyName -eq 'RuntimeKey')
-                    {
-                        $runtimeKey = [string] $property.Value
-                    }
-                    else
-                    {
-                        $keyValue = [string] $property.Value
-                    }
-
+                    $keyValue = [string] $property.Value
                     break
+                }
+            }
+
+            foreach ($propertyName in 'CommandName', 'ParameterName')
+            {
+                $property = $InputObject.PSObject.Properties[$propertyName]
+                if ($null -ne $property -and @($property.Value).Count -gt 1)
+                {
+                    throw "InputObject supplies $(@($property.Value).Count) values for $propertyName. An input object describes one target; pass arrays to -CommandName and -ParameterName instead."
                 }
             }
 
@@ -4108,36 +4443,14 @@ function Resolve-CompleterInputObject
                     throw 'InputObject must expose ParameterName for command-parameter targets or IsNative/Native for native targets.'
                 }
             }
-            elseif (-not [string]::IsNullOrWhiteSpace($runtimeKey))
-            {
-                if ($hasNativeIndicator -and $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
-                }
-                elseif ($hasNativeIndicator -and -not $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
-                }
-                elseif (Test-CompleterNativeKeyShape -Key $runtimeKey)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
-                }
-                else
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
-                }
-            }
             elseif (-not [string]::IsNullOrWhiteSpace($keyValue))
             {
-                if ($hasNativeIndicator -and $isNative)
+                if (-not $hasNativeIndicator)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                    throw "InputObject supplies the key '$keyValue' without an IsNative or Native property. Keys are output-only identifiers and are no longer classified by their shape: add IsNative or Native alongside the key, or supply CommandName with Native or ParameterName. See about_CompleterActions_Migration."
                 }
-                elseif ($hasNativeIndicator -and -not $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
-                }
-                elseif (Test-CompleterNativeKeyShape -Key $keyValue)
+
+                if ($isNative)
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
@@ -4148,7 +4461,7 @@ function Resolve-CompleterInputObject
             }
             else
             {
-                throw 'InputObject must expose Key, RegistrationKey, RuntimeKey, or CommandName.'
+                throw 'InputObject must expose CommandName with Native or ParameterName, or Key, RegistrationKey, or RuntimeKey with IsNative or Native.'
             }
 
             [pscustomobject] [ordered] @{
@@ -4168,7 +4481,6 @@ function Resolve-CompleterInputObject
         finally
         {
             $keyValue = $null
-            $runtimeKey = $null
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
@@ -4198,7 +4510,7 @@ The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same key sees the earlier
 one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
-Register-CompleterRegistration resolves one record at a time, after the
+Register-Completer resolves one record at a time, after the
 earlier targets of its call have been written, and throws the reported
 problem; Resolve-CompleterSetEntry resolves an entry's records together and
 collects the problems, so a completer set is validated against the same rules
@@ -4262,7 +4574,7 @@ function Resolve-CompleterRegistrationConflict
             $registrationState = [pscustomobject] [ordered] @{
                 Key                 = $key
                 ManagedRegistration = $plannedRegistration
-                RuntimeRegistration = New-CompleterRegistrationRecord -Target $plannedRegistration -ScriptBlock $plannedRegistration.ScriptBlock -Source 'Discovered'
+                RuntimeRegistration = New-CompleterRegistrationRecord -Target $plannedRegistration -ScriptBlock $plannedRegistration.ScriptBlock -Source 'Discovered' -State Discovered
                 ManagedState        = $plannedRegistration.State
             }
         }
@@ -4405,7 +4717,7 @@ function Resolve-CompleterRegistrationState
 
             $storedKey = $view.Keys[$normalizedKey]
             $target = if ($view.IsNative) { Resolve-CompleterTarget -RuntimeKey $storedKey -Native } else { Resolve-CompleterTarget -RuntimeKey $storedKey }
-            $runtimeRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $view.Dictionary -Key $storedKey) -Source 'Discovered'
+            $runtimeRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $view.Dictionary -Key $storedKey) -Source 'Discovered' -State Discovered
             break
         }
 
@@ -4582,7 +4894,7 @@ must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
 two lists must match; the strict import grammar itself runs when the script
 loads. The entry's Pending records, one lazy stub per target, are then held to
-the rules Register-CompleterRegistration applies through
+the rules Register-Completer applies through
 Resolve-CompleterRegistrationConflict against the snapshot the whole set
 shares, so a target that already carries a different registration is a
 problem unless -Force is given, and a target that an earlier valid entry of
@@ -4992,9 +5304,6 @@ throughout the module. Command and parameter arrays are paired by position when
 they have matching lengths, or broadcast when either side contains a single
 value.
 
-.PARAMETER Key
-One or more normalized or runtime keys to resolve.
-
 .PARAMETER CommandName
 One or more command names to resolve.
 
@@ -5012,13 +5321,9 @@ function Resolve-CompleterTargetList
 .EXTERNALHELP CompleterActions-help.xml
 #>
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
-
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
@@ -5034,22 +5339,6 @@ function Resolve-CompleterTargetList
 
     switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey'
-        {
-            foreach ($keyItem in $Key)
-            {
-                if (Test-CompleterNativeKeyShape -Key $keyItem)
-                {
-                    Resolve-CompleterTarget -RuntimeKey $keyItem -Native
-                    continue
-                }
-
-                Resolve-CompleterTarget -RuntimeKey $keyItem
-            }
-
-            break
-        }
-
         'Native'
         {
             foreach ($commandNameItem in $CommandName)
@@ -5118,63 +5407,6 @@ function Set-CompleterRuntimeDictionaryValue
     $Dictionary[$Key] = $Value
 
     return $Dictionary[$Key]
-}
-<#
-.SYNOPSIS
-Determines whether a key-only input should be treated as a native completer target.
-
-.DESCRIPTION
-Applies the module's shared rule for classifying a key when no explicit native
-indicator is available. A key without a colon is a native command name. A key
-with a colon is still native when the text after its last colon contains a path
-separator, because a 'Command:Parameter' key never contains a path separator in
-its parameter part; this covers drive-qualified paths such as
-'C:\tools\example.exe' with either separator. Every other colon-bearing key,
-including a drive-qualified path followed by ':Parameter', is a
-command-parameter target.
-
-.PARAMETER Key
-The registration or runtime key to classify.
-
-.OUTPUTS
-System.Boolean
-Returns $true when the key should be resolved as a native completer target.
-
-.EXAMPLE
-Test-CompleterNativeKeyShape -Key 'C:\tools\example.exe'
-
-Returns $true because the key is a drive-qualified native path.
-
-.EXAMPLE
-Test-CompleterNativeKeyShape -Key 'Get-Item:Path'
-
-Returns $false because the key is a command-parameter key.
-
-.NOTES
-Resolve-CompleterTargetList and Resolve-CompleterInputObject both use this
-helper so key-only inputs classify identically on every public path.
-#>
-function Test-CompleterNativeKeyShape
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding()]
-    [OutputType([bool])]
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key
-    )
-
-    if ($Key -notmatch ':')
-    {
-        return $true
-    }
-
-    $parameterPart = $Key.Substring($Key.LastIndexOf(':') + 1)
-
-    return $parameterPart.IndexOfAny([char[]] @('\', '/')) -ge 0
 }
 <#
 .SYNOPSIS
@@ -6002,7 +6234,60 @@ function Test-CompleterScriptAst
 
     return $findings.ToArray()
 }
+<#
+.SYNOPSIS
+Warns once per process that a legacy command name is deprecated.
+
+.DESCRIPTION
+Emits a single Write-Warning per process for a legacy command name, naming
+the replacement command and the about_CompleterActions_Migration topic. The
+names that have already warned are tracked in the module-scope set created by
+Bootstrap.ps1, so a profile that calls a legacy name many times sees the
+warning once. A call whose warnings are suppressed, through -WarningAction
+SilentlyContinue or $WarningPreference, neither warns nor consumes the slot,
+so the next call that can show the warning still does.
+
+.PARAMETER LegacyName
+The deprecated command name the caller used.
+
+.PARAMETER NewName
+The command that replaces it.
+
+.EXAMPLE
+PS> Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
+#>
+function Write-CompleterDeprecationWarning
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LegacyName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $NewName
+    )
+
+    if ($WarningPreference -in 'SilentlyContinue', 'Ignore')
+    {
+        return
+    }
+
+    if ($script:CompleterDeprecationWarningsIssued.Add($LegacyName))
+    {
+        Write-Warning -Message "$LegacyName is deprecated and will be removed in 3.0; use $NewName instead. See about_CompleterActions_Migration."
+    }
+}
 # Import-time work shared by the source root module and the packaged module.
 Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
+$script:CompleterDeprecationWarningsIssued = [System.Collections.Generic.HashSet[string]]::new()
+New-Alias -Name 'Get-CompleterRegistration' -Value 'Get-CompleterRegistrationLegacy'
+New-Alias -Name 'Register-CompleterRegistration' -Value 'Register-CompleterRegistrationLegacy'
+New-Alias -Name 'Unregister-CompleterRegistration' -Value 'Unregister-CompleterRegistrationLegacy'

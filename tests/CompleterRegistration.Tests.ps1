@@ -113,19 +113,27 @@ Describe 'Module Manifest Tests' {
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
 
-        foreach ($relativePath in 'CompleterActions.psm1', 'CompleterActions.Format.ps1xml', 'en-US/about_Import_Completers.help.txt')
-        {
-            $trackedPath = Join-Path -Path $repoRoot -ChildPath "build/CompleterActions/$relativePath"
-            $freshPath = Join-Path -Path $stagingRoot -ChildPath "build/CompleterActions/$relativePath"
+        $trackedBuildRoot = Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions'
+        $freshBuildRoot = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions'
+        $relativePathsUnder = {
+            param($root)
 
-            @(Get-Content -LiteralPath $trackedPath) | Should -Be @(Get-Content -LiteralPath $freshPath) -Because "build/CompleterActions/$relativePath must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
+            @(Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\', '/') } | Sort-Object)
         }
+        $freshFiles = & $relativePathsUnder $freshBuildRoot
 
+        (& $relativePathsUnder $trackedBuildRoot) | Should -Be $freshFiles -Because "build/CompleterActions must hold exactly the files a fresh build produces; run 'Invoke-Build build' and commit the output"
+
+        # The manifest carries the build timestamp; every other packaged file must match line for line.
         $manifestContentFilter = { $_ -notmatch '^\s*#\s*Generated on:' }
-        $trackedManifestLines = @(Get-Content -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') | Where-Object -FilterScript $manifestContentFilter)
-        $freshManifestLines = @(Get-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') | Where-Object -FilterScript $manifestContentFilter)
 
-        $trackedManifestLines | Should -Be $freshManifestLines -Because "build/CompleterActions/CompleterActions.psd1 must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
+        foreach ($relativePath in $freshFiles)
+        {
+            $trackedLines = @(Get-Content -LiteralPath (Join-Path -Path $trackedBuildRoot -ChildPath $relativePath) | Where-Object -FilterScript $manifestContentFilter)
+            $freshLines = @(Get-Content -LiteralPath (Join-Path -Path $freshBuildRoot -ChildPath $relativePath) | Where-Object -FilterScript $manifestContentFilter)
+
+            $trackedLines | Should -Be $freshLines -Because "build/CompleterActions/$relativePath must match a fresh build of the sources; run 'Invoke-Build build' and commit the output"
+        }
     }
 }
 

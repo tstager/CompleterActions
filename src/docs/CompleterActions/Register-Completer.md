@@ -6,10 +6,10 @@ Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
 PlatyPS schema version: 2024-05-01
-title: Register-CompleterRegistration
+title: Register-Completer
 ---
 
-# Register-CompleterRegistration
+# Register-Completer
 
 ## SYNOPSIS
 
@@ -20,21 +20,21 @@ Registers a managed PowerShell argument completer.
 ### CommandParameter (Default)
 
 ```PowerShell
-Register-CompleterRegistration -CommandName <string[]> -ParameterName <string[]>
+Register-Completer -CommandName <string[]> -ParameterName <string[]>
  -ScriptBlock <scriptblock> [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### InputObject
 
 ```PowerShell
-Register-CompleterRegistration -InputObject <psobject[]> [-Force] [-PassThru] [-WhatIf] [-Confirm]
+Register-Completer -InputObject <psobject[]> [-Force] [-PassThru] [-WhatIf] [-Confirm]
  [<CommonParameters>]
 ```
 
 ### LazyLiteralPath
 
 ```PowerShell
-Register-CompleterRegistration -LiteralPath <string> -Lazy [-CommandName <string[]>]
+Register-Completer -LiteralPath <string> -Lazy [-CommandName <string[]>]
  [-ParameterName <string[]>] [-Native] [-Trusted] [-Force] [-PassThru] [-WhatIf] [-Confirm]
  [<CommonParameters>]
 ```
@@ -42,14 +42,14 @@ Register-CompleterRegistration -LiteralPath <string> -Lazy [-CommandName <string
 ### LazyPath
 
 ```PowerShell
-Register-CompleterRegistration -Path <string> -Lazy [-CommandName <string[]>] [-ParameterName <string[]>]
+Register-Completer -Path <string> -Lazy [-CommandName <string[]>] [-ParameterName <string[]>]
  [-Native] [-Trusted] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### Native
 
 ```PowerShell
-Register-CompleterRegistration -CommandName <string[]> -Native -ScriptBlock <scriptblock> [-Force]
+Register-Completer -CommandName <string[]> -Native -ScriptBlock <scriptblock> [-Force]
  [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
@@ -100,7 +100,7 @@ PSReadLine options.
 ### EXAMPLE 1
 
 ```PowerShell
-Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 ```
 
 Registers a native completer for `demoexe` with a script block that is already
@@ -109,7 +109,7 @@ in memory.
 ### EXAMPLE 2
 
 ```PowerShell
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 ```
 
 Reads the targets from the script's `Register-ArgumentCompleter` calls,
@@ -119,7 +119,7 @@ script runs the first time tab completion is requested for one of its targets.
 ### EXAMPLE 3
 
 ```PowerShell
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 ```
 
 Registers a script that needs the trusted tier lazily. The targets are named
@@ -128,10 +128,9 @@ explicitly because a trusted script is not parsed.
 ### EXAMPLE 4
 
 ```PowerShell
-Get-CompleterRegistration -ManagedOnly |
-    Where-Object State -eq Failed |
+Get-Completer -State Failed |
     ForEach-Object {
-        Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
+        Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
             -CommandName $_.CommandName -Native:$_.IsNative -Force
     }
 ```
@@ -232,14 +231,16 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies one or more objects that describe completer targets. Input objects
-must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
-`CommandName`/`ParameterName` plus `IsNative`/`Native`, and must expose a
-`ScriptBlock` property whose value is a script block. `ScriptPath` or
+must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
+`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`,
+and must expose a `ScriptBlock` property whose value is a script block. A key
+without a native indicator is rejected; keys are output-only identifiers and
+are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
 records, are carried onto the managed record.
 
 ```yaml
-Type: System.Management.Automation.PSObject[]
+Type: System.Object[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -506,7 +507,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## INPUTS
 
-### System.Management.Automation.PSObject[]
+### System.Object[]
 
 ### System.String[]
 
@@ -514,7 +515,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.CompleterRegistration
 
 When -PassThru is used, returns `CompleterActions.CompleterRegistration`
 records. Lazy registrations carry `State` `Pending`, the `ScriptPath` they
@@ -526,7 +527,7 @@ load, and `Trusted`.
 
 ## RELATED LINKS
 
-[Get-CompleterRegistration](Get-CompleterRegistration.md)
+[Get-Completer](Get-Completer.md)
 
 [Import-CompleterScript](Import-CompleterScript.md)
 

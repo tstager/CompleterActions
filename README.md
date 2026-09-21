@@ -36,13 +36,15 @@
 | Command | What it does |
 | --- | --- |
 | `Export-CompleterSet` | Writes a completer set file (`.psd1`) from registrations that came from scripts, with each script's trust tier and targets |
-| `Get-CompleterRegistration` | Lists completer registrations known to the module or discovered from the current runtime |
-| `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-CompleterRegistration -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
+| `Get-Completer` | Lists completer registrations known to the module or discovered from the current runtime, filtered by `-State` and sorted by type, command, and parameter |
+| `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-Completer -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
 | `Import-CompleterSet` | Validates every entry of a completer set up front, then registers the whole set lazily; `-SkipInvalid` warns and registers the rest |
-| `Register-CompleterRegistration` | Registers a managed completer and records it in module state; `-Path -Lazy` registers a completer script that loads on its first tab press |
+| `Register-Completer` | Registers a managed completer and records it in module state; `-Path -Lazy` registers a completer script that loads on its first tab press |
 | `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches |
 | `Test-CompleterScript` | Checks completer scripts against the strict import grammar and returns findings with line, column, construct, and a fix hint |
-| `Unregister-CompleterRegistration` | Removes completer registrations from runtime and, when applicable, from module state |
+| `Unregister-Completer` | Removes completer registrations from runtime and, when applicable, from module state |
+
+`Get-CompleterRegistration`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration` remain as aliases of the renamed commands until 3.0; the first call to each in a process writes a deprecation warning. `about_CompleterActions_Migration` covers the move from 1.x.
 
 ## Start here
 
@@ -70,6 +72,7 @@ Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```powershell
 Get-Help about_Import_Completers
 Get-Help about_Completer_Sets
+Get-Help about_CompleterActions_Migration
 ```
 
 Runtime registration discovery and unmanaged-registration removal depend on PowerShell runtime internals. The module is tested on PowerShell 7, but future engine changes may require maintenance in that discovery path.
@@ -78,7 +81,7 @@ Runtime registration discovery and unmanaged-registration removal depend on Powe
 
 1. Check an existing completer script with `Test-CompleterScript`, or decide to import it with `-Trusted`.
 2. Register a completer directly, or import the script into managed input objects.
-3. Verify the registration with `Test-CompleterRegistration` and inspect it with `Get-CompleterRegistration`.
+3. Verify the registration with `Test-CompleterRegistration` and inspect it with `Get-Completer`.
 4. Replace or remove registrations when the target changes.
 5. Use `-AllowUnmanaged` only when removing runtime registrations that were not created by the module.
 
@@ -104,7 +107,7 @@ $scriptBlock = {
         }
 }
 
-Register-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name -ScriptBlock $scriptBlock
+Register-Completer -CommandName Invoke-DemoTool -ParameterName Name -ScriptBlock $scriptBlock
 ```
 
 ### Register a native completer
@@ -120,14 +123,14 @@ $nativeScriptBlock = {
         }
 }
 
-Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 ```
 
 ### Import an existing completer script
 
 ```powershell
 Import-CompleterScript -Path .\7z_completer.ps1 |
-    Register-CompleterRegistration -PassThru
+    Register-Completer -PassThru
 ```
 
 ### Check a completer script before importing it
@@ -146,20 +149,20 @@ Get-ChildItem -Path ~\Completers -Recurse -Filter *.ps1 |
 
 ```powershell
 Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
-    Register-CompleterRegistration
+    Register-Completer
 ```
 
 ### Register a script lazily
 
 ```powershell
 # Strict tier: the targets are read from the script, which runs on the first tab press
-Register-CompleterRegistration -Path .\7z_completer.ps1 -Lazy
+Register-Completer -Path .\7z_completer.ps1 -Lazy
 
 # Trusted tier: name the targets, because a trusted script is not parsed
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 
 # Pending until the first tab press; Failed, with LoadError, if the script did not load
-Get-CompleterRegistration -ManagedOnly | Where-Object State -in Pending, Failed
+Get-Completer -State Pending, Failed
 ```
 
 ### Describe a completer repository as a set
@@ -179,7 +182,7 @@ Import-CompleterSet -Path ~\Completers\completers.psd1
 ```powershell
 Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
 
-Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name |
+Get-Completer -CommandName Invoke-DemoTool -ParameterName Name |
     Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 ```
 
@@ -187,25 +190,28 @@ Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name |
 
 ```powershell
 # All known registrations
-Get-CompleterRegistration
+Get-Completer
 
 # A specific native completer
-Get-CompleterRegistration -CommandName git -Native
+Get-Completer -CommandName git -Native
 
 # A specific parameter completer
-Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name
+Get-Completer -CommandName Invoke-DemoTool -ParameterName Name
 
 # Only module-managed registrations
-Get-CompleterRegistration -ManagedOnly
+Get-Completer -State Active, Pending, Failed, Stale
 
-# Only runtime-discovered registrations
-Get-CompleterRegistration -DiscoveredOnly
+# Registrations made outside the module, and live values that replaced a managed one
+Get-Completer -State Discovered, Conflicted
+
+# Lazy registrations that have not loaded or failed to load
+Get-Completer -State Pending, Failed
 ```
 
 ### Replace an existing registration
 
 ```powershell
-Register-CompleterRegistration `
+Register-Completer `
     -CommandName Invoke-DemoTool `
     -ParameterName Name `
     -ScriptBlock $scriptBlock `
@@ -216,14 +222,14 @@ Register-CompleterRegistration `
 
 ```powershell
 # Remove a managed registration
-Unregister-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name -Confirm:$false
+Unregister-Completer -CommandName Invoke-DemoTool -ParameterName Name -Confirm:$false
 
-# Remove by key
-Get-CompleterRegistration -CommandName demoexe -Native |
-    Unregister-CompleterRegistration -Confirm:$false
+# Remove by piping a registration record back in
+Get-Completer -CommandName demoexe -Native |
+    Unregister-Completer -Confirm:$false
 
 # Remove a runtime-only registration explicitly
-Unregister-CompleterRegistration `
+Unregister-Completer `
     -CommandName SomeTool `
     -ParameterName Name `
     -AllowUnmanaged `
@@ -251,7 +257,7 @@ A completer set is a `.psd1` data file that lists completer scripts, the trust t
 
 `Import-CompleterSet` reads the file with `Import-PowerShellDataFile`, so the set itself can never run code, and validates every entry before registering anything: the file exists and is a `.ps1`, `Trusted` entries declare their `Targets`, strict entries name their targets with literal `Register-ArgumentCompleter` arguments so they can be derived from the parsed script and compared against any the entry declares, no target is listed by two entries, and without `-Force` no target already carries a managed or runtime registration for a different completer. The strict grammar itself runs when a script loads, not at import: importing a set parses each strict script once, to validate the entry, registers the targets that parse derived, and walks none of them; a script that fails the grammar moves to `Failed` on its first tab press. One error lists every problem; `-SkipInvalid` turns them into warnings and registers the rest.
 
-Registering a set does not run the scripts. Each target gets a stub and a managed record in state `Pending`; the first tab press for that target loads the script, swaps in the real completer, and moves the record to `Active`. A script that fails to load yields no completions for that press, records the error as `LoadError` with state `Failed`, and removes its stub so PowerShell's default completion takes over. Nothing the module does hooks PSReadLine key handlers, replaces `TabExpansion2`, or changes PSReadLine options. `about_Completer_Sets` covers the schema and lifecycle in full, and `tools/Measure-CompleterStartup.ps1` measures the eager and lazy startup cost of a completer repository in child `pwsh -NoProfile` processes. On a 169-script, 355-target repository (five samples per leg) the eager `Import-CompleterScript | Register-CompleterRegistration` pipeline takes a median 7063.3 ms and `Import-CompleterSet` a median 1315.5 ms, a ratio of 0.19, under the roadmap target of 0.25 (0.18 against the highest eager median recorded on this machine, 7427.7 ms); the remaining lazy cost is one parse per strict script, about a third of the leg, plus record creation and the runtime and managed writes. A set registers as one transaction: its entries are validated and written against one snapshot of the session's registrations, and if any write fails every change the set made is rolled back.
+Registering a set does not run the scripts. Each target gets a stub and a managed record in state `Pending`; the first tab press for that target loads the script, swaps in the real completer, and moves the record to `Active`. A script that fails to load yields no completions for that press, records the error as `LoadError` with state `Failed`, and removes its stub so PowerShell's default completion takes over. Nothing the module does hooks PSReadLine key handlers, replaces `TabExpansion2`, or changes PSReadLine options. `about_Completer_Sets` covers the schema and lifecycle in full, and `tools/Measure-CompleterStartup.ps1` measures the eager and lazy startup cost of a completer repository in child `pwsh -NoProfile` processes. On a 169-script, 355-target repository (five samples per leg) the eager `Import-CompleterScript | Register-Completer` pipeline takes a median 7063.3 ms and `Import-CompleterSet` a median 1315.5 ms, a ratio of 0.19, under the roadmap target of 0.25 (0.18 against the highest eager median recorded on this machine, 7427.7 ms); the remaining lazy cost is one parse per strict script, about a third of the leg, plus record creation and the runtime and managed writes. A set registers as one transaction: its entries are validated and written against one snapshot of the session's registrations, and if any write fails every change the set made is rolled back.
 
 ## Output, formatting, paging, and pipeline support
 
@@ -265,32 +271,32 @@ Registration records use the `CompleterActions.CompleterRegistration` type and h
 - `ScriptPath`
 - `LoadError`
 
-`State` is `Active` for records that describe the live runtime value. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-CompleterRegistration` returns the live value as `Conflicted`, `Register-CompleterRegistration` requires `-Force` to reconcile, and `Unregister-CompleterRegistration` requires `-AllowUnmanaged` before it removes the live value together with the stale record. A lazy registration is `Pending` until its script loads on the first tab press. If that load fails, the press returns no completions and default completion applies exactly as with no completer registered; the record becomes `Failed` with the message in `LoadError`, its runtime entry is removed, and `Register-CompleterRegistration -Force` retries. `ScriptPath` names the completer script behind a lazy or imported registration. Lazy loading runs inside the ordinary completer call and never touches PSReadLine key handlers, `TabExpansion2`, or PSReadLine options.
+`State` is a `CompleterState` enum. It is `Active` for managed records whose stored script is the live runtime value and `Discovered` for live values that no managed record describes. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-Completer` returns it alongside the live value as `Conflicted`, `Register-Completer` requires `-Force` to reconcile, and `Unregister-Completer` requires `-AllowUnmanaged` before it removes the live value together with the stale record. A lazy registration is `Pending` until its script loads on the first tab press. If that load fails, the press returns no completions and default completion applies exactly as with no completer registered; the record becomes `Failed` with the message in `LoadError`, its runtime entry is removed, and `Register-Completer -Force` retries. `ScriptPath` names the completer script behind a lazy or imported registration. Lazy loading runs inside the ordinary completer call and never touches PSReadLine key handlers, `TabExpansion2`, or PSReadLine options.
 
 `Test-CompleterScript` returns `CompleterActions.CompleterScriptFinding` records shown as a list grouped by script path, with `Line`, `Column`, `Severity`, `Construct`, `Message`, and `Hint`. A conforming script returns nothing. `Test-CompleterRegistration` returns `CompleterActions.CompletionMatch` records shown as a table grouped by target key, with `CompletionText`, `ListItemText`, `ResultType`, and `ToolTip`.
 
-`Get-CompleterRegistration` supports PowerShell paging parameters, so you can do things like:
+`Get-Completer -State` selects any set of states, and the output is sorted by `CompleterType`, `CommandName`, and `ParameterName` before the PowerShell paging parameters apply, so you can do things like:
 
 ```powershell
-Get-CompleterRegistration -First 10
-Get-CompleterRegistration -Skip 10 -First 10 -IncludeTotalCount
+Get-Completer -State Active, Discovered -First 10
+Get-Completer -Skip 10 -First 10 -IncludeTotalCount
 ```
 
 Pipeline highlights:
 
-- `Get-CompleterRegistration` supports property-name binding for key, command, and parameter lookups
-- `Import-CompleterScript` emits input objects that are ready for `Register-CompleterRegistration -InputObject`
-- `Export-CompleterSet` accepts records from `Get-CompleterRegistration` and `Import-CompleterScript`; `Import-CompleterSet` accepts `Get-ChildItem` output through `FullName` binding
+- `Get-Completer` accepts registration records from `Get-Completer` and `Import-CompleterScript` through `InputObject`, which binds every piped object by value; an input object describes one target, and arrays go to `-CommandName` and `-ParameterName`. Keys are output-only identifiers and are never accepted as typed input
+- `Import-CompleterScript` emits input objects that are ready for `Register-Completer -InputObject`
+- `Export-CompleterSet` accepts records from `Get-Completer` and `Import-CompleterScript`; `Import-CompleterSet` accepts `Get-ChildItem` output through `FullName` binding
 - `Test-CompleterScript` accepts `Get-ChildItem` output directly through `FullName` binding
-- `Test-CompleterRegistration` accepts registration records from `Get-CompleterRegistration` and `Import-CompleterScript`
-- `Register-CompleterRegistration` can accept input objects that describe a target and expose a `ScriptBlock`
-- `Unregister-CompleterRegistration` can accept pipeline input directly from `Get-CompleterRegistration`
+- `Test-CompleterRegistration` accepts registration records from `Get-Completer` and `Import-CompleterScript`
+- `Register-Completer` can accept input objects that describe a target and expose a `ScriptBlock`
+- `Unregister-Completer` can accept pipeline input directly from `Get-Completer`
 
 Example:
 
 ```powershell
-Get-CompleterRegistration -ManagedOnly |
-    Unregister-CompleterRegistration -Confirm:$false
+Get-Completer -State Active, Pending, Failed, Stale |
+    Unregister-Completer -Confirm:$false
 ```
 
 ## Build, test, and lint
@@ -345,19 +351,21 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
 
 ## Architecture notes
 
-- `CompleterActions.psd1` is the root manifest and defines the exported public functions, formatting file, and PowerShell/Core compatibility.
-- `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Private` and `src\Public`, runs `src\Bootstrap.ps1`, and exports the public function set.
-- `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe and module state initialization. The build appends it to the packaged `.psm1` after the function definitions.
+- `CompleterActions.psd1` is the root manifest and defines the exported functions and aliases, formatting file, and PowerShell/Core compatibility.
+- `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Classes` (as one script block, so the classes can reference each other), then `src\Private` and `src\Public`, runs `src\Bootstrap.ps1`, and exports the public function set.
+- `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe, module state initialization, and the three legacy aliases. The build appends it to the packaged `.psm1` after the function definitions.
+- `src\Classes` defines the record classes (`CompleterRegistration`, `ImportedCompleterRegistration`, `CompleterScriptFinding`, `CompletionMatch`) and the `CompleterState` and `CompleterType` enums. Each class inserts its dotted `PSTypeName` in the constructor, which stays the contract the format file and consumers rely on.
 - `src\Public` contains the user-facing command surface:
   - `Export-CompleterSet`
-  - `Get-CompleterRegistration`
+  - `Get-Completer`
   - `Import-CompleterScript`
   - `Import-CompleterSet`
-  - `Register-CompleterRegistration`
+  - `Register-Completer`
   - `Test-CompleterRegistration`
   - `Test-CompleterScript`
-  - `Unregister-CompleterRegistration`
-- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar lives in `Test-CompleterScriptAst`, which returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume. Completer sets are read by `Import-CompleterSetDefinition` and validated entry by entry in `Resolve-CompleterSetEntry` (with `Get-CompleterScriptTarget` deriving strict-tier targets from the AST) against one `Get-CompleterRegistrationSnapshot` of the session; `Register-CompleterRegistration` and `Import-CompleterSet` both resolve conflicts through `Resolve-CompleterRegistrationConflict` and write through `Add-CompleterRegistration`, which writes a batch as one transaction: a whole set for `Import-CompleterSet`, one target at a time for `Register-CompleterRegistration`.
+  - `Unregister-Completer`
+  - the exported legacy wrappers `Get-CompleterRegistrationLegacy`, `Register-CompleterRegistrationLegacy`, and `Unregister-CompleterRegistrationLegacy` behind the three aliases
+- `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar lives in `Test-CompleterScriptAst`, which returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume. Completer sets are read by `Import-CompleterSetDefinition` and validated entry by entry in `Resolve-CompleterSetEntry` (with `Get-CompleterScriptTarget` deriving strict-tier targets from the AST) against one `Get-CompleterRegistrationSnapshot` of the session; `Register-Completer` and `Import-CompleterSet` both resolve conflicts through `Resolve-CompleterRegistrationConflict` and write through `Add-CompleterRegistration`, which writes a batch as one transaction: a whole set for `Import-CompleterSet`, one target at a time for `Register-Completer`.
 - `tools\Measure-CompleterStartup.ps1` is the startup benchmark: eager import versus `Import-CompleterSet`, each sampled in fresh `pwsh -NoProfile` processes.
 
 ### Runtime internals caveat

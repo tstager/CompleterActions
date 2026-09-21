@@ -11,7 +11,7 @@ check that used to be done by hand after every registration can be scripted
 and asserted on.
 
 One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as Get-CompleterRegistration so
+The target parameters accept the same shapes as Get-Completer so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
@@ -20,15 +20,9 @@ registration, and it never touches PSReadLine.
 
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
-returned by Get-CompleterRegistration or Import-CompleterScript. The object
-must expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Identifies the target by registration key. A key without a colon is treated
-as a native command. A key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'.
+returned by Get-Completer or Import-CompleterScript. The object
+must expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies the command name of the native or command-parameter completer
@@ -51,7 +45,7 @@ The zero-based cursor position within InputText at which completion runs. The
 default is the end of the input.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompletionMatch
 Returns CompleterActions.CompletionMatch records, one per completion match,
 with Key, RuntimeKey, CommandName, ParameterName, CompleterType, InputText,
 CursorPosition, CompletionText, ListItemText, ResultType, and ToolTip
@@ -64,9 +58,9 @@ Returns the completion matches the registered git completer produces for
 'git che', such as checkout, cherry, and cherry-pick.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
+PS> Get-Completer -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 
-Verifies a registration record returned by Get-CompleterRegistration by
+Verifies a registration record returned by Get-Completer by
 completing an argument for its parameter.
 
 .NOTES
@@ -78,16 +72,11 @@ completion engine when it is invoked from this command.
 function Test-CompleterRegistration
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompletionMatch')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -137,12 +126,6 @@ function Test-CompleterRegistration
 
             switch ($PSCmdlet.ParameterSetName)
             {
-                'ByKey'
-                {
-                    $targetParameters['Key'] = $Key
-                    break
-                }
-
                 'Native'
                 {
                     $targetParameters['CommandName'] = $CommandName
@@ -187,22 +170,7 @@ function Test-CompleterRegistration
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject(
-                    [pscustomobject] [ordered] @{
-                        PSTypeName     = 'CompleterActions.CompletionMatch'
-                        Key            = [string] $target.Key
-                        RuntimeKey     = [string] $target.RuntimeKey
-                        CommandName    = [string] $target.CommandName
-                        ParameterName  = if ($target.IsNative) { $null } else { [string] $target.ParameterName }
-                        CompleterType  = if ($target.IsNative) { 'Native' } else { 'Parameter' }
-                        InputText      = $InputText
-                        CursorPosition = $resolvedCursorPosition
-                        CompletionText = $completionMatch.CompletionText
-                        ListItemText   = $completionMatch.ListItemText
-                        ResultType     = $completionMatch.ResultType
-                        ToolTip        = $completionMatch.ToolTip
-                    }
-                )
+                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition))
             }
         }
         catch

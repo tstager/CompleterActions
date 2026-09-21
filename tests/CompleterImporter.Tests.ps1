@@ -175,7 +175,7 @@ Describe 'Completer script importer public API' {
 
         if ($Lazy)
         {
-            $null = Register-CompleterRegistration -LiteralPath $fixturePath -Lazy
+            $null = Register-Completer -LiteralPath $fixturePath -Lazy
         }
         else
         {
@@ -186,13 +186,13 @@ Describe 'Completer script importer public API' {
             $imported[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
             @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
 
-            $null = $imported | Register-CompleterRegistration
+            $null = $imported | Register-Completer
         }
 
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         @($completion.CompletionMatches.CompletionText) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
 
-        $record = Get-CompleterRegistration -CommandName 'locationfixture' -Native
+        $record = Get-Completer -CommandName 'locationfixture' -Native
         $record.State | Should -Be 'Active'
         $record.ScriptBlock.File | Should -Be $fixturePath
         $record.ScriptBlock.Module | Should -Not -BeNullOrEmpty
@@ -223,7 +223,7 @@ Describe 'Completer script importer public API' {
 
         if ($Lazy)
         {
-            $null = Register-CompleterRegistration -LiteralPath $fixturePath -Lazy
+            $null = Register-Completer -LiteralPath $fixturePath -Lazy
         }
         else
         {
@@ -233,7 +233,7 @@ Describe 'Completer script importer public API' {
             $imported[0].ScriptBlock.File | Should -Be $fixturePath
             @(& $imported[0].ScriptBlock 'ns-' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
 
-            $null = $imported | Register-CompleterRegistration
+            $null = $imported | Register-Completer
         }
 
         Get-Command -Name 'Get-UsingNamespaceCompletionValue' -ErrorAction SilentlyContinue | Should -BeNullOrEmpty -Because 'the helper lives in the capture module, not the caller scope'
@@ -241,14 +241,14 @@ Describe 'Completer script importer public API' {
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         @($completion.CompletionMatches.CompletionText) | Should -Be $expected
 
-        $record = Get-CompleterRegistration -CommandName 'namespacefixture' -Native
+        $record = Get-Completer -CommandName 'namespacefixture' -Native
         $record.State | Should -Be 'Active'
         $record.Trusted | Should -Be $Trusted
 
         @(Test-CompleterRegistration -CommandName 'namespacefixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be $expected
     }
 
-    It 'returns objects with the shape Register-CompleterRegistration expects' {
+    It 'returns objects with the shape Register-Completer expects' {
         $imported = @(Import-CompleterScript -Path (Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'ParameterCompleter.ps1'))
 
         $imported.Count | Should -Be 1
@@ -262,10 +262,10 @@ Describe 'Completer script importer public API' {
         $imported[0].ScriptText | Should -Match 'imported-alpha'
     }
 
-    It 'pipes importer output into Register-CompleterRegistration and supports get and unregister' {
+    It 'pipes importer output into Register-Completer and supports get and unregister' {
         $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'ParameterCompleter.ps1'
 
-        $registered = @(Import-CompleterScript -Path $fixturePath | Register-CompleterRegistration -PassThru)
+        $registered = @(Import-CompleterScript -Path $fixturePath | Register-Completer -PassThru)
 
         $registered.Count | Should -Be 1
         $registered[0].Source | Should -Be 'Managed'
@@ -275,15 +275,15 @@ Describe 'Completer script importer public API' {
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         $completion.CompletionMatches.CompletionText | Should -Contain 'imported-alpha'
 
-        $resolved = Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
+        $resolved = Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
         $resolved.Source | Should -Be 'Managed'
         $resolved.Key | Should -Be 'test-importedfixturetool:name'
 
-        $removed = @(Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+        $removed = @(Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Unregister-Completer -Confirm:$false -PassThru)
 
         $removed.Count | Should -Be 1
         $removed[0].Key | Should -Be 'test-importedfixturetool:name'
-        Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'handles multiple command names from one registration call' {
@@ -294,7 +294,7 @@ Describe 'Completer script importer public API' {
         $imported.Count | Should -Be 2
         @($imported.Key | Sort-Object) | Should -Be @('test-importedone:name', 'test-importedtwo:name')
 
-        $registered = @($imported | Register-CompleterRegistration -PassThru)
+        $registered = @($imported | Register-Completer -PassThru)
 
         $registered.Count | Should -Be 2
         @($registered.Key | Sort-Object) | Should -Be @('test-importedone:name', 'test-importedtwo:name')
@@ -319,7 +319,7 @@ Describe 'Completer script importer public API' {
             'test-importedarraytwo:path'
         )
 
-        $registered = @($imported | Register-CompleterRegistration -PassThru)
+        $registered = @($imported | Register-Completer -PassThru)
 
         $registered.Count | Should -Be 2
         @($registered.Key | Sort-Object) | Should -Be @(
@@ -345,7 +345,7 @@ Describe 'Completer script importer public API' {
         @($imported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
         @($imported.CompleterType | Select-Object -Unique) | Should -Be @('Native')
 
-        $registered = @($imported | Register-CompleterRegistration -PassThru)
+        $registered = @($imported | Register-Completer -PassThru)
 
         $registered.Count | Should -Be 2
         @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
@@ -649,7 +649,7 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
         } | Should -Throw $Message
 
         Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
-        Get-CompleterRegistration -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'confirms the <Name> probe fires when the script runs without validation' -TestCases $adversarialImportCases {
@@ -718,7 +718,7 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
 
             Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeFalse
             Get-Module -Name 'CompleterActionsRequiresProbe' | Should -BeNullOrEmpty
-            Get-CompleterRegistration -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
         }
 
         It 'confirms the #requires -Modules probe fires when the script runs without validation' {

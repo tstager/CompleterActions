@@ -40,14 +40,11 @@ hooks key handlers, replaces TabExpansion2, or changes PSReadLine options.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
-expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
-property whose value is a script block. When only a key is supplied and no
-IsNative/Native property is present, a key without a colon is treated as a
-native command, and a key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'. An
-explicit IsNative/Native property always wins. ScriptPath or SourcePath and
+expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native, and must expose a
+ScriptBlock property whose value is a script block. A key without a native
+indicator is rejected; keys are output-only identifiers and are never
+classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record.
 
@@ -97,42 +94,42 @@ retried.
 Returns the managed registration records that were created or reused.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+PS> Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 
 Registers a native completer for demoexe with a script block that is already in
 memory.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 
 Reads the targets from the script's Register-ArgumentCompleter calls, registers
 a stub for each of them, and returns the Pending records. The script runs the
 first time tab completion is requested for one of its targets.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 
 Registers a script that needs the trusted tier lazily. The targets are named
 explicitly because a trusted script is not parsed.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
+PS> Get-Completer -State Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
 
 Retries every lazy registration whose script failed to load, after the scripts
 have been fixed.
 #>
-function Register-CompleterRegistration
+function Register-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject[]] $InputObject,
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
