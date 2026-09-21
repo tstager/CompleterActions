@@ -250,9 +250,10 @@ A registration key or command and parameter names bound by property name.
 ### CompleterActions.CompletionMatch
 
 Returns `CompleterActions.CompletionMatch` records, one per completion match,
-with `Key`, `RuntimeKey`, `CommandName`, `ParameterName`, `CompleterType`,
-`InputText`, `CursorPosition`, `CompletionText`, `ListItemText`, `ResultType`,
-and `ToolTip` properties. Nothing is returned when the completer yields no
+with `Key`, `RuntimeKey`, `CommandName`, `ParameterName`, `IsNative`,
+`CompleterType`, `InputText`, `CursorPosition`, `CompletionText`,
+`ListItemText`, `ResultType`, and `ToolTip` properties. `IsNative` lets a
+match pipe back into Get-Completer, Unregister-Completer, and this command. Nothing is returned when the completer yields no
 matches.
 
 ## NOTES

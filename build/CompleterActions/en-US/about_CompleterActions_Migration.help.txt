@@ -110,13 +110,16 @@ TARGETS ARE EXPLICIT
         about_CompleterActions_Migration.
 
     Records still round-trip. Every record Get-Completer, Register-Completer
-    -PassThru, Import-CompleterScript, and Import-CompleterSet returns
-    carries Key together with IsNative, so piping records back into
-    Get-Completer, Register-Completer, Unregister-Completer,
-    Test-CompleterRegistration, and Export-CompleterSet works as before:
+    -PassThru, Import-CompleterScript, Import-CompleterSet, and
+    Test-CompleterRegistration returns carries Key together with IsNative,
+    so piping records back into Get-Completer, Register-Completer,
+    Unregister-Completer, Test-CompleterRegistration, and Export-CompleterSet
+    works as before:
 
         Get-Completer -CommandName git -Native | Unregister-Completer
         Import-CompleterScript -Path .\git_completer.ps1 | Get-Completer
+        Test-CompleterRegistration -CommandName git -Native -InputText 'git ch' |
+            Get-Completer
 
     An input object you build yourself may still carry a key, as long as it
     says which kind it is. Build it as a [pscustomobject]; a plain hashtable
@@ -229,9 +232,18 @@ TYPED OUTPUT
     `[CompleterRegistration]::new()` only resolve inside the module; from a
     script, test the PSTypeName instead.
 
-    Property names and order are unchanged, so property-name pipeline
-    binding is unchanged. Two details differ from the 1.x pscustomobjects:
+    Property names and order are unchanged, except that a completion match
+    now carries IsNative after ParameterName so it round-trips like the
+    other records. Four details differ from the 1.x pscustomobjects:
 
+    - A piped record binds by value to the InputObject parameter, which is
+      typed [object[]] on every command that takes records. Get-Completer
+      no longer declares property-name binding on -CommandName,
+      -ParameterName, and -Native, so an input object describes exactly one
+      target: one whose CommandName or ParameterName holds several values
+      is rejected with "InputObject supplies 2 values for CommandName";
+      pass arrays to -CommandName and -ParameterName instead. Records the
+      module returns always describe one target and are unaffected.
     - State and CompleterType are enum values, not strings. Comparisons with
       strings still work as before: `$_.State -eq 'Failed'`,
       `Where-Object State -in Pending, Failed`, and `-State Failed` all bind,
@@ -278,6 +290,9 @@ CHECKLIST FOR A PROFILE
     7. Where records are persisted with ConvertTo-Json or Export-Clixml, add
        -EnumsAsStrings or store `[string] $_.State` and
        `[string] $_.CompleterType`; the enums serialize as integers.
+    8. Split any hand-built input object whose CommandName or ParameterName
+       holds several values into one object per target, or pass the arrays
+       to -CommandName and -ParameterName; Get-Completer rejects it now.
 
     Completer set files and completer scripts need no change.
 

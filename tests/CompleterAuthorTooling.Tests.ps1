@@ -293,6 +293,21 @@ Describe 'Test-CompleterRegistration' {
         @($byKey.CompletionText) | Should -Be @('beta')
     }
 
+    It 'pipes a <Kind> completion match back into the target-taking commands' -TestCases @(
+        @{ Kind = 'native'; IsNative = $true; Key = 'importfixture'; Run = { Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a' } },
+        @{ Kind = 'parameter'; IsNative = $false; Key = 'test-importedfixturetool:name'; Run = { Test-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' -InputText 'Test-ImportedFixtureTool -Name imported' } }
+    ) {
+        param($IsNative, $Key, $Run)
+
+        $match = @(& $Run)[0]
+        $match.IsNative | Should -Be $IsNative
+
+        @($match | Get-Completer).Key | Should -Be $Key
+        @($match | Test-CompleterRegistration -InputText $match.InputText).Key | Should -Be $Key
+        @($match | Unregister-Completer -Confirm:$false -PassThru).Key | Should -Be $Key
+        $match | Get-Completer | Should -BeNullOrEmpty
+    }
+
     It 'defaults the cursor to the end of the input and honours an explicit position' {
         $default = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture ')
         @($default.CompletionText) | Should -Be @('alpha', 'beta')

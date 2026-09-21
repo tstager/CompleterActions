@@ -37,8 +37,8 @@ Describe 'Completer classes' {
             ClassName  = 'CompletionMatch'
             TypeName   = 'CompleterActions.CompletionMatch'
             Properties = @(
-                'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'CompleterType', 'InputText', 'CursorPosition',
-                'CompletionText', 'ListItemText', 'ResultType', 'ToolTip'
+                'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'CompleterType', 'InputText',
+                'CursorPosition', 'CompletionText', 'ListItemText', 'ResultType', 'ToolTip'
             )
         }
     ) {

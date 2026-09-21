@@ -59,6 +59,7 @@ function New-CompletionMatch
         RuntimeKey     = [string] $Target.RuntimeKey
         CommandName    = [string] $Target.CommandName
         ParameterName  = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+        IsNative       = [bool] $Target.IsNative
         CompleterType  = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
         InputText      = $InputText
         CursorPosition = $CursorPosition

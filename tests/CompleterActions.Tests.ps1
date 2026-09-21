@@ -758,6 +758,64 @@ Describe 'Completer registration public API' {
         Get-Completer -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
+    Context 'decides a Stale and Conflicted pair once per call in a fresh process' {
+        BeforeAll {
+            $manifestPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'CompleterActions.psd1'
+            $probeScript = @'
+param([ValidateSet('WhatIf', 'Confirm')] [string] $Mode)
+
+Import-Module -Name '{0}' -Force
+
+function global:Test-TwinProbeTool
+{{
+    [CmdletBinding()]
+    param(
+        [string] $Name
+    )
+}}
+
+$null = Register-Completer -CommandName 'Test-TwinProbeTool' -ParameterName 'Name' -ScriptBlock {{ 'managed' }}
+Register-ArgumentCompleter -CommandName 'Test-TwinProbeTool' -ParameterName 'Name' -ScriptBlock {{ 'external' }}
+
+$records = @(Get-Completer -CommandName 'Test-TwinProbeTool' -ParameterName 'Name')
+"BEFORE=$(($records.State -join ','))"
+
+if ($Mode -eq 'WhatIf')
+{{
+    $records | Unregister-Completer -AllowUnmanaged -WhatIf
+}}
+else
+{{
+    $records | Unregister-Completer -AllowUnmanaged -Confirm
+}}
+
+"AFTER=$((@(Get-Completer -CommandName 'Test-TwinProbeTool' -ParameterName 'Name').State -join ','))"
+'@ -f $manifestPath
+
+            $script:TwinProbePath = Join-Path -Path $TestDrive -ChildPath 'twin-probe.ps1'
+            Set-Content -Path $script:TwinProbePath -Value $probeScript
+        }
+
+        It 'prints one WhatIf message for the pair' {
+            $output = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $script:TwinProbePath -Mode WhatIf 2>&1)
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            $output | Should -Contain 'BEFORE=Stale,Conflicted'
+            @($output | Where-Object { $_ -like 'What if: Performing the operation "Unregister completer registration" on target "Test-TwinProbeTool:Name".' }).Count | Should -Be 1
+            $output | Should -Contain 'AFTER=Stale,Conflicted'
+        }
+
+        It 'does not prompt again for the Conflicted twin after the Stale record was declined' {
+            $output = @('n', 'y' | & pwsh -NoProfile -NoLogo -File $script:TwinProbePath -Mode Confirm 2>&1)
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
+            $output | Should -Contain 'BEFORE=Stale,Conflicted'
+            $output | Should -Contain 'n' -Because 'the host echoes each answer a prompt consumed'
+            $output | Should -Not -Contain 'y' -Because 'the declined target must not be offered a second time, so the second answer is never read'
+            $output | Should -Contain 'AFTER=Stale,Conflicted' -Because 'the second answer must not remove the target the first answer declined'
+        }
+    }
+
     It 'supports unregister input objects in batches' {
         $scriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)

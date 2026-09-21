@@ -93,6 +93,7 @@ class CompletionMatch
     [string] $RuntimeKey
     [string] $CommandName
     [string] $ParameterName
+    [bool] $IsNative
     [CompleterType] $CompleterType
     [string] $InputText
     [int] $CursorPosition
@@ -1739,9 +1740,10 @@ the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
 its managed record is removed. The command supports array inputs for the
-target fields, plus pipeline input from Get-Completer output; a target the
-same call already removed, such as the Conflicted twin of a Stale record, is
-skipped rather than reported as missing. Keys
+target fields, plus pipeline input from Get-Completer output; each target is
+decided once per call, so the Conflicted twin of a Stale record is skipped
+rather than confirmed again or reported as missing, and a declined
+confirmation stands. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
 the target with -CommandName plus -Native or -ParameterName instead.
 
@@ -1894,6 +1896,8 @@ function Unregister-Completer
                         throw 'No completer registration was found for the requested target.'
                     }
 
+                    $null = $removedKeys.Add($target.Key)
+
                     if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
                     {
                         continue
@@ -1908,8 +1912,6 @@ function Unregister-Completer
                     {
                         $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
                     }
-
-                    $null = $removedKeys.Add($target.Key)
 
                     if ($PassThru)
                     {
@@ -3934,6 +3936,7 @@ function New-CompletionMatch
         RuntimeKey     = [string] $Target.RuntimeKey
         CommandName    = [string] $Target.CommandName
         ParameterName  = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+        IsNative       = [bool] $Target.IsNative
         CompleterType  = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
         InputText      = $InputText
         CursorPosition = $CursorPosition

@@ -47,9 +47,10 @@ after samples.
   fails with `InputObject supplies the key '<key>' without an IsNative or
   Native property ... See about_CompleterActions_Migration.` Records piped
   back from `Get-Completer`, `Register-Completer -PassThru`,
-  `Import-CompleterScript`, and `Import-CompleterSet` always carry `IsNative`
-  and still round-trip; `Get-Completer` gained an `InputObject` parameter set
-  for them, matching `Unregister-Completer` and `Test-CompleterRegistration`.
+  `Import-CompleterScript`, `Import-CompleterSet`, and
+  `Test-CompleterRegistration` always carry `IsNative` and still round-trip;
+  `Get-Completer` gained an `InputObject` parameter set for them, matching
+  `Unregister-Completer` and `Test-CompleterRegistration`.
   `Unregister-Completer`'s default parameter set is `CommandParameter`, so a
   call without arguments reports the missing `CommandName` and
   `ParameterName`. Completer set files never carried keys, so a set exported
@@ -108,7 +109,9 @@ after samples.
   name remains the contract for format views and type checks, and the
   classes are private to the module's session state, so `-is
   [CompleterRegistration]` only resolves inside the module. Property names
-  and order are unchanged. `State` and `CompleterType` are enum values that
+  and order are unchanged, except that `CompletionMatch` gained `IsNative`
+  after `ParameterName` so a native match resolves as a target when it is
+  piped back. `State` and `CompleterType` are enum values that
   still compare equal to their names (`-eq 'Failed'`, `-in Pending, Failed`).
   String properties that were `$null` on the 1.x records are `''` on the
   class records: `ParameterName` on a native record, `ScriptPath` and

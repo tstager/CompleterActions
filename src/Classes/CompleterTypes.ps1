@@ -93,6 +93,7 @@ class CompletionMatch
     [string] $RuntimeKey
     [string] $CommandName
     [string] $ParameterName
+    [bool] $IsNative
     [CompleterType] $CompleterType
     [string] $InputText
     [int] $CursorPosition
