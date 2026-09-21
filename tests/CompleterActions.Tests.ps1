@@ -67,6 +67,7 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayOne' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayOne' -ParameterName 'Path' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeOne' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
@@ -88,6 +89,7 @@ Describe 'Completer registration public API' {
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayOne' -ParameterName 'Name' -CompleterType 'Parameter'
+        Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayOne' -ParameterName 'Path' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -CompleterType 'Parameter'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeOne' -CompleterType 'Native'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ArrayNativeTwo' -CompleterType 'Native'
@@ -542,6 +544,60 @@ Describe 'Completer registration public API' {
         $parameters.ContainsKey('DiscoveredOnly') | Should -BeFalse
         $parameters['State'].ParameterType.FullName | Should -Be 'CompleterState[]'
         @($parameters['State'].ParameterSets.Keys) | Should -Be @('__AllParameterSets')
+    }
+
+    It 'sorts records by CompleterType, then CommandName, then ParameterName regardless of registration order' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('sorted', 'sorted', 'ParameterValue', 'sorted')
+        }
+
+        Register-ArgumentCompleter -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-ArrayNativeTwo' -Native -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Path', 'Name' -ScriptBlock $scriptBlock
+        Register-ArgumentCompleter -CommandName 'Test-ArrayNativeOne' -Native -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+
+        $expectedKeys = @(
+            'test-arraynativeone', 'test-arraynativetwo',
+            'test-arrayone:name', 'test-arrayone:path', 'test-arraytwo:path', 'test-managedtool:name', 'test-unmanagedtool:name'
+        )
+
+        @(Get-Completer | Where-Object Key -in $expectedKeys).Key | Should -Be $expectedKeys
+        @(Get-Completer -State Active, Discovered | Where-Object Key -in $expectedKeys).Key | Should -Be $expectedKeys
+        @(Get-Completer -CommandName 'Test-ManagedTool', 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Path', 'Name').Key | Should -Be @('test-arrayone:name', 'test-arrayone:path', 'test-managedtool:name')
+    }
+
+    It 'pages without skipping or duplicating an item when an unrelated target changes between pages' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('paged', 'paged', 'ParameterValue', 'paged')
+        }
+
+        $replacementScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('replaced', 'replaced', 'ParameterValue', 'replaced')
+        }
+
+        $null = Register-Completer -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-PipelineExtraTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name' -ScriptBlock $scriptBlock
+        $null = Register-Completer -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+
+        $firstPage = @(Get-Completer -First 2)
+
+        Unregister-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name' -Confirm:$false
+        $null = Register-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name' -ScriptBlock $replacementScriptBlock
+
+        $secondPage = @(Get-Completer -Skip 2 -First 2)
+
+        @($firstPage.Key) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
+        @($secondPage.Key) | Should -Be @('test-pipelineextratool:name', 'test-pipelinemanagedtool:name')
+        @($firstPage.Key + $secondPage.Key | Select-Object -Unique).Count | Should -Be 4
     }
 
     It 'supports command and parameter arrays for registration and lookup' {

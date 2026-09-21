@@ -16,11 +16,15 @@ is returned with State 'Stale' and the live value with State 'Conflicted';
 when it was removed outside this module, the managed record is 'Stale' with
 IsRuntimeRegistered false. A lazy registration whose script failed to load is
 'Failed'; it has no runtime entry and carries the error in LoadError. Without
--State every record is returned. The command accepts arrays for command and
-parameter lookups, and records piped back from Get-Completer or
-Import-CompleterScript resolve through their Key and IsNative properties. Keys
-are output-only identifiers: a hand-typed key string is not accepted, so name
-the target with -CommandName plus -Native or -ParameterName instead.
+-State every record is returned. Records are sorted by CompleterType, then
+CommandName, then ParameterName before -Skip and -First are applied, so paging
+across several calls stays stable while unrelated targets change; only a
+target that sorts before the current window can shift it. The command accepts
+arrays for command and parameter lookups, and records piped back from
+Get-Completer or Import-CompleterScript resolve through their Key and IsNative
+properties. Keys are output-only identifiers: a hand-typed key string is not
+accepted, so name the target with -CommandName plus -Native or -ParameterName
+instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -226,6 +230,7 @@ function Get-Completer
             $registrations = @($registrations | Where-Object { $State -contains $_.State })
         }
 
+        $registrations = @($registrations | Sort-Object -Property 'CompleterType', 'CommandName', 'ParameterName' -Stable)
         $totalCount = $registrations.Count
 
         if ($PSCmdlet.PagingParameters.IncludeTotalCount)
