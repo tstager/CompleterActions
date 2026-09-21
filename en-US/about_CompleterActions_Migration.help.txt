@@ -119,9 +119,11 @@ TARGETS ARE EXPLICIT
         Import-CompleterScript -Path .\git_completer.ps1 | Get-Completer
 
     An input object you build yourself may still carry a key, as long as it
-    says which kind it is: `@{ Key = 'git'; IsNative = $true }` resolves,
-    `@{ Key = 'git' }` does not. Completer set files never used keys, so a
-    set exported by 2.0.0-preview3 imports unchanged.
+    says which kind it is. Build it as a [pscustomobject]; a plain hashtable
+    does not expose its entries as properties and is rejected:
+    `[pscustomobject] @{ Key = 'git'; IsNative = $true }` resolves,
+    `[pscustomobject] @{ Key = 'git' }` does not. Completer set files never
+    used keys, so a set exported by 2.0.0-preview3 imports unchanged.
 
 ONE STATE FILTER
 
@@ -240,6 +242,14 @@ TYPED OUTPUT
       ScriptPath and LoadError on a record without a script, and ToolTip on
       a completion match. `[string]::IsNullOrEmpty` and `-not $_.ScriptPath`
       behave the same; a `-eq $null` test does not match any more.
+    - State and CompleterType serialize as their integer values through
+      ConvertTo-Json and Export-Clixml, where the 1.x strings serialized as
+      their names, so a record read back from either round trip carries 0
+      instead of 'Active' and `$_.State -eq 'Active'` is false. Pass
+      -EnumsAsStrings to ConvertTo-Json, or store `[string] $_.State` and
+      `[string] $_.CompleterType`, when a script persists records.
+      ConvertTo-Csv and the Format commands are unaffected because they
+      write the name.
 
     Across a remoting or job boundary the records arrive deserialized, as
     they did in 1.x: the type name becomes
@@ -265,6 +275,9 @@ CHECKLIST FOR A PROFILE
        top of the promised order.
     6. Replace `-eq $null` tests on ParameterName, ScriptPath, LoadError,
        or ToolTip with `[string]::IsNullOrEmpty` or a truthiness test.
+    7. Where records are persisted with ConvertTo-Json or Export-Clixml, add
+       -EnumsAsStrings or store `[string] $_.State` and
+       `[string] $_.CompleterType`; the enums serialize as integers.
 
     Completer set files and completer scripts need no change.
 

@@ -113,7 +113,11 @@ after samples.
   String properties that were `$null` on the 1.x records are `''` on the
   class records: `ParameterName` on a native record, `ScriptPath` and
   `LoadError` on a record without a script, and `ToolTip` on a completion
-  match; a `-eq $null` test no longer matches. Across a remoting or job
+  match; a `-eq $null` test no longer matches. `State` and `CompleterType`
+  serialize as integers through `ConvertTo-Json` and `Export-Clixml`, where
+  1.x wrote the name strings; pass `-EnumsAsStrings` or store
+  `[string] $_.State` when persisting records (`ConvertTo-Csv` and the format
+  views still write the names). Across a remoting or job
   boundary the records arrive as
   `Deserialized.CompleterActions.CompleterRegistration` with `State` as a
   plain string, as in 1.x.
