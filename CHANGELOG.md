@@ -121,7 +121,12 @@ after samples.
   `Unregister-Completer`, `Test-CompleterRegistration`, and
   `Export-CompleterSet` is typed `[object[]]` instead of `[psobject[]]`, so a
   piped class record binds by value instead of falling through to
-  property-name binding.
+  property-name binding. Because every piped object binds there,
+  `Get-Completer` no longer declares property-name binding on `-CommandName`,
+  `-ParameterName`, and `-Native`; an input object describes one target, and
+  one whose `CommandName` or `ParameterName` holds several values is rejected
+  with an error instead of being joined into one name (pass arrays to
+  `-CommandName` and `-ParameterName` for several targets).
 - The source module loads `src\Classes` before `src\Private` and
   `src\Public`, as one script block, and the packaged module defines the
   classes before the first function.

@@ -11,16 +11,16 @@ function Get-CompleterRegistrationLegacy
         [ValidateNotNull()]
         [object[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
         [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
         [string[]] $ParameterName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Alias('IsNative')]
         [switch] $Native,
 

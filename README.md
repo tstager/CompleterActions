@@ -284,7 +284,7 @@ Get-Completer -Skip 10 -First 10 -IncludeTotalCount
 
 Pipeline highlights:
 
-- `Get-Completer` accepts registration records from `Get-Completer` and `Import-CompleterScript` through `InputObject`, and property-name binding for command and parameter lookups; keys are output-only identifiers and are never accepted as typed input
+- `Get-Completer` accepts registration records from `Get-Completer` and `Import-CompleterScript` through `InputObject`, which binds every piped object by value; an input object describes one target, and arrays go to `-CommandName` and `-ParameterName`. Keys are output-only identifiers and are never accepted as typed input
 - `Import-CompleterScript` emits input objects that are ready for `Register-Completer -InputObject`
 - `Export-CompleterSet` accepts records from `Get-Completer` and `Import-CompleterScript`; `Import-CompleterSet` accepts `Get-ChildItem` output through `FullName` binding
 - `Test-CompleterScript` accepts `Get-ChildItem` output directly through `FullName` binding

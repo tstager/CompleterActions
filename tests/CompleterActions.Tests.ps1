@@ -657,6 +657,25 @@ Describe 'Completer registration public API' {
         $byKeyAndIndicator[0].Key | Should -Be 'test-pipelinemanagedtool:name'
     }
 
+    It 'rejects an input object whose ParameterName is an array instead of joining it into one target' {
+        { [pscustomobject] @{ CommandName = 'Test-ArrayOne'; ParameterName = @('Name', 'Path') } | Get-Completer } | Should -Throw '*supplies 2 values for ParameterName*pass arrays to -CommandName and -ParameterName*'
+        { [pscustomobject] @{ CommandName = @('Test-ArrayOne', 'Test-ArrayTwo'); ParameterName = 'Path' } | Unregister-Completer -Confirm:$false } | Should -Throw '*supplies 2 values for CommandName*'
+    }
+
+    It 'binds every piped object to the InputObject set of <Command>' -TestCases @(
+        @{ Command = 'Get-Completer' },
+        @{ Command = 'Get-CompleterRegistrationLegacy' }
+    ) {
+        param($Command)
+
+        $command = Get-Command -Name $Command -Module 'CompleterActions'
+
+        foreach ($parameterName in 'CommandName', 'ParameterName', 'Native')
+        {
+            @($command.Parameters[$parameterName].Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] -and $_.ValueFromPipelineByPropertyName }) | Should -BeNullOrEmpty -Because "InputObject binds every piped object by value, so property-name binding on $parameterName is unreachable"
+        }
+    }
+
     It 'rejects a bare key input object with no native indicator on <Command>' -TestCases @(
         @{ Command = 'Get-Completer'; Run = { [pscustomobject] @{ RegistrationKey = 'test-pipelinemanagedtool:name' } | Get-Completer } },
         @{ Command = 'Register-Completer'; Run = { [pscustomobject] @{ Key = 'Test-PipelineManagedTool:Name'; ScriptBlock = { 'kappa' } } | Register-Completer } },

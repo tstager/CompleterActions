@@ -7,7 +7,9 @@ Normalizes public pipeline input into the target metadata used by the module's
 registration, lookup, and removal commands. The helper accepts module
 registration records and custom objects that expose CommandName with
 IsNative/Native or ParameterName, or a Key, RegistrationKey, or RuntimeKey
-together with IsNative/Native. Keys are output-only identifiers, so a key
+together with IsNative/Native. An input object describes one target, so a
+CommandName or ParameterName that holds several values is rejected rather
+than joined into one name. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
 A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
@@ -64,6 +66,15 @@ function Resolve-CompleterInputObject
                 {
                     $keyValue = [string] $property.Value
                     break
+                }
+            }
+
+            foreach ($propertyName in 'CommandName', 'ParameterName')
+            {
+                $property = $InputObject.PSObject.Properties[$propertyName]
+                if ($null -ne $property -and @($property.Value).Count -gt 1)
+                {
+                    throw "InputObject supplies $(@($property.Value).Count) values for $propertyName. An input object describes one target; pass arrays to -CommandName and -ParameterName instead."
                 }
             }
 

@@ -36,9 +36,11 @@ listed.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-Completer or Import-CompleterScript. An
-input object exposes CommandName with IsNative/Native or ParameterName, or a
-Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
+records returned by Get-Completer or Import-CompleterScript. Every piped
+object binds here. An input object describes one target: it exposes
+CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
+or RuntimeKey together with IsNative/Native. To look up several targets at
+once, pass arrays to -CommandName and -ParameterName instead.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter
@@ -100,16 +102,16 @@ function Get-Completer
         [ValidateNotNull()]
         [object[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
         [string[]] $CommandName,
 
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
         [string[]] $ParameterName,
 
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Alias('IsNative')]
         [switch] $Native,
 
