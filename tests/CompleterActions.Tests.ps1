@@ -810,8 +810,9 @@ else
 
             $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
             $output | Should -Contain 'BEFORE=Stale,Conflicted'
-            $output | Should -Contain 'n' -Because 'the host echoes each answer a prompt consumed'
-            $output | Should -Not -Contain 'y' -Because 'the declined target must not be offered a second time, so the second answer is never read'
+            $joined = $output -join [Environment]::NewLine
+            $joined | Should -Match '(?m)(?:^|"\):)n\s*$' -Because 'the host echoes each answer a prompt consumed, on its own line on Windows and after the prompt text on Linux'
+            $joined | Should -Not -Match '(?m)(?:^|"\):)y\s*$' -Because 'the declined target must not be offered a second time, so the second answer is never read'
             $output | Should -Contain 'AFTER=Stale,Conflicted' -Because 'the second answer must not remove the target the first answer declined'
         }
     }
