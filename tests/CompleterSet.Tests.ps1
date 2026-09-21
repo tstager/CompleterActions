@@ -221,7 +221,7 @@ Describe 'Completer sets' {
         }
 
         It 'refuses a strict subset registration that Import-CompleterSet could not read back and writes nothing' {
-            $subset = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru
+            $subset = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru
             $subset.State | Should -Be 'Pending'
 
             $thrown = { $subset | Export-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
@@ -235,14 +235,14 @@ Describe 'Completer sets' {
             { Export-CompleterSet -Path $script:SetPath } | Should -Throw "*Missing: 'importfixture'.*" -Because 'the default export of every managed registration hits the same rule'
             Test-Path -LiteralPath $script:SetPath | Should -BeFalse
 
-            $null = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture' -Native -PassThru
+            $null = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture' -Native -PassThru
             Export-CompleterSet -Path $script:SetPath
 
             $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
             @($data.Entries).Count | Should -Be 1
             @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
 
-            Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false
+            Get-Completer -ManagedOnly | Unregister-Completer -Confirm:$false
             $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
             @($reimported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
         }
@@ -263,7 +263,7 @@ Describe 'Completer sets' {
         }
 
         It 'exports a trusted subset registration as given and imports it back' {
-            $subset = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture.exe' -Native -PassThru
+            $subset = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture.exe' -Native -PassThru
 
             $subset | Export-CompleterSet -Path $script:SetPath
 
@@ -271,7 +271,7 @@ Describe 'Completer sets' {
             $data.Entries[0].Trusted | Should -BeTrue
             @($data.Entries[0].Targets.CommandName) | Should -Be @('importfixture.exe')
 
-            $subset | Unregister-CompleterRegistration -Confirm:$false
+            $subset | Unregister-Completer -Confirm:$false
             $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
             @($reimported.Key) | Should -Be @('importfixture.exe')
             $reimported[0].Trusted | Should -BeTrue
@@ -312,14 +312,14 @@ Describe 'Completer sets' {
                 @(Import-CompleterScript -Path $script:TrustedFixturePath -Trusted)
             $imported | Export-CompleterSet -Path $script:SetPath
 
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
 
             $registered = @(Import-CompleterSet -Path $script:SetPath)
 
             @($registered.Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
             $registered[0].PSTypeNames | Should -Contain 'CompleterActions.CompleterRegistration'
             @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
-            @((Get-CompleterRegistration -ManagedOnly).Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
+            @((Get-Completer -ManagedOnly).Key | Sort-Object) | Should -Be @($imported.Key | Sort-Object)
 
             $trustedInput = 'Test-TrustedFixtureTool -Name trusted'
             $trustedCompletion = TabExpansion2 -InputScript $trustedInput -CursorColumn $trustedInput.Length
@@ -329,13 +329,13 @@ Describe 'Completer sets' {
             $nativeCompletion = TabExpansion2 -InputScript $nativeInput -CursorColumn $nativeInput.Length
             $nativeCompletion.CompletionMatches.CompletionText | Should -Contain 'alpha'
 
-            (Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name').State | Should -Be 'Active'
-            (Get-CompleterRegistration -CommandName 'importfixture' -Native).State | Should -Be 'Active'
-            (Get-CompleterRegistration -CommandName 'importfixture.exe' -Native).State | Should -Be 'Active'
-            (Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').State | Should -Be 'Pending'
+            (Get-Completer -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name').State | Should -Be 'Active'
+            (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+            (Get-Completer -CommandName 'importfixture.exe' -Native).State | Should -Be 'Active'
+            (Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').State | Should -Be 'Pending'
         }
 
-        It 'round-trips a lazily imported set through Get-CompleterRegistration and Export-CompleterSet' {
+        It 'round-trips a lazily imported set through Get-Completer and Export-CompleterSet' {
             Write-TestCompleterSet -Path $script:SetPath -Entry @(
                 "@{ Path = '$script:NativeFixturePath' }"
                 "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
@@ -343,7 +343,7 @@ Describe 'Completer sets' {
             $null = @(Import-CompleterSet -Path $script:SetPath)
 
             $exportPath = Join-Path -Path $script:SetRoot -ChildPath 'exported.psd1'
-            Get-CompleterRegistration -ManagedOnly | Export-CompleterSet -Path $exportPath
+            Get-Completer -ManagedOnly | Export-CompleterSet -Path $exportPath
 
             $exported = Import-PowerShellDataFile -LiteralPath $exportPath
             $entriesByScript = @{}
@@ -360,7 +360,7 @@ Describe 'Completer sets' {
             $entriesByScript[$script:TrustedFixturePath].Targets[0].CommandName | Should -Be 'Test-TrustedFixtureTool'
             $entriesByScript[$script:TrustedFixturePath].Targets[0].ParameterName | Should -Be 'Name'
 
-            Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false
+            Get-Completer -ManagedOnly | Unregister-Completer -Confirm:$false
 
             $reimported = @(Import-CompleterSet -Path $exportPath)
 
@@ -396,12 +396,12 @@ Describe 'Completer sets' {
             @($firstCompletion.CompletionMatches.CompletionText) | Should -Contain (Join-Path -Path '.' -ChildPath 'set-fallback-marker.txt')
             @($secondCompletion.CompletionMatches.CompletionText) | Should -Contain (Join-Path -Path '.' -ChildPath 'set-fallback-marker.txt')
 
-            $failed = Get-CompleterRegistration -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name'
+            $failed = Get-Completer -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name'
             $failed.State | Should -Be 'Failed'
             $failed.IsRuntimeRegistered | Should -BeFalse
             $failed.ScriptPath | Should -Be $script:ThrowingStrictFixturePath
             $failed.LoadError | Should -Match 'CompleterActionsLazyFixtureMissing'
-            Get-CompleterRegistration -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'Test-LazyStrictSetTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
 
             { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*failed to load*Use -Force to retry*'
 
@@ -423,11 +423,11 @@ Describe 'Completer sets' {
             $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
             @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'unsafe'
 
-            $failed = Get-CompleterRegistration -CommandName 'Test-UnsafeTool' -ParameterName 'Name'
+            $failed = Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name'
             $failed.State | Should -Be 'Failed'
             $failed.LoadError | Should -Match 'does not conform to the strict import grammar'
             $failed.LoadError | Should -Match 'Get-Date'
-            Get-CompleterRegistration -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
         }
 
         It 'resolves relative paths against the set file directory, not the current location' {
@@ -514,15 +514,15 @@ Describe 'Completer sets' {
             $thrown.Exception.Message | Should -Match "Entry 4 \(.*DynamicCommandName\.ps1.\): The script '.*DynamicCommandName\.ps1' does not use a literal -CommandName argument at line 1, column \d+"
             $thrown.Exception.Message | Should -Not -Match 'Entry 5'
 
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
-            Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
         }
 
         It 'reports a strict entry whose declared Targets do not match the script' {
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath'; Targets = @( @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Other' } ) }"
 
             { Import-CompleterSet -Path $script:SetPath } | Should -Throw "*The declared Targets do not match the script. Declared: 'Test-ImportedFixtureTool:Other'. Script registers: 'Test-ImportedFixtureTool:Name'.*"
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
         }
 
         It 'reports a target listed by two entries before registering anything' {
@@ -536,7 +536,7 @@ Describe 'Completer sets' {
             $thrown.Exception.Message | Should -Match 'has 1 invalid entry and nothing was registered'
             $thrown.Exception.Message | Should -Match "Entry 2 \(.*MultiCommandCompleter\.ps1.\): Target 'Test-ImportedOne:Name' is also listed by entry 1\."
             $thrown.Exception.Message | Should -Not -Match 'Entry 1 \('
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
 
             $registered = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningVariable warnings -WarningAction SilentlyContinue)
 
@@ -546,7 +546,7 @@ Describe 'Completer sets' {
         }
 
         It 'reports targets that already carry a different registration up front and registers nothing without -Force' {
-            $null = Register-CompleterRegistration -LiteralPath $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture' -Native
+            $null = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture' -Native
             Write-TestCompleterSet -Path $script:SetPath -Entry @(
                 "@{ Path = '$script:ParameterFixturePath' }"
                 "@{ Path = '$script:NativeFixturePath' }"
@@ -556,18 +556,18 @@ Describe 'Completer sets' {
 
             $thrown.Exception.Message | Should -Match "Entry 2 \(.*ImportableNativeCompleter\.ps1.\): A module-managed completer registration already exists for 'importfixture'\. Use -Force to replace it\."
             $thrown.Exception.Message | Should -Not -Match 'Entry 1 \('
-            Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
-            @((Get-CompleterRegistration -ManagedOnly).Key) | Should -Be @('importfixture')
+            Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+            @((Get-Completer -ManagedOnly).Key) | Should -Be @('importfixture')
 
             $skipped = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningAction SilentlyContinue)
 
             @($skipped.Key) | Should -Be @('test-importedfixturetool:name')
-            (Get-CompleterRegistration -CommandName 'importfixture' -Native).Trusted | Should -BeTrue
+            (Get-Completer -CommandName 'importfixture' -Native).Trusted | Should -BeTrue
 
             $forced = @(Import-CompleterSet -Path $script:SetPath -Force)
 
             @($forced.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name')
-            (Get-CompleterRegistration -CommandName 'importfixture' -Native).Trusted | Should -BeFalse
+            (Get-Completer -CommandName 'importfixture' -Native).Trusted | Should -BeFalse
         }
 
         It 'reuses the Pending records when the same set is imported again without -Force' {
@@ -586,7 +586,7 @@ Describe 'Completer sets' {
                 [object]::ReferenceEquals($record, ($first | Where-Object -Property Key -EQ -Value $record.Key)) | Should -BeTrue
             }
 
-            @(Get-CompleterRegistration -ManagedOnly).Count | Should -Be 3
+            @(Get-Completer -ManagedOnly).Count | Should -Be 3
         }
 
         It 'registers the valid entries and warns about the rest with -SkipInvalid' {
@@ -611,7 +611,7 @@ Describe 'Completer sets' {
             @($warningText | Where-Object { $_ -match 'skipped Entry 4 \(.*\): The script .* does not use a literal -CommandName argument' }).Count | Should -Be 1
             @($warningText | Where-Object { $_ -match 'Entry 5' }).Count | Should -Be 0
 
-            (Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').Source | Should -Be 'Managed'
+            (Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').Source | Should -Be 'Managed'
         }
 
         It 'registers a trusted entry through the trusted tier when it declares its targets' {
@@ -640,7 +640,7 @@ Describe 'Completer sets' {
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
 
             { Import-CompleterSet -Path $script:SetPath } | Should -Throw "*Entry 1 (*): A runtime completer registration already exists for 'Test-ImportedFixtureTool:Name'. Use -Force to replace it.*"
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
 
             $registered = @(Import-CompleterSet -Path $script:SetPath -Force)
 
@@ -707,11 +707,11 @@ Describe 'Completer sets' {
 
             $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'Test-TrustedFixtureTool:Name'. forced batch failure"
 
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
-            Get-CompleterRegistration -CommandName 'importfixture', 'importfixture.exe' -Native | Should -BeNullOrEmpty
-            Get-CompleterRegistration -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
 
-            $restored = Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
+            $restored = Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
             $restored.Source | Should -Be 'Discovered'
             [object]::ReferenceEquals($restored.ScriptBlock, $externalScriptBlock) | Should -BeTrue
 
@@ -721,7 +721,7 @@ Describe 'Completer sets' {
         }
 
         It 'returns the records in set order and keeps a reused record in its place' {
-            $existing = Register-CompleterRegistration -LiteralPath $script:ParameterFixturePath -Lazy -PassThru
+            $existing = Register-Completer -LiteralPath $script:ParameterFixturePath -Lazy -PassThru
             Write-TestCompleterSet -Path $script:SetPath -Entry @(
                 "@{ Path = '$script:NativeFixturePath' }"
                 "@{ Path = '$script:ParameterFixturePath' }"
@@ -733,7 +733,7 @@ Describe 'Completer sets' {
             @($registered.Key) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
             [object]::ReferenceEquals($registered[2], $existing) | Should -BeTrue
             @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
-            @(Get-CompleterRegistration -ManagedOnly).Count | Should -Be 4
+            @(Get-Completer -ManagedOnly).Count | Should -Be 4
         }
 
         It 'reads the session registrations once and resolves each entry against that snapshot' {
@@ -786,7 +786,7 @@ Describe 'Completer sets' {
             { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*dynamic expressions*'
 
             Test-Path -LiteralPath $probePath | Should -BeFalse
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
 
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
             Mock -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -MockWith { throw 'reader sentinel' }
@@ -800,7 +800,7 @@ Describe 'Completer sets' {
 
             Import-CompleterSet -Path $script:SetPath -WhatIf | Should -BeNullOrEmpty
 
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
         }
 
         It 'rejects files that are not .psd1 and sets without Version 1 or Entries' {
@@ -814,7 +814,7 @@ Describe 'Completer sets' {
             Set-Content -LiteralPath $script:SetPath -Value '@{ Version = 1; Entries = @() }' -Encoding utf8
             { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*has no Entries*'
 
-            Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+            Get-Completer -ManagedOnly | Should -BeNullOrEmpty
         }
 
         It 'leaves PSReadLine key handlers unchanged across import, first tab, and export' {
@@ -834,8 +834,8 @@ Describe 'Completer sets' {
 
             $null = @(Import-CompleterSet -Path $script:SetPath)
             $null = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
-            (Get-CompleterRegistration -CommandName 'importfixture' -Native).State | Should -Be 'Active'
-            Get-CompleterRegistration -ManagedOnly | Export-CompleterSet -Path (Join-Path -Path $script:SetRoot -ChildPath 'again.psd1')
+            (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+            Get-Completer -ManagedOnly | Export-CompleterSet -Path (Join-Path -Path $script:SetRoot -ChildPath 'again.psd1')
 
             $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
 

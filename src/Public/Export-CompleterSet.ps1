@@ -9,7 +9,7 @@ tier and the targets it registers. Import-CompleterSet reads the file back and
 registers everything in it, so a profile that imports a completer repository
 becomes one Import-CompleterSet call.
 
-Records arrive through -InputObject, typically from Get-CompleterRegistration
+Records arrive through -InputObject, typically from Get-Completer
 or Import-CompleterScript. Without -InputObject the command exports every
 managed registration that records a ScriptPath. Script paths are written
 relative to the set file when both share a root, so a repository can carry its
@@ -22,7 +22,7 @@ Import-CompleterSet compares a strict entry's Targets with the targets derived
 from the parsed script and rejects a mismatch. The command derives those
 targets the same way before writing and refuses, naming the missing targets
 and leaving the output untouched, when the records for a strict script cover
-only some of them, as they do after Register-CompleterRegistration -Lazy
+only some of them, as they do after Register-Completer -Lazy
 -CommandName selected a subset. Trusted entries are written with the targets
 the records carry, so a subset of a trusted script's targets exports and
 imports as given.
@@ -106,7 +106,7 @@ function Export-CompleterSet
         {
             if (-not $inputBound)
             {
-                $records.AddRange([psobject[]] @(Get-CompleterRegistration -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+                $records.AddRange([psobject[]] @(Get-Completer -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
             }
 
             $entriesByPath = [ordered] @{}

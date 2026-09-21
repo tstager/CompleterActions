@@ -107,7 +107,7 @@ tier and the targets it registers. Import-CompleterSet reads the file back and
 registers everything in it, so a profile that imports a completer repository
 becomes one Import-CompleterSet call.
 
-Records arrive through -InputObject, typically from Get-CompleterRegistration
+Records arrive through -InputObject, typically from Get-Completer
 or Import-CompleterScript. Without -InputObject the command exports every
 managed registration that records a ScriptPath. Script paths are written
 relative to the set file when both share a root, so a repository can carry its
@@ -120,7 +120,7 @@ Import-CompleterSet compares a strict entry's Targets with the targets derived
 from the parsed script and rejects a mismatch. The command derives those
 targets the same way before writing and refuses, naming the missing targets
 and leaving the output untouched, when the records for a strict script cover
-only some of them, as they do after Register-CompleterRegistration -Lazy
+only some of them, as they do after Register-Completer -Lazy
 -CommandName selected a subset. Trusted entries are written with the targets
 the records carry, so a subset of a trusted script's targets exports and
 imports as given.
@@ -207,7 +207,7 @@ function Export-CompleterSet
         {
             if (-not $inputBound)
             {
-                $records.AddRange([psobject[]] @(Get-CompleterRegistration -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+                $records.AddRange([psobject[]] @(Get-Completer -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
             }
 
             $entriesByPath = [ordered] @{}
@@ -369,7 +369,7 @@ was removed outside this module, the managed record is returned with State
 that load failed; a Failed record has no runtime entry and carries the error
 in LoadError. Both are returned by default and by -ManagedOnly. The command
 accepts arrays for command and parameter lookups, and records piped back from
-Get-CompleterRegistration or Import-CompleterScript resolve through their Key
+Get-Completer or Import-CompleterScript resolve through their Key
 and IsNative properties. Keys are output-only identifiers: a hand-typed key
 string is not accepted, so name the target with -CommandName plus -Native or
 -ParameterName instead.
@@ -384,7 +384,7 @@ listed.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-CompleterRegistration or Import-CompleterScript. An
+records returned by Get-Completer or Import-CompleterScript. An
 input object exposes CommandName with IsNative/Native or ParameterName, or a
 Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
@@ -417,23 +417,23 @@ a lazy or imported registration and LoadError holds the failure message of a
 Failed record.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName 'git' -Native
+PS> Get-Completer -CommandName 'git' -Native
 
 Gets the registration record for the native completer currently associated with
 git.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'
+PS> Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'
 
 Gets multiple command-parameter completer registrations in a single call.
 
 .EXAMPLE
-PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration
+PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer
 
 Gets the live registrations for the targets a completer script defines by
 piping its import records back in.
 #>
-function Get-CompleterRegistration
+function Get-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
@@ -654,13 +654,67 @@ function Get-CompleterRegistration
     }
 }
 <#
+.ForwardHelpTargetName Get-Completer
+.ForwardHelpCategory Function
+#>
+function Get-CompleterRegistrationLegacy
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter()]
+        [switch] $ManagedOnly,
+
+        [Parameter()]
+        [switch] $DiscoveredOnly
+    )
+
+    begin
+    {
+        Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
+
+        $steppablePipeline = { Get-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process
+    {
+        $steppablePipeline.Process($_)
+    }
+
+    end
+    {
+        $steppablePipeline.End()
+    }
+}
+<#
 .SYNOPSIS
 Imports self-contained completer scripts into registration input objects.
 
 .DESCRIPTION
 Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows Register-ArgumentCompleter, and emits objects that
-can be piped directly to Register-CompleterRegistration -InputObject.
+can be piped directly to Register-Completer -InputObject.
 
 Import-CompleterScript has two tiers. The strict tier is the default: it
 validates the script against a closed grammar before executing it, rejects
@@ -706,17 +760,17 @@ Trusted set to true.
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns CompleterActions.ImportedCompleterRegistration records compatible with
-Register-CompleterRegistration -InputObject. The Trusted property records which
+Register-Completer -InputObject. The Trusted property records which
 tier produced the record.
 
 .EXAMPLE
-PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-CompleterRegistration -PassThru
+PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-Completer -PassThru
 
 Imports a supported completer script and immediately registers the imported
 completer definitions through the module's managed registration API.
 
 .EXAMPLE
-PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-CompleterRegistration
+PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-Completer
 
 Imports a completer script you own without validating it against the strict
 grammar, then registers it.
@@ -834,7 +888,7 @@ Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-lazily under the entry's trust tier, exactly as Register-CompleterRegistration
+lazily under the entry's trust tier, exactly as Register-Completer
 -Lazy registers a script, so each target gets a stub and a managed record in
 state Pending. The whole set is one transaction against one snapshot of the
 session's registrations: validation and registration read the managed table
@@ -1087,31 +1141,31 @@ System.Management.Automation.PSCustomObject
 When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+PS> Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 
 Registers a native completer for demoexe with a script block that is already in
 memory.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 
 Reads the targets from the script's Register-ArgumentCompleter calls, registers
 a stub for each of them, and returns the Pending records. The script runs the
 first time tab completion is requested for one of its targets.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 
 Registers a script that needs the trusted tier lazily. The targets are named
 explicitly because a trusted script is not parsed.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
+PS> Get-Completer -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
 
 Retries every lazy registration whose script failed to load, after the scripts
 have been fixed.
 #>
-function Register-CompleterRegistration
+function Register-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
@@ -1322,6 +1376,88 @@ function Register-CompleterRegistration
     }
 }
 <#
+.ForwardHelpTargetName Register-Completer
+.ForwardHelpCategory Function
+#>
+function Register-CompleterRegistrationLegacy
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'The wrapper forwards -WhatIf and -Confirm to the wrapped command, which calls ShouldProcess.')]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native')]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
+        [ValidateNotNull()]
+        [scriptblock] $ScriptBlock,
+
+        [Parameter(Mandatory, ParameterSetName = 'LazyPath')]
+        [ValidateNotNullOrEmpty()]
+        [string] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LazyLiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory, ParameterSetName = 'LazyPath')]
+        [Parameter(Mandatory, ParameterSetName = 'LazyLiteralPath')]
+        [switch] $Lazy,
+
+        [Parameter(ParameterSetName = 'LazyPath')]
+        [Parameter(ParameterSetName = 'LazyLiteralPath')]
+        [switch] $Trusted,
+
+        [Parameter()]
+        [switch] $Force,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        Write-CompleterDeprecationWarning -LegacyName 'Register-CompleterRegistration' -NewName 'Register-Completer'
+
+        $steppablePipeline = { Register-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process
+    {
+        $steppablePipeline.Process($_)
+    }
+
+    end
+    {
+        $steppablePipeline.End()
+    }
+}
+<#
 .SYNOPSIS
 Runs tab completion for an input against a registered completer target.
 
@@ -1334,7 +1470,7 @@ check that used to be done by hand after every registration can be scripted
 and asserted on.
 
 One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as Get-CompleterRegistration so
+The target parameters accept the same shapes as Get-Completer so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
@@ -1343,7 +1479,7 @@ registration, and it never touches PSReadLine.
 
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
-returned by Get-CompleterRegistration or Import-CompleterScript. The object
+returned by Get-Completer or Import-CompleterScript. The object
 must expose CommandName with IsNative/Native or ParameterName, or a Key,
 RegistrationKey, or RuntimeKey together with IsNative/Native.
 
@@ -1381,9 +1517,9 @@ Returns the completion matches the registered git completer produces for
 'git che', such as checkout, cherry, and cherry-pick.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
+PS> Get-Completer -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 
-Verifies a registration record returned by Get-CompleterRegistration by
+Verifies a registration record returned by Get-Completer by
 completing an argument for its parameter.
 
 .NOTES
@@ -1603,7 +1739,7 @@ the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
 its managed record is removed. The command supports array inputs for the
-target fields, plus pipeline input from Get-CompleterRegistration output. Keys
+target fields, plus pipeline input from Get-Completer output. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
 the target with -CommandName plus -Native or -ParameterName instead.
 
@@ -1635,7 +1771,7 @@ System.Management.Automation.PSCustomObject
 When -PassThru is used, returns removed CompleterActions.CompleterRegistration
 records.
 #>
-function Unregister-CompleterRegistration
+function Unregister-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
@@ -1804,6 +1940,61 @@ function Unregister-CompleterRegistration
     }
 }
 <#
+.ForwardHelpTargetName Unregister-Completer
+.ForwardHelpCategory Function
+#>
+function Unregister-CompleterRegistrationLegacy
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'The wrapper forwards -WhatIf and -Confirm to the wrapped command, which calls ShouldProcess.')]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter()]
+        [switch] $AllowUnmanaged,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        Write-CompleterDeprecationWarning -LegacyName 'Unregister-CompleterRegistration' -NewName 'Unregister-Completer'
+
+        $steppablePipeline = { Unregister-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        $steppablePipeline.Begin($PSCmdlet)
+    }
+
+    process
+    {
+        $steppablePipeline.Process($_)
+    }
+
+    end
+    {
+        $steppablePipeline.End()
+    }
+}
+<#
 .SYNOPSIS
 Writes a batch of completer registrations to the runtime and the managed state as one transaction.
 
@@ -1822,7 +2013,7 @@ back or the new one removed, and the earlier managed record is put back or the
 new one removed, so the session ends exactly as it was before the batch. The
 error names the target whose write failed, and a failure during the rollback
 is reported together with the original error so the caller can say the target
-may be inconsistent. Register-CompleterRegistration writes each target through
+may be inconsistent. Register-Completer writes each target through
 this helper on its own, so every target of a call stays its own transaction,
 and Import-CompleterSet writes a whole set through it, so an eager, a lazy,
 and a completer set registration share one write path.
@@ -3739,13 +3930,13 @@ function New-CompletionMatch
 }
 <#
 .SYNOPSIS
-Creates a Register-CompleterRegistration-compatible import object.
+Creates a Register-Completer-compatible import object.
 
 .DESCRIPTION
 Builds the public object emitted by Import-CompleterScript. The resulting object
 captures normalized target metadata plus the imported ScriptBlock object from the
 temporary import module so callers can pipe it directly into
-Register-CompleterRegistration -InputObject.
+Register-Completer -InputObject.
 
 .PARAMETER Target
 The normalized completer target metadata.
@@ -4093,7 +4284,7 @@ together with IsNative/Native. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
 A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
-so imported and managed records round-trip into Register-CompleterRegistration.
+so imported and managed records round-trip into Register-Completer.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -4108,7 +4299,7 @@ CompleterActions.ResolvedInputObject
 .EXAMPLE
 Resolve-CompleterInputObject -InputObject $registration
 
-Resolves a completer registration object returned by Get-CompleterRegistration
+Resolves a completer registration object returned by Get-Completer
 into the normalized target metadata used by the module internals.
 #>
 function Resolve-CompleterInputObject
@@ -4290,7 +4481,7 @@ The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same key sees the earlier
 one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
-Register-CompleterRegistration resolves one record at a time, after the
+Register-Completer resolves one record at a time, after the
 earlier targets of its call have been written, and throws the reported
 problem; Resolve-CompleterSetEntry resolves an entry's records together and
 collects the problems, so a completer set is validated against the same rules
@@ -4674,7 +4865,7 @@ must register their targets with literal arguments so the targets can be
 derived from the parsed script and, when the entry also declares Targets, the
 two lists must match; the strict import grammar itself runs when the script
 loads. The entry's Pending records, one lazy stub per target, are then held to
-the rules Register-CompleterRegistration applies through
+the rules Register-Completer applies through
 Resolve-CompleterRegistrationConflict against the snapshot the whole set
 shares, so a target that already carries a different registration is a
 problem unless -Force is given, and a target that an earlier valid entry of
@@ -6014,7 +6205,53 @@ function Test-CompleterScriptAst
 
     return $findings.ToArray()
 }
+<#
+.SYNOPSIS
+Warns once per process that a legacy command name is deprecated.
+
+.DESCRIPTION
+Emits a single Write-Warning per process for a legacy command name, naming
+the replacement command and the about_CompleterActions_Migration topic. The
+names that have already warned are tracked in the module-scope set created by
+Bootstrap.ps1, so a profile that calls a legacy name many times sees the
+warning once.
+
+.PARAMETER LegacyName
+The deprecated command name the caller used.
+
+.PARAMETER NewName
+The command that replaces it.
+
+.EXAMPLE
+PS> Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
+#>
+function Write-CompleterDeprecationWarning
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([void])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LegacyName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $NewName
+    )
+
+    if ($script:CompleterDeprecationWarningsIssued.Add($LegacyName))
+    {
+        Write-Warning -Message "$LegacyName is deprecated and will be removed in 3.0; use $NewName instead. See about_CompleterActions_Migration."
+    }
+}
 # Import-time work shared by the source root module and the packaged module.
 Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
+$script:CompleterDeprecationWarningsIssued = [System.Collections.Generic.HashSet[string]]::new()
+New-Alias -Name 'Get-CompleterRegistration' -Value 'Get-CompleterRegistrationLegacy'
+New-Alias -Name 'Register-CompleterRegistration' -Value 'Register-CompleterRegistrationLegacy'
+New-Alias -Name 'Unregister-CompleterRegistration' -Value 'Unregister-CompleterRegistrationLegacy'

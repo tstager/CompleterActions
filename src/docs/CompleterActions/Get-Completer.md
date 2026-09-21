@@ -6,10 +6,10 @@ Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
 PlatyPS schema version: 2024-05-01
-title: Get-CompleterRegistration
+title: Get-Completer
 ---
 
-# Get-CompleterRegistration
+# Get-Completer
 
 ## SYNOPSIS
 
@@ -20,28 +20,28 @@ Gets completer registrations known to the module or discovered at runtime.
 ### All (Default)
 
 ```PowerShell
-Get-CompleterRegistration [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount] [-Skip <ulong>]
+Get-Completer [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount] [-Skip <ulong>]
  [-First <ulong>] [<CommonParameters>]
 ```
 
 ### InputObject
 
 ```PowerShell
-Get-CompleterRegistration -InputObject <Object[]> [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount]
+Get-Completer -InputObject <Object[]> [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount]
  [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
 ### CommandParameter
 
 ```PowerShell
-Get-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> [-ManagedOnly]
+Get-Completer -CommandName <string[]> -ParameterName <string[]> [-ManagedOnly]
  [-DiscoveredOnly] [-IncludeTotalCount] [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
 ### Native
 
 ```PowerShell
-Get-CompleterRegistration -CommandName <string[]> -Native [-ManagedOnly] [-DiscoveredOnly]
+Get-Completer -CommandName <string[]> -Native [-ManagedOnly] [-DiscoveredOnly]
  [-IncludeTotalCount] [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
@@ -67,7 +67,7 @@ first tab press and 'Failed' when that load failed; a Failed record has no
 runtime entry and carries the error in LoadError. Both are returned by default
 and by -ManagedOnly.
 The command accepts arrays for command and parameter lookups, and records
-piped back from Get-CompleterRegistration or Import-CompleterScript resolve
+piped back from Get-Completer or Import-CompleterScript resolve
 through their Key and IsNative properties. Keys are output-only identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.
@@ -84,27 +84,27 @@ registrations from being listed.
 
 ### EXAMPLE 1
 
-Get-CompleterRegistration -CommandName 'git' -Native
+Get-Completer -CommandName 'git' -Native
 
 Gets the registration record for the native completer currently associated with
 git.
 
 ### EXAMPLE 2
 
-Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'
+Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'
 
 Gets multiple command-parameter completer registrations in a single call.
 
 ### EXAMPLE 3
 
-Get-CompleterRegistration -ManagedOnly | Where-Object State -in Pending, Failed
+Get-Completer -ManagedOnly | Where-Object State -in Pending, Failed
 
 Lists the lazy registrations that have not loaded yet and the ones whose script
 failed to load, with the failure message in LoadError.
 
 ### EXAMPLE 4
 
-Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration
+Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer
 
 Gets the live registrations for the targets a completer script defines by
 piping its import records back in.
@@ -201,7 +201,7 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-CompleterRegistration or Import-CompleterScript. An
+records returned by Get-Completer or Import-CompleterScript. An
 input object exposes CommandName with IsNative/Native or ParameterName, or a
 Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
@@ -340,4 +340,4 @@ Failed record.
 
 ## RELATED LINKS
 
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-CompleterRegistration.md)
+[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-Completer.md)

@@ -15,7 +15,7 @@ the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
 its managed record is removed. The command supports array inputs for the
-target fields, plus pipeline input from Get-CompleterRegistration output. Keys
+target fields, plus pipeline input from Get-Completer output. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
 the target with -CommandName plus -Native or -ParameterName instead.
 
@@ -47,7 +47,7 @@ System.Management.Automation.PSCustomObject
 When -PassThru is used, returns removed CompleterActions.CompleterRegistration
 records.
 #>
-function Unregister-CompleterRegistration
+function Unregister-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]

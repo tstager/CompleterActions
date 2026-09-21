@@ -17,7 +17,7 @@ back and registers everything in it, so a profile that imports a completer
 repository becomes one `Import-CompleterSet` call.
 
 Records arrive through `-InputObject`, typically from
-`Get-CompleterRegistration` or `Import-CompleterScript`. Without `-InputObject`
+`Get-Completer` or `Import-CompleterScript`. Without `-InputObject`
 the command exports every managed registration that records a `ScriptPath`.
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file
@@ -30,7 +30,7 @@ derived from the parsed script and rejects a mismatch. The command derives
 those targets the same way before writing and refuses, naming the missing
 targets and leaving the output untouched, when the records for a strict script
 cover only some of them, as they do after
-`Register-CompleterRegistration -Lazy -CommandName` selected a subset. Trusted
+`Register-Completer -Lazy -CommandName` selected a subset. Trusted
 entries are written with the targets the records carry, so a subset of a
 trusted script's targets exports and imports as given.</maml:para>
     </maml:description>
@@ -133,7 +133,7 @@ Records without a script path cannot be expressed in a set and are rejected.</ma
           <maml:name>System.Object[]</maml:name>
         </dev:type>
         <maml:description>
-          <maml:para>Registration records from `Get-CompleterRegistration` or
+          <maml:para>Registration records from `Get-Completer` or
 `Import-CompleterScript`, or any object that describes a target and exposes a
 `ScriptPath` or `SourcePath`.</maml:para>
         </maml:description>
@@ -199,19 +199,19 @@ current session.</maml:para>
         <maml:uri>Import-CompleterScript.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
-        <maml:linkText>Get-CompleterRegistration</maml:linkText>
-        <maml:uri>Get-CompleterRegistration.md</maml:uri>
+        <maml:linkText>Get-Completer</maml:linkText>
+        <maml:uri>Get-Completer.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
   <command:command>
     <command:details>
-      <command:name>Get-CompleterRegistration</command:name>
+      <command:name>Get-Completer</command:name>
       <maml:description>
         <maml:para>Gets completer registrations known to the module or discovered at runtime.</maml:para>
       </maml:description>
       <command:verb>Get</command:verb>
-      <command:noun>CompleterRegistration</command:noun>
+      <command:noun>Completer</command:noun>
     </command:details>
     <maml:description>
       <maml:para>Returns completer registration records for all registrations, native command
@@ -230,7 +230,7 @@ first tab press and 'Failed' when that load failed; a Failed record has no
 runtime entry and carries the error in LoadError. Both are returned by default
 and by -ManagedOnly.
 The command accepts arrays for command and parameter lookups, and records
-piped back from Get-CompleterRegistration or Import-CompleterScript resolve
+piped back from Get-Completer or Import-CompleterScript resolve
 through their Key and IsNative properties. Keys are output-only identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.
@@ -245,7 +245,7 @@ registrations from being listed.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
-        <maml:name>Get-CompleterRegistration</maml:name>
+        <maml:name>Get-Completer</maml:name>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>ManagedOnly</maml:name>
           <maml:description />
@@ -285,7 +285,7 @@ registrations from being listed.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Get-CompleterRegistration</maml:name>
+        <maml:name>Get-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
@@ -333,7 +333,7 @@ registrations from being listed.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Get-CompleterRegistration</maml:name>
+        <maml:name>Get-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
@@ -389,7 +389,7 @@ registrations from being listed.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Get-CompleterRegistration</maml:name>
+        <maml:name>Get-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
@@ -488,7 +488,7 @@ completers.</maml:para>
         <maml:name>InputObject</maml:name>
         <maml:description>
           <maml:para>Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-CompleterRegistration or Import-CompleterScript. An
+records returned by Get-Completer or Import-CompleterScript. An
 input object exposes CommandName with IsNative/Native or ParameterName, or a
 Key, RegistrationKey, or RuntimeKey together with IsNative/Native.</maml:para>
         </maml:description>
@@ -597,7 +597,7 @@ Failed record.</maml:para>
       <command:example>
         <maml:title>--------- EXAMPLE 1 ---------</maml:title>
         <maml:introduction>
-          <maml:para>Get-CompleterRegistration -CommandName 'git' -Native</maml:para>
+          <maml:para>Get-Completer -CommandName 'git' -Native</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Gets the registration record for the native completer currently associated with
 git.</maml:para>
@@ -608,7 +608,7 @@ git.</maml:para>
       <command:example>
         <maml:title>--------- EXAMPLE 2 ---------</maml:title>
         <maml:introduction>
-          <maml:para>Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'</maml:para>
+          <maml:para>Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Gets multiple command-parameter completer registrations in a single call.</maml:para>
         </maml:introduction>
@@ -618,7 +618,7 @@ git.</maml:para>
       <command:example>
         <maml:title>--------- EXAMPLE 3 ---------</maml:title>
         <maml:introduction>
-          <maml:para>Get-CompleterRegistration -ManagedOnly | Where-Object State -in Pending, Failed</maml:para>
+          <maml:para>Get-Completer -ManagedOnly | Where-Object State -in Pending, Failed</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Lists the lazy registrations that have not loaded yet and the ones whose script
 failed to load, with the failure message in LoadError.</maml:para>
@@ -629,7 +629,7 @@ failed to load, with the failure message in LoadError.</maml:para>
       <command:example>
         <maml:title>--------- EXAMPLE 4 ---------</maml:title>
         <maml:introduction>
-          <maml:para>Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration</maml:para>
+          <maml:para>Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Gets the live registrations for the targets a completer script defines by
 piping its import records back in.</maml:para>
@@ -645,7 +645,7 @@ piping its import records back in.</maml:para>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-CompleterRegistration.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-Completer.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -661,7 +661,7 @@ piping its import records back in.</maml:para>
     <maml:description>
       <maml:para>Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows `Register-ArgumentCompleter`, and emits objects
-that can be piped directly to `Register-CompleterRegistration -InputObject`.
+that can be piped directly to `Register-Completer -InputObject`.
 
 The command has two tiers. The strict tier is the default: it validates the
 script against a closed grammar before executing it, rejects every unsupported
@@ -802,7 +802,7 @@ would when the script is dot-sourced from a profile. The emitted records carry
         </dev:type>
         <maml:description>
           <maml:para>Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
-`Register-CompleterRegistration -InputObject`. The `Trusted` property records
+`Register-Completer -InputObject`. The `Trusted` property records
 which tier produced the record.</maml:para>
         </maml:description>
       </command:returnValue>
@@ -821,7 +821,7 @@ a `pwsh -NoProfile` session before treating a completer as complete.</maml:para>
         <maml:introduction>
           <maml:para>```PowerShell
 Import-CompleterScript -Path .\7z_completer.ps1 |
-    Register-CompleterRegistration -PassThru
+    Register-Completer -PassThru
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Imports a supported completer script and registers the imported definitions
@@ -852,7 +852,7 @@ rather than at script scope.</maml:para>
         <maml:introduction>
           <maml:para>```PowerShell
 Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
-    Register-CompleterRegistration
+    Register-Completer
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Imports a completer script you own without validating it against the strict
@@ -911,7 +911,7 @@ Relative `Path` values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-lazily under the entry's trust tier, exactly as `Register-CompleterRegistration
+lazily under the entry's trust tier, exactly as `Register-Completer
 -Lazy` registers a script, so each target gets a stub and a managed record in
 state `Pending`. The whole set is one transaction against one snapshot of the
 session's registrations: validation and registration read the managed table
@@ -1143,27 +1143,27 @@ the session.</maml:para>
         <maml:uri>Export-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
-        <maml:linkText>Register-CompleterRegistration</maml:linkText>
-        <maml:uri>Register-CompleterRegistration.md</maml:uri>
+        <maml:linkText>Register-Completer</maml:linkText>
+        <maml:uri>Register-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
         <maml:uri>Test-CompleterScript.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
-        <maml:linkText>Get-CompleterRegistration</maml:linkText>
-        <maml:uri>Get-CompleterRegistration.md</maml:uri>
+        <maml:linkText>Get-Completer</maml:linkText>
+        <maml:uri>Get-Completer.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
   <command:command>
     <command:details>
-      <command:name>Register-CompleterRegistration</command:name>
+      <command:name>Register-Completer</command:name>
       <maml:description>
         <maml:para>Registers a managed PowerShell argument completer.</maml:para>
       </maml:description>
       <command:verb>Register</command:verb>
-      <command:noun>CompleterRegistration</command:noun>
+      <command:noun>Completer</command:noun>
     </command:details>
     <maml:description>
       <maml:para>Registers native or command-parameter argument completers with
@@ -1203,7 +1203,7 @@ PSReadLine options.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
-        <maml:name>Register-CompleterRegistration</maml:name>
+        <maml:name>Register-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
@@ -1258,7 +1258,7 @@ PSReadLine options.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Register-CompleterRegistration</maml:name>
+        <maml:name>Register-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
@@ -1297,7 +1297,7 @@ PSReadLine options.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Register-CompleterRegistration</maml:name>
+        <maml:name>Register-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
@@ -1373,7 +1373,7 @@ PSReadLine options.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Register-CompleterRegistration</maml:name>
+        <maml:name>Register-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>Path</maml:name>
           <maml:description />
@@ -1449,7 +1449,7 @@ PSReadLine options.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Register-CompleterRegistration</maml:name>
+        <maml:name>Register-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
@@ -1706,7 +1706,7 @@ load, and `Trusted`.</maml:para>
         <maml:title>--------- EXAMPLE 1 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Registers a native completer for `demoexe` with a script block that is already
@@ -1719,7 +1719,7 @@ in memory.</maml:para>
         <maml:title>--------- EXAMPLE 2 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Reads the targets from the script's `Register-ArgumentCompleter` calls,
@@ -1733,7 +1733,7 @@ script runs the first time tab completion is requested for one of its targets.</
         <maml:title>--------- EXAMPLE 3 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Registers a script that needs the trusted tier lazily. The targets are named
@@ -1746,10 +1746,10 @@ explicitly because a trusted script is not parsed.</maml:para>
         <maml:title>--------- EXAMPLE 4 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-Get-CompleterRegistration -ManagedOnly |
+Get-Completer -ManagedOnly |
     Where-Object State -eq Failed |
     ForEach-Object {
-        Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
+        Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
             -CommandName $_.CommandName -Native:$_.IsNative -Force
     }
 ```</maml:para>
@@ -1767,8 +1767,8 @@ have been fixed.</maml:para>
         <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
-        <maml:linkText>Get-CompleterRegistration</maml:linkText>
-        <maml:uri>Get-CompleterRegistration.md</maml:uri>
+        <maml:linkText>Get-Completer</maml:linkText>
+        <maml:uri>Get-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
@@ -1798,7 +1798,7 @@ target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
 registration can be scripted and asserted on.
 
 One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as `Get-CompleterRegistration` so
+The target parameters accept the same shapes as `Get-Completer` so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
@@ -1930,7 +1930,7 @@ default is the end of the input.</maml:para>
         <maml:name>InputObject</maml:name>
         <maml:description>
           <maml:para>Supplies an object that describes the completer target, such as a record
-returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
+returned by `Get-Completer` or `Import-CompleterScript`. The object
 must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
 `Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.</maml:para>
         </maml:description>
@@ -2030,11 +2030,11 @@ Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
         <maml:title>--------- EXAMPLE 2 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name |
+Get-Completer -CommandName Invoke-DemoTool -ParameterName Name |
     Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
-          <maml:para>Verifies a registration record returned by `Get-CompleterRegistration` by
+          <maml:para>Verifies a registration record returned by `Get-Completer` by
 completing an argument for its parameter.</maml:para>
         </maml:introduction>
         <dev:code />
@@ -2060,8 +2060,8 @@ $matches.CompletionText | Should -Contain 'checkout'
         <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
-        <maml:linkText>Get-CompleterRegistration</maml:linkText>
-        <maml:uri>Get-CompleterRegistration.md</maml:uri>
+        <maml:linkText>Get-Completer</maml:linkText>
+        <maml:uri>Get-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
@@ -2235,12 +2235,12 @@ Describe 'completer conformance' {
   </command:command>
   <command:command>
     <command:details>
-      <command:name>Unregister-CompleterRegistration</command:name>
+      <command:name>Unregister-Completer</command:name>
       <maml:description>
         <maml:para>Removes completer registrations from runtime and, when applicable, module state.</maml:para>
       </maml:description>
       <command:verb>Unregister</command:verb>
-      <command:noun>CompleterRegistration</command:noun>
+      <command:noun>Completer</command:noun>
     </command:details>
     <maml:description>
       <maml:para>Removes completer registrations identified by native command, command
@@ -2259,13 +2259,13 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-CompleterRegistration output. Keys are output-only identifiers: a
+from Get-Completer output. Keys are output-only identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
-        <maml:name>Unregister-CompleterRegistration</maml:name>
+        <maml:name>Unregister-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
@@ -2312,7 +2312,7 @@ plus -Native or -ParameterName instead.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Unregister-CompleterRegistration</maml:name>
+        <maml:name>Unregister-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
@@ -2351,7 +2351,7 @@ plus -Native or -ParameterName instead.</maml:para>
         </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
-        <maml:name>Unregister-CompleterRegistration</maml:name>
+        <maml:name>Unregister-Completer</maml:name>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
@@ -2534,7 +2534,7 @@ targets.</maml:para>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-CompleterRegistration.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>

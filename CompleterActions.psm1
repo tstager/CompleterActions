@@ -29,4 +29,4 @@ $publicFunctions = Get-ChildItem -Path (Join-Path -Path $sourceRoot -ChildPath '
     Sort-Object -Property BaseName |
     Select-Object -ExpandProperty BaseName
 
-Export-ModuleMember -Function $publicFunctions
+Export-ModuleMember -Function $publicFunctions -Alias 'Get-CompleterRegistration', 'Register-CompleterRegistration', 'Unregister-CompleterRegistration'

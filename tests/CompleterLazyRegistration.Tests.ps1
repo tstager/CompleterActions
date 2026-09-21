@@ -160,7 +160,7 @@ Describe 'Lazy completer registration' {
     }
 
     It 'registers a strict script lazily with targets derived from the AST and reports Pending' {
-        $records = @(Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -PassThru)
+        $records = @(Register-Completer -Path $script:NativeFixturePath -Lazy -PassThru)
 
         $records.Count | Should -Be 2
         @($records.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
@@ -180,16 +180,16 @@ Describe 'Lazy completer registration' {
 
         Get-TestRuntimeScriptBlock -Key 'importfixture' | Should -Not -BeNullOrEmpty
 
-        $resolved = Get-CompleterRegistration -CommandName 'importfixture' -Native
+        $resolved = Get-Completer -CommandName 'importfixture' -Native
         $resolved.State | Should -Be 'Pending'
         $resolved.Source | Should -Be 'Managed'
 
-        @(Get-CompleterRegistration -ManagedOnly | Where-Object State -EQ 'Pending').Count | Should -Be 2
-        Get-CompleterRegistration -CommandName 'importfixture' -Native -DiscoveredOnly | Should -BeNullOrEmpty
+        @(Get-Completer -ManagedOnly | Where-Object State -EQ 'Pending').Count | Should -Be 2
+        Get-Completer -CommandName 'importfixture' -Native -DiscoveredOnly | Should -BeNullOrEmpty
     }
 
     It 'loads the script on the first tab press and later presses hit the real script block' {
-        $null = Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy
+        $null = Register-Completer -Path $script:NativeFixturePath -Lazy
 
         $stub = Get-TestRuntimeScriptBlock -Key 'importfixture'
         $siblingStub = Get-TestRuntimeScriptBlock -Key 'importfixture.exe'
@@ -203,7 +203,7 @@ Describe 'Lazy completer registration' {
         $loaded.ToString() | Should -Match 'Complete-ImportFixture'
         $loaded.Module | Should -Not -BeNullOrEmpty
 
-        $record = Get-CompleterRegistration -CommandName 'importfixture' -Native
+        $record = Get-Completer -CommandName 'importfixture' -Native
         $record.State | Should -Be 'Active'
         $record.Source | Should -Be 'Managed'
         $record.ScriptPath | Should -Be $script:NativeFixturePath
@@ -211,7 +211,7 @@ Describe 'Lazy completer registration' {
 
         $siblingLoaded = Get-TestRuntimeScriptBlock -Key 'importfixture.exe'
         [object]::ReferenceEquals($siblingStub, $siblingLoaded) | Should -BeFalse
-        (Get-CompleterRegistration -CommandName 'importfixture.exe' -Native).State | Should -Be 'Active'
+        (Get-Completer -CommandName 'importfixture.exe' -Native).State | Should -Be 'Active'
         [object]::ReferenceEquals($loaded.Module, $siblingLoaded.Module) | Should -BeTrue
 
         $secondInput = 'importfixture b'
@@ -242,14 +242,14 @@ Register-ArgumentCompleter -CommandName 'lazyduplicate' -Native -ScriptBlock {
         @($direct.CompletionMatches.CompletionText) | Should -Be @('last-definition') -Because 'dot-sourcing lets the last Register-ArgumentCompleter call win'
         Invoke-TestRuntimeCompleterCleanup -CommandName 'lazyduplicate' -CompleterType 'Native'
 
-        $records = @(Register-CompleterRegistration -LiteralPath $scriptPath -Lazy -PassThru)
+        $records = @(Register-Completer -LiteralPath $scriptPath -Lazy -PassThru)
         $records.Count | Should -Be 1
         $records[0].State | Should -Be 'Pending'
 
         $firstCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         @($firstCompletion.CompletionMatches.CompletionText) | Should -Be @('last-definition')
 
-        $loaded = Get-CompleterRegistration -CommandName 'lazyduplicate' -Native
+        $loaded = Get-Completer -CommandName 'lazyduplicate' -Native
         $loaded.State | Should -Be 'Active'
         $loaded.ScriptText | Should -Match 'last-definition'
         (Get-TestRuntimeScriptBlock -Key 'lazyduplicate').ToString() | Should -Match 'last-definition'
@@ -270,15 +270,15 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
 }
 '@
 
-        $records = @(Register-CompleterRegistration -LiteralPath $scriptPath -Lazy -PassThru)
+        $records = @(Register-Completer -LiteralPath $scriptPath -Lazy -PassThru)
         @($records.Key | Sort-Object) | Should -Be @('lazyoverlap', 'lazyoverlap.exe')
 
         $exeInput = 'lazyoverlap.exe '
         $firstExeCompletion = TabExpansion2 -InputScript $exeInput -CursorColumn $exeInput.Length
         @($firstExeCompletion.CompletionMatches.CompletionText) | Should -Be @('exe-definition')
 
-        (Get-CompleterRegistration -CommandName 'lazyoverlap.exe' -Native).State | Should -Be 'Active'
-        (Get-CompleterRegistration -CommandName 'lazyoverlap' -Native).State | Should -Be 'Active' -Because 'the sibling is swapped from the same import'
+        (Get-Completer -CommandName 'lazyoverlap.exe' -Native).State | Should -Be 'Active'
+        (Get-Completer -CommandName 'lazyoverlap' -Native).State | Should -Be 'Active' -Because 'the sibling is swapped from the same import'
         (Get-TestRuntimeScriptBlock -Key 'lazyoverlap').ToString() | Should -Match 'shared-definition'
 
         $plainInput = 'lazyoverlap '
@@ -291,21 +291,21 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
 
     It 'requires explicit targets for -Trusted' {
         {
-            Register-CompleterRegistration -Path $script:ThrowingFixturePath -Lazy -Trusted
+            Register-Completer -Path $script:ThrowingFixturePath -Lazy -Trusted
         } | Should -Throw '*-Trusted lazy registration requires explicit targets*'
 
-        Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+        Get-Completer -ManagedOnly | Should -BeNullOrEmpty
     }
 
     It 'accepts explicit strict targets the script registers and rejects ones it does not' {
-        $records = @(Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru)
+        $records = @(Register-Completer -Path $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru)
 
         $records.Count | Should -Be 1
         $records[0].Key | Should -Be 'importfixture.exe'
-        Get-CompleterRegistration -CommandName 'importfixture' -Native | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'importfixture' -Native | Should -BeNullOrEmpty
 
         {
-            Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -CommandName 'Test-LazyStrictTool' -ParameterName 'Name'
+            Register-Completer -Path $script:NativeFixturePath -Lazy -CommandName 'Test-LazyStrictTool' -ParameterName 'Name'
         } | Should -Throw "*does not register a completer for 'Test-LazyStrictTool:Name'*It registers: 'importfixture', 'importfixture.exe'*"
     }
 
@@ -313,7 +313,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $fallbackMarker = Join-Path -Path $TestDrive -ChildPath 'lazy-fallback-marker.txt'
         Set-Content -LiteralPath $fallbackMarker -Value 'marker' -Encoding utf8
 
-        $record = Register-CompleterRegistration -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -PassThru
+        $record = Register-Completer -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -PassThru
         $record.State | Should -Be 'Pending'
         $record.Trusted | Should -BeTrue
 
@@ -336,29 +336,29 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
 
         Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name' | Should -BeNullOrEmpty
 
-        $failed = Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $failed = Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
         $failed.State | Should -Be 'Failed'
         $failed.Source | Should -Be 'Managed'
         $failed.IsRuntimeRegistered | Should -BeFalse
         $failed.ScriptPath | Should -Be $script:ThrowingFixturePath
         $failed.LoadError | Should -Match 'lazy fixture import failure'
 
-        @(Get-CompleterRegistration -ManagedOnly | Where-Object State -EQ 'Failed').Key | Should -Be @('test-lazytrustedtool:name')
-        Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+        @(Get-Completer -ManagedOnly | Where-Object State -EQ 'Failed').Key | Should -Be @('test-lazytrustedtool:name')
+        Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
     }
 
     It 'returns nothing and writes nothing to the error stream when the stub itself is invoked for a script that fails to load' {
-        $null = Register-CompleterRegistration -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $null = Register-Completer -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
         $stub = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
 
         $output = @(& $stub 'Test-LazyTrustedTool' 'Name' '' $null @{} 2>&1)
 
         $output | Should -BeNullOrEmpty
-        (Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name').State | Should -Be 'Failed'
+        (Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name').State | Should -Be 'Failed'
     }
 
     It 'loads a script once and keeps it Active when it requests completion for its own target while loading' {
-        $null = Register-CompleterRegistration -LiteralPath $script:ReentrantFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $null = Register-Completer -LiteralPath $script:ReentrantFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
         $stub = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
 
         $inputScript = 'Test-LazyTrustedTool -Name '
@@ -368,7 +368,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $env:CompleterActionsReentrantNestedResult | Should -Not -BeNullOrEmpty
         @($env:CompleterActionsReentrantNestedResult -split '\|') | Should -Not -Contain 'reentrant-alpha'
 
-        $record = Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $record = Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
         $record.State | Should -Be 'Active'
         $record.LoadError | Should -BeNullOrEmpty
 
@@ -389,7 +389,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyStrictCompleter.ps1'
         Write-TestStrictCompleterScript -Path $scriptPath -CompletionText 'strict-alpha'
 
-        $record = Register-CompleterRegistration -LiteralPath $scriptPath -Lazy -PassThru
+        $record = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
         $record.Key | Should -Be 'test-lazystricttool:name'
         $record.State | Should -Be 'Pending'
 
@@ -399,7 +399,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'strict-alpha'
 
-        $failed = Get-CompleterRegistration -CommandName 'Test-LazyStrictTool' -ParameterName 'Name'
+        $failed = Get-Completer -CommandName 'Test-LazyStrictTool' -ParameterName 'Name'
         $failed.State | Should -Be 'Failed'
         $failed.LoadError | Should -Match 'does not conform to the strict import grammar'
         $failed.LoadError | Should -Match 'Get-Date'
@@ -409,23 +409,23 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
     It 'refuses to re-register a Failed record without -Force and retries the load with -Force' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyRetryCompleter.ps1'
         Write-TestStrictCompleterScript -Path $scriptPath -CompletionText 'strict-alpha'
-        $null = Register-CompleterRegistration -LiteralPath $scriptPath -Lazy
+        $null = Register-Completer -LiteralPath $scriptPath -Lazy
 
         Add-Content -LiteralPath $scriptPath -Value 'Get-Date | Out-Null' -Encoding utf8
 
         $inputScript = 'Test-LazyStrictTool -Name strict'
         $null = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
-        (Get-CompleterRegistration -CommandName 'Test-LazyStrictTool' -ParameterName 'Name').State | Should -Be 'Failed'
+        (Get-Completer -CommandName 'Test-LazyStrictTool' -ParameterName 'Name').State | Should -Be 'Failed'
 
         Write-TestStrictCompleterScript -Path $scriptPath -CompletionText 'strict-fixed'
 
         {
-            Register-CompleterRegistration -LiteralPath $scriptPath -Lazy
+            Register-Completer -LiteralPath $scriptPath -Lazy
         } | Should -Throw '*failed to load*Use -Force to retry*'
 
-        (Get-CompleterRegistration -CommandName 'Test-LazyStrictTool' -ParameterName 'Name').State | Should -Be 'Failed'
+        (Get-Completer -CommandName 'Test-LazyStrictTool' -ParameterName 'Name').State | Should -Be 'Failed'
 
-        $retried = Register-CompleterRegistration -LiteralPath $scriptPath -Lazy -Force -PassThru
+        $retried = Register-Completer -LiteralPath $scriptPath -Lazy -Force -PassThru
         $retried.State | Should -Be 'Pending'
         $retried.LoadError | Should -BeNullOrEmpty
         $retried.IsRuntimeRegistered | Should -BeTrue
@@ -433,20 +433,20 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         @($completion.CompletionMatches.CompletionText) | Should -Be @('strict-fixed')
 
-        $loaded = Get-CompleterRegistration -CommandName 'Test-LazyStrictTool' -ParameterName 'Name'
+        $loaded = Get-Completer -CommandName 'Test-LazyStrictTool' -ParameterName 'Name'
         $loaded.State | Should -Be 'Active'
         $loaded.ScriptText | Should -Match 'strict-fixed'
     }
 
     It 'treats re-registering the same lazy script without -Force as idempotent' {
-        $first = @(Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -PassThru)
-        $second = @(Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -PassThru)
+        $first = @(Register-Completer -Path $script:NativeFixturePath -Lazy -PassThru)
+        $second = @(Register-Completer -Path $script:NativeFixturePath -Lazy -PassThru)
 
         $second.Count | Should -Be 2
         [object]::ReferenceEquals($first[0], $second[0]) | Should -BeTrue
 
         {
-            Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture' -Native
+            Register-Completer -Path $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture' -Native
         } | Should -Throw '*already exists*Use -Force*'
 
         $state = InModuleScope CompleterActions {
@@ -457,29 +457,29 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
     }
 
     It 'supports WhatIf without registering a stub' {
-        Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy -WhatIf
+        Register-Completer -Path $script:NativeFixturePath -Lazy -WhatIf
 
-        Get-CompleterRegistration -ManagedOnly | Should -BeNullOrEmpty
+        Get-Completer -ManagedOnly | Should -BeNullOrEmpty
         Get-TestRuntimeScriptBlock -Key 'importfixture' | Should -BeNullOrEmpty
     }
 
     It 'unregisters Pending and Failed lazy registrations' {
-        $null = Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy
-        $null = Register-CompleterRegistration -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $null = Register-Completer -Path $script:NativeFixturePath -Lazy
+        $null = Register-Completer -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
 
         $inputScript = 'Test-LazyTrustedTool -Name '
         $null = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
-        (Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name').State | Should -Be 'Failed'
+        (Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name').State | Should -Be 'Failed'
 
-        $removedPending = @(Get-CompleterRegistration -CommandName 'importfixture', 'importfixture.exe' -Native | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+        $removedPending = @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | Unregister-Completer -Confirm:$false -PassThru)
         $removedPending.Count | Should -Be 2
         @($removedPending.State | Select-Object -Unique) | Should -Be @('Pending')
         Get-TestRuntimeScriptBlock -Key 'importfixture' | Should -BeNullOrEmpty
-        Get-CompleterRegistration -CommandName 'importfixture' -Native | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'importfixture' -Native | Should -BeNullOrEmpty
 
-        $removedFailed = Unregister-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -Confirm:$false -PassThru
+        $removedFailed = Unregister-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -Confirm:$false -PassThru
         $removedFailed.State | Should -Be 'Failed'
-        Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
 
         $state = InModuleScope CompleterActions {
             Get-CompleterActionState
@@ -491,7 +491,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
     It 'carries ScriptPath and Trusted from Import-CompleterScript records onto managed records' {
         $fixturePath = Join-Path -Path $script:FixtureRoot -ChildPath (Join-Path -Path 'ImportCompleterScript' -ChildPath 'ParameterCompleter.ps1')
 
-        $registered = @(Import-CompleterScript -Path $fixturePath | Register-CompleterRegistration -PassThru)
+        $registered = @(Import-CompleterScript -Path $fixturePath | Register-Completer -PassThru)
 
         $registered.Count | Should -Be 1
         $registered[0].State | Should -Be 'Active'
@@ -499,17 +499,17 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $registered[0].Trusted | Should -BeFalse
         $registered[0].LoadError | Should -BeNullOrEmpty
 
-        $resolved = Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
+        $resolved = Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name'
         $resolved.ScriptPath | Should -Be $fixturePath
     }
 
     It 'shows ScriptPath and LoadError in the default table view' {
-        $null = Register-CompleterRegistration -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $null = Register-Completer -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
 
         $inputScript = 'Test-LazyTrustedTool -Name '
         $null = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
 
-        $output = Get-CompleterRegistration -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' | Out-String -Width 4096
+        $output = Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' | Out-String -Width 4096
 
         $output | Should -Match '(?m)^\s*Command\s+Parameter\s+Type\s+Source\s+State\s+ScriptPath\s+LoadError\s*$'
         $output | Should -Match 'Failed'
@@ -527,13 +527,13 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
 
         $before = Get-TestPSReadLineKeyHandlerSnapshot
 
-        $null = Register-CompleterRegistration -Path $script:NativeFixturePath -Lazy
-        $null = Register-CompleterRegistration -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $null = Register-Completer -Path $script:NativeFixturePath -Lazy
+        $null = Register-Completer -LiteralPath $script:ThrowingFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
 
         $null = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
         $null = TabExpansion2 -InputScript 'Test-LazyTrustedTool -Name ' -CursorColumn 27
-        $null = @(Get-CompleterRegistration -ManagedOnly)
-        Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false
+        $null = @(Get-Completer -ManagedOnly)
+        Get-Completer -ManagedOnly | Unregister-Completer -Confirm:$false
 
         $after = Get-TestPSReadLineKeyHandlerSnapshot
 

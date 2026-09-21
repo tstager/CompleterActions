@@ -18,7 +18,7 @@ was removed outside this module, the managed record is returned with State
 that load failed; a Failed record has no runtime entry and carries the error
 in LoadError. Both are returned by default and by -ManagedOnly. The command
 accepts arrays for command and parameter lookups, and records piped back from
-Get-CompleterRegistration or Import-CompleterScript resolve through their Key
+Get-Completer or Import-CompleterScript resolve through their Key
 and IsNative properties. Keys are output-only identifiers: a hand-typed key
 string is not accepted, so name the target with -CommandName plus -Native or
 -ParameterName instead.
@@ -33,7 +33,7 @@ listed.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-CompleterRegistration or Import-CompleterScript. An
+records returned by Get-Completer or Import-CompleterScript. An
 input object exposes CommandName with IsNative/Native or ParameterName, or a
 Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
@@ -66,23 +66,23 @@ a lazy or imported registration and LoadError holds the failure message of a
 Failed record.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName 'git' -Native
+PS> Get-Completer -CommandName 'git' -Native
 
 Gets the registration record for the native completer currently associated with
 git.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'
+PS> Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'
 
 Gets multiple command-parameter completer registrations in a single call.
 
 .EXAMPLE
-PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration
+PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer
 
 Gets the live registrations for the targets a completer script defines by
 piping its import records back in.
 #>
-function Get-CompleterRegistration
+function Get-Completer
 {
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
     [OutputType([pscustomobject])]

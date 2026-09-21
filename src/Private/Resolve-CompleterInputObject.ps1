@@ -11,7 +11,7 @@ together with IsNative/Native. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
 A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
-so imported and managed records round-trip into Register-CompleterRegistration.
+so imported and managed records round-trip into Register-Completer.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -26,7 +26,7 @@ CompleterActions.ResolvedInputObject
 .EXAMPLE
 Resolve-CompleterInputObject -InputObject $registration
 
-Resolves a completer registration object returned by Get-CompleterRegistration
+Resolves a completer registration object returned by Get-Completer
 into the normalized target metadata used by the module internals.
 #>
 function Resolve-CompleterInputObject

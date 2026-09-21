@@ -7,7 +7,7 @@ Times the two ways a profile can load a completer repository, each in a fresh
 child pwsh -NoProfile process so every sample starts cold:
 
 - Eager: Get-ChildItem -Recurse -Filter *_completer.ps1 | Import-CompleterScript |
-  Register-CompleterRegistration -Force
+  Register-Completer -Force
 - Lazy: Import-CompleterSet of a set file exported once from the eager result
 
 Each sample times Import-Module plus the registration work with a Stopwatch
@@ -124,7 +124,7 @@ $timedEpilogue = @"
 
 $eagerScript = @"
 $timedPreamble
-Get-ChildItem -LiteralPath $quotedRoot -Recurse -Filter '*_completer.ps1' -File | Import-CompleterScript | Register-CompleterRegistration -Force
+Get-ChildItem -LiteralPath $quotedRoot -Recurse -Filter '*_completer.ps1' -File | Import-CompleterScript | Register-Completer -Force
 $timedEpilogue
 "@
 
@@ -132,7 +132,7 @@ $exportScript = @"
 `$ErrorActionPreference = 'Stop'
 Import-Module -Name $quotedModule
 `$imported = @(Get-ChildItem -LiteralPath $quotedRoot -Recurse -Filter '*_completer.ps1' -File | Import-CompleterScript)
-`$imported | Register-CompleterRegistration -Force
+`$imported | Register-Completer -Force
 `$imported | Export-CompleterSet -Path $quotedSet
 `$imported.Count
 "@

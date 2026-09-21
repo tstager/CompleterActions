@@ -11,7 +11,7 @@ check that used to be done by hand after every registration can be scripted
 and asserted on.
 
 One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as Get-CompleterRegistration so
+The target parameters accept the same shapes as Get-Completer so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
@@ -20,7 +20,7 @@ registration, and it never touches PSReadLine.
 
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
-returned by Get-CompleterRegistration or Import-CompleterScript. The object
+returned by Get-Completer or Import-CompleterScript. The object
 must expose CommandName with IsNative/Native or ParameterName, or a Key,
 RegistrationKey, or RuntimeKey together with IsNative/Native.
 
@@ -58,9 +58,9 @@ Returns the completion matches the registered git completer produces for
 'git che', such as checkout, cherry, and cherry-pick.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
+PS> Get-Completer -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 
-Verifies a registration record returned by Get-CompleterRegistration by
+Verifies a registration record returned by Get-Completer by
 completing an argument for its parameter.
 
 .NOTES

@@ -5,7 +5,7 @@ Imports self-contained completer scripts into registration input objects.
 .DESCRIPTION
 Parses and validates one or more completer scripts, executes them inside a
 temporary module that shadows Register-ArgumentCompleter, and emits objects that
-can be piped directly to Register-CompleterRegistration -InputObject.
+can be piped directly to Register-Completer -InputObject.
 
 Import-CompleterScript has two tiers. The strict tier is the default: it
 validates the script against a closed grammar before executing it, rejects
@@ -51,17 +51,17 @@ Trusted set to true.
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns CompleterActions.ImportedCompleterRegistration records compatible with
-Register-CompleterRegistration -InputObject. The Trusted property records which
+Register-Completer -InputObject. The Trusted property records which
 tier produced the record.
 
 .EXAMPLE
-PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-CompleterRegistration -PassThru
+PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-Completer -PassThru
 
 Imports a supported completer script and immediately registers the imported
 completer definitions through the module's managed registration API.
 
 .EXAMPLE
-PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-CompleterRegistration
+PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-Completer
 
 Imports a completer script you own without validating it against the strict
 grammar, then registers it.

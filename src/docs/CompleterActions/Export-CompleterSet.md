@@ -33,7 +33,7 @@ back and registers everything in it, so a profile that imports a completer
 repository becomes one `Import-CompleterSet` call.
 
 Records arrive through `-InputObject`, typically from
-`Get-CompleterRegistration` or `Import-CompleterScript`. Without `-InputObject`
+`Get-Completer` or `Import-CompleterScript`. Without `-InputObject`
 the command exports every managed registration that records a `ScriptPath`.
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file
@@ -46,7 +46,7 @@ derived from the parsed script and rejects a mismatch. The command derives
 those targets the same way before writing and refuses, naming the missing
 targets and leaving the output untouched, when the records for a strict script
 cover only some of them, as they do after
-`Register-CompleterRegistration -Lazy -CommandName` selected a subset. Trusted
+`Register-Completer -Lazy -CommandName` selected a subset. Trusted
 entries are written with the targets the records carry, so a subset of a
 trusted script's targets exports and imports as given.
 
@@ -194,7 +194,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### System.Object[]
 
-Registration records from `Get-CompleterRegistration` or
+Registration records from `Get-Completer` or
 `Import-CompleterScript`, or any object that describes a target and exposes a
 `ScriptPath` or `SourcePath`.
 
@@ -215,4 +215,4 @@ The set file schema and the per-entry trust tier are described in
 
 [Import-CompleterScript](Import-CompleterScript.md)
 
-[Get-CompleterRegistration](Get-CompleterRegistration.md)
+[Get-Completer](Get-Completer.md)

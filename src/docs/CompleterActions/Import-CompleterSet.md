@@ -60,7 +60,7 @@ Relative `Path` values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
 
 Registering a set does not run its scripts. Every valid entry is registered
-lazily under the entry's trust tier, exactly as `Register-CompleterRegistration
+lazily under the entry's trust tier, exactly as `Register-Completer
 -Lazy` registers a script, so each target gets a stub and a managed record in
 state `Pending`. The whole set is one transaction against one snapshot of the
 session's registrations: validation and registration read the managed table
@@ -266,8 +266,8 @@ changes PSReadLine options.
 
 [Export-CompleterSet](Export-CompleterSet.md)
 
-[Register-CompleterRegistration](Register-CompleterRegistration.md)
+[Register-Completer](Register-Completer.md)
 
 [Test-CompleterScript](Test-CompleterScript.md)
 
-[Get-CompleterRegistration](Get-CompleterRegistration.md)
+[Get-Completer](Get-Completer.md)

@@ -6,10 +6,10 @@ Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
 PlatyPS schema version: 2024-05-01
-title: Unregister-CompleterRegistration
+title: Unregister-Completer
 ---
 
-# Unregister-CompleterRegistration
+# Unregister-Completer
 
 ## SYNOPSIS
 
@@ -20,21 +20,21 @@ Removes completer registrations from runtime and, when applicable, module state.
 ### CommandParameter (Default)
 
 ```PowerShell
-Unregister-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> [-AllowUnmanaged]
+Unregister-Completer -CommandName <string[]> -ParameterName <string[]> [-AllowUnmanaged]
  [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### InputObject
 
 ```PowerShell
-Unregister-CompleterRegistration -InputObject <Object[]> [-AllowUnmanaged] [-PassThru] [-WhatIf]
+Unregister-Completer -InputObject <Object[]> [-AllowUnmanaged] [-PassThru] [-WhatIf]
  [-Confirm] [<CommonParameters>]
 ```
 
 ### Native
 
 ```PowerShell
-Unregister-CompleterRegistration -CommandName <string[]> -Native [-AllowUnmanaged] [-PassThru]
+Unregister-Completer -CommandName <string[]> -Native [-AllowUnmanaged] [-PassThru]
  [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
@@ -60,7 +60,7 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-CompleterRegistration output. Keys are output-only identifiers: a
+from Get-Completer output. Keys are output-only identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.
 
@@ -275,4 +275,4 @@ When -PassThru is used
 
 ## RELATED LINKS
 
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-CompleterRegistration.md)
+[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md)

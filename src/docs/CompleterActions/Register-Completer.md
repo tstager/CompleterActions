@@ -6,10 +6,10 @@ Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
 PlatyPS schema version: 2024-05-01
-title: Register-CompleterRegistration
+title: Register-Completer
 ---
 
-# Register-CompleterRegistration
+# Register-Completer
 
 ## SYNOPSIS
 
@@ -20,21 +20,21 @@ Registers a managed PowerShell argument completer.
 ### CommandParameter (Default)
 
 ```PowerShell
-Register-CompleterRegistration -CommandName <string[]> -ParameterName <string[]>
+Register-Completer -CommandName <string[]> -ParameterName <string[]>
  -ScriptBlock <scriptblock> [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### InputObject
 
 ```PowerShell
-Register-CompleterRegistration -InputObject <psobject[]> [-Force] [-PassThru] [-WhatIf] [-Confirm]
+Register-Completer -InputObject <psobject[]> [-Force] [-PassThru] [-WhatIf] [-Confirm]
  [<CommonParameters>]
 ```
 
 ### LazyLiteralPath
 
 ```PowerShell
-Register-CompleterRegistration -LiteralPath <string> -Lazy [-CommandName <string[]>]
+Register-Completer -LiteralPath <string> -Lazy [-CommandName <string[]>]
  [-ParameterName <string[]>] [-Native] [-Trusted] [-Force] [-PassThru] [-WhatIf] [-Confirm]
  [<CommonParameters>]
 ```
@@ -42,14 +42,14 @@ Register-CompleterRegistration -LiteralPath <string> -Lazy [-CommandName <string
 ### LazyPath
 
 ```PowerShell
-Register-CompleterRegistration -Path <string> -Lazy [-CommandName <string[]>] [-ParameterName <string[]>]
+Register-Completer -Path <string> -Lazy [-CommandName <string[]>] [-ParameterName <string[]>]
  [-Native] [-Trusted] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### Native
 
 ```PowerShell
-Register-CompleterRegistration -CommandName <string[]> -Native -ScriptBlock <scriptblock> [-Force]
+Register-Completer -CommandName <string[]> -Native -ScriptBlock <scriptblock> [-Force]
  [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
@@ -100,7 +100,7 @@ PSReadLine options.
 ### EXAMPLE 1
 
 ```PowerShell
-Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 ```
 
 Registers a native completer for `demoexe` with a script block that is already
@@ -109,7 +109,7 @@ in memory.
 ### EXAMPLE 2
 
 ```PowerShell
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 ```
 
 Reads the targets from the script's `Register-ArgumentCompleter` calls,
@@ -119,7 +119,7 @@ script runs the first time tab completion is requested for one of its targets.
 ### EXAMPLE 3
 
 ```PowerShell
-Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 ```
 
 Registers a script that needs the trusted tier lazily. The targets are named
@@ -128,10 +128,10 @@ explicitly because a trusted script is not parsed.
 ### EXAMPLE 4
 
 ```PowerShell
-Get-CompleterRegistration -ManagedOnly |
+Get-Completer -ManagedOnly |
     Where-Object State -eq Failed |
     ForEach-Object {
-        Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
+        Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
             -CommandName $_.CommandName -Native:$_.IsNative -Force
     }
 ```
@@ -528,7 +528,7 @@ load, and `Trusted`.
 
 ## RELATED LINKS
 
-[Get-CompleterRegistration](Get-CompleterRegistration.md)
+[Get-Completer](Get-Completer.md)
 
 [Import-CompleterScript](Import-CompleterScript.md)
 

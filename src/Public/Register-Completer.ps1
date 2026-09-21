@@ -98,31 +98,31 @@ System.Management.Automation.PSCustomObject
 When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
+PS> Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
 
 Registers a native completer for demoexe with a script block that is already in
 memory.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -PassThru
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
 
 Reads the targets from the script's Register-ArgumentCompleter calls, registers
 a stub for each of them, and returns the Pending records. The script runs the
 first time tab completion is requested for one of its targets.
 
 .EXAMPLE
-PS> Register-CompleterRegistration -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
+PS> Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
 
 Registers a script that needs the trusted tier lazily. The targets are named
 explicitly because a trusted script is not parsed.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-CompleterRegistration -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
+PS> Get-Completer -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
 
 Retries every lazy registration whose script failed to load, after the scripts
 have been fixed.
 #>
-function Register-CompleterRegistration
+function Register-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]

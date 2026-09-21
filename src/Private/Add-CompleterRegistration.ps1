@@ -17,7 +17,7 @@ back or the new one removed, and the earlier managed record is put back or the
 new one removed, so the session ends exactly as it was before the batch. The
 error names the target whose write failed, and a failure during the rollback
 is reported together with the original error so the caller can say the target
-may be inconsistent. Register-CompleterRegistration writes each target through
+may be inconsistent. Register-Completer writes each target through
 this helper on its own, so every target of a call stays its own transaction,
 and Import-CompleterSet writes a whole set through it, so an eager, a lazy,
 and a completer set registration share one write path.

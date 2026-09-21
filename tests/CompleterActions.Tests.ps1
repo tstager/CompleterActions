@@ -114,7 +114,7 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
         }
 
-        $registration = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $registration = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
 
         $registration.CommandName | Should -Be 'Test-ManagedTool'
         $registration.ParameterName | Should -Be 'Name'
@@ -135,7 +135,7 @@ Describe 'Completer registration public API' {
 
         $completion.CompletionMatches.CompletionText | Should -Contain 'alpha'
 
-        $discoveredRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $discoveredRegistration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $discoveredRegistration.Source | Should -Be 'Managed'
         $discoveredRegistration.IsRuntimeRegistered | Should -BeTrue
     }
@@ -154,8 +154,8 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
-        $secondRegistration = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $secondRegistration = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
 
         $secondRegistration.CommandName | Should -Be 'Test-ManagedTool'
 
@@ -173,7 +173,7 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('beta', 'beta', 'ParameterValue', 'beta')
         }
 
-        $registration = Register-CompleterRegistration -Native -CommandName 'testnative-managed' -ScriptBlock $scriptBlock -PassThru
+        $registration = Register-Completer -Native -CommandName 'testnative-managed' -ScriptBlock $scriptBlock -PassThru
 
         $registration.CommandName | Should -Be 'testnative-managed'
         $registration.ParameterName | Should -BeNullOrEmpty
@@ -182,7 +182,7 @@ Describe 'Completer registration public API' {
         $registration.IsManaged | Should -BeTrue
         $registration.IsRuntimeRegistered | Should -BeTrue
 
-        $resolvedRegistration = Get-CompleterRegistration -Native -CommandName 'testnative-managed'
+        $resolvedRegistration = Get-Completer -Native -CommandName 'testnative-managed'
         $resolvedRegistration.RegistrationKey | Should -Be 'testnative-managed'
         $resolvedRegistration.Source | Should -Be 'Managed'
     }
@@ -196,7 +196,7 @@ Describe 'Completer registration public API' {
 
         Register-ArgumentCompleter -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
 
-        $registration = Get-CompleterRegistration -CommandName 'Test-UnmanagedTool' -ParameterName 'Name'
+        $registration = Get-Completer -CommandName 'Test-UnmanagedTool' -ParameterName 'Name'
 
         $registration.CommandName | Should -Be 'Test-UnmanagedTool'
         $registration.Source | Should -Be 'Discovered'
@@ -237,10 +237,10 @@ Describe 'Completer registration public API' {
 
         try
         {
-            $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock
-            $null = Register-CompleterRegistration -CommandName 'testnative-managed' -Native -ScriptBlock $nativeScriptBlock
+            $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock
+            $null = Register-Completer -CommandName 'testnative-managed' -Native -ScriptBlock $nativeScriptBlock
 
-            $registrations = @(Get-CompleterRegistration -Verbose 4>&1)
+            $registrations = @(Get-Completer -Verbose 4>&1)
             $verboseMessages = @($registrations | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
             $records = @($registrations | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
 
@@ -249,10 +249,10 @@ Describe 'Completer registration public API' {
             @($records.Key) | Should -Not -Contain 'completeractionsglobalparam'
             @($verboseMessages | Where-Object { $_ -match "parameter-only completer registration 'CompleterActionsGlobalParam'" }).Count | Should -Be 1
 
-            @(Get-CompleterRegistration -DiscoveredOnly).Key | Should -Not -Contain 'completeractionsglobalparam'
-            Get-CompleterRegistration -CommandName 'CompleterActionsGlobalParam' -Native | Should -BeNullOrEmpty
+            @(Get-Completer -DiscoveredOnly).Key | Should -Not -Contain 'completeractionsglobalparam'
+            Get-Completer -CommandName 'CompleterActionsGlobalParam' -Native | Should -BeNullOrEmpty
 
-            $removed = @(Get-CompleterRegistration -ManagedOnly | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+            $removed = @(Get-Completer -ManagedOnly | Unregister-Completer -Confirm:$false -PassThru)
             @($removed.Key | Sort-Object) | Should -Be @('test-managedtool:name', 'testnative-managed')
 
             $inputScript = 'Test-ManagedTool -CompleterActionsGlobalParam '
@@ -274,9 +274,9 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('delta', 'delta', 'ParameterValue', 'delta')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
 
-        $removedRegistration = Unregister-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru
+        $removedRegistration = Unregister-Completer -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru
 
         $removedRegistration.CommandName | Should -Be 'Test-RemoveManagedTool'
         $removedRegistration.IsManaged | Should -BeTrue
@@ -286,10 +286,10 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
 
         {
-            Unregister-CompleterRegistration -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -Confirm:$false
+            Unregister-Completer -CommandName 'Test-RemoveManagedTool' -ParameterName 'Name' -Confirm:$false
         } | Should -Throw '*No completer registration was found*'
     }
 
@@ -303,10 +303,10 @@ Describe 'Completer registration public API' {
         Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
 
         {
-            Unregister-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -Confirm:$false
+            Unregister-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -Confirm:$false
         } | Should -Throw '*-AllowUnmanaged*'
 
-        $registration = Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name'
+        $registration = Get-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Discovered'
     }
 
@@ -319,11 +319,11 @@ Describe 'Completer registration public API' {
 
         Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
 
-        $removedRegistration = Unregister-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+        $removedRegistration = Unregister-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
 
         $removedRegistration.Source | Should -Be 'Discovered'
         $removedRegistration.IsManaged | Should -BeFalse
-        Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'supports WhatIf for registration without mutating state' {
@@ -333,14 +333,14 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('zeta', 'zeta', 'ParameterValue', 'zeta')
         }
 
-        Register-CompleterRegistration -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -WhatIf
+        Register-Completer -CommandName 'Test-WhatIfTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -WhatIf
 
         $state = InModuleScope CompleterActions {
             Get-CompleterActionState
         }
 
         $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-WhatIfTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-WhatIfTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'uses a concise default table view while preserving full properties for Format-List *' {
@@ -350,9 +350,9 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('eta', 'eta', 'ParameterValue', 'eta')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
 
-        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $defaultOutput = $registration | Out-String -Width 4096
         $listOutput = $registration | Format-List * | Out-String -Width 4096
 
@@ -381,10 +381,10 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('discovered', 'discovered', 'ParameterValue', 'discovered')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -ScriptBlock $discoveredScriptBlock
 
-        $pagedRegistrations = @(Get-CompleterRegistration -First 1 -Skip 1)
+        $pagedRegistrations = @(Get-Completer -First 1 -Skip 1)
 
         $pagedRegistrations.Count | Should -Be 1
         $pagedRegistrations[0].Key | Should -Be 'test-unmanagedtool:name'
@@ -404,11 +404,11 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('discovered', 'discovered', 'ParameterValue', 'discovered')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $discoveredScriptBlock
 
-        $registrations = @(Get-CompleterRegistration -IncludeTotalCount)
-        $registration = @(Get-CompleterRegistration -First 1)[0]
+        $registrations = @(Get-Completer -IncludeTotalCount)
+        $registration = @(Get-Completer -First 1)[0]
 
         $registrations[0] | Should -Be ([uint64] 1)
         $registration.Key | Should -Be 'test-managedtool:name'
@@ -430,11 +430,11 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('discovered', 'discovered', 'ParameterValue', 'discovered')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -ScriptBlock $discoveredScriptBlock
 
-        $managedRegistrations = @(Get-CompleterRegistration -ManagedOnly -First 1)
-        $discoveredRegistrations = @(Get-CompleterRegistration -DiscoveredOnly -First 1)
+        $managedRegistrations = @(Get-Completer -ManagedOnly -First 1)
+        $discoveredRegistrations = @(Get-Completer -DiscoveredOnly -First 1)
 
         $managedRegistrations.Count | Should -Be 1
         $managedRegistrations[0].Source | Should -Be 'Managed'
@@ -458,10 +458,10 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('discovered', 'discovered', 'ParameterValue', 'discovered')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-UnmanagedTool' -ParameterName 'Name' -ScriptBlock $discoveredScriptBlock
 
-        $results = @(Get-CompleterRegistration -First 1 -IncludeTotalCount)
+        $results = @(Get-Completer -First 1 -IncludeTotalCount)
 
         $results.Count | Should -Be 2
         $results[0] | Should -BeOfType ([System.UInt64])
@@ -476,9 +476,9 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('managed', 'managed', 'ParameterValue', 'managed')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $managedScriptBlock -PassThru
 
-        $results = @(Get-CompleterRegistration -ManagedOnly -First 1 -Skip 1)
+        $results = @(Get-Completer -ManagedOnly -First 1 -Skip 1)
 
         $results | Should -BeNullOrEmpty
     }
@@ -490,12 +490,12 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('theta', 'theta', 'ParameterValue', 'theta')
         }
 
-        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock -PassThru)
+        $registrations = @(Register-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock -PassThru)
 
         $registrations.Count | Should -Be 2
         @($registrations.Key | Sort-Object) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
 
-        $resolvedRegistrations = @(Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path')
+        $resolvedRegistrations = @(Get-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path')
         @($resolvedRegistrations.Key | Sort-Object) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
     }
 
@@ -506,12 +506,12 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('iota', 'iota', 'ParameterValue', 'iota')
         }
 
-        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayNativeOne', 'Test-ArrayNativeTwo' -Native -ScriptBlock $scriptBlock -PassThru)
+        $registrations = @(Register-Completer -CommandName 'Test-ArrayNativeOne', 'Test-ArrayNativeTwo' -Native -ScriptBlock $scriptBlock -PassThru)
 
         $registrations.Count | Should -Be 2
         @($registrations.Key | Sort-Object) | Should -Be @('test-arraynativeone', 'test-arraynativetwo')
 
-        $resolvedRegistrations = @(Get-CompleterRegistration -CommandName 'Test-ArrayNativeOne', 'Test-ArrayNativeTwo' -Native)
+        $resolvedRegistrations = @(Get-Completer -CommandName 'Test-ArrayNativeOne', 'Test-ArrayNativeTwo' -Native)
         @($resolvedRegistrations.Key | Sort-Object) | Should -Be @('test-arraynativeone', 'test-arraynativetwo')
     }
 
@@ -522,21 +522,21 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('kappa', 'kappa', 'ParameterValue', 'kappa')
         }
 
-        $registration = Register-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $registration = Register-Completer -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
 
-        $resolved = @($registration | Get-CompleterRegistration)
+        $resolved = @($registration | Get-Completer)
         $resolved.Count | Should -Be 1
         $resolved[0].Key | Should -Be 'test-pipelinemanagedtool:name'
 
-        $byKeyAndIndicator = @([pscustomobject] @{ RegistrationKey = $registration.Key; IsNative = $false } | Get-CompleterRegistration)
+        $byKeyAndIndicator = @([pscustomobject] @{ RegistrationKey = $registration.Key; IsNative = $false } | Get-Completer)
         $byKeyAndIndicator.Count | Should -Be 1
         $byKeyAndIndicator[0].Key | Should -Be 'test-pipelinemanagedtool:name'
     }
 
     It 'rejects a bare key input object with no native indicator on <Command>' -TestCases @(
-        @{ Command = 'Get-CompleterRegistration'; Run = { [pscustomobject] @{ RegistrationKey = 'test-pipelinemanagedtool:name' } | Get-CompleterRegistration } },
-        @{ Command = 'Register-CompleterRegistration'; Run = { [pscustomobject] @{ Key = 'Test-PipelineManagedTool:Name'; ScriptBlock = { 'kappa' } } | Register-CompleterRegistration } },
-        @{ Command = 'Unregister-CompleterRegistration'; Run = { [pscustomobject] @{ RuntimeKey = 'Test-PipelineManagedTool:Name' } | Unregister-CompleterRegistration -Confirm:$false } },
+        @{ Command = 'Get-Completer'; Run = { [pscustomobject] @{ RegistrationKey = 'test-pipelinemanagedtool:name' } | Get-Completer } },
+        @{ Command = 'Register-Completer'; Run = { [pscustomobject] @{ Key = 'Test-PipelineManagedTool:Name'; ScriptBlock = { 'kappa' } } | Register-Completer } },
+        @{ Command = 'Unregister-Completer'; Run = { [pscustomobject] @{ RuntimeKey = 'Test-PipelineManagedTool:Name' } | Unregister-Completer -Confirm:$false } },
         @{ Command = 'Test-CompleterRegistration'; Run = { [pscustomobject] @{ Key = 'test-pipelinemanagedtool:name' } | Test-CompleterRegistration -InputText 'Test-PipelineManagedTool -Name k' } }
     ) {
         param($Run)
@@ -545,8 +545,8 @@ Describe 'Completer registration public API' {
     }
 
     It 'no longer exposes a typed Key parameter on <Command>' -TestCases @(
-        @{ Command = 'Get-CompleterRegistration' },
-        @{ Command = 'Unregister-CompleterRegistration' },
+        @{ Command = 'Get-Completer' },
+        @{ Command = 'Unregister-Completer' },
         @{ Command = 'Test-CompleterRegistration' }
     ) {
         param($Command)
@@ -565,13 +565,13 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('lambda', 'lambda', 'ParameterValue', 'lambda')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
 
-        $removed = @(Get-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+        $removed = @(Get-Completer -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Unregister-Completer -Confirm:$false -PassThru)
 
         $removed.Count | Should -Be 1
         $removed[0].Key | Should -Be 'test-pipelinemanagedtool:name'
-        Get-CompleterRegistration -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-PipelineManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'supports unregister input objects in batches' {
@@ -581,13 +581,13 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('mu', 'mu', 'ParameterValue', 'mu')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock -PassThru
-        $registrations = @(Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path')
+        $null = Register-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock -PassThru
+        $registrations = @(Get-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path')
 
-        $removed = @($registrations | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+        $removed = @($registrations | Unregister-Completer -Confirm:$false -PassThru)
 
         $removed.Count | Should -Be 2
-        Get-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' | Should -BeNullOrEmpty
     }
 
     It 'supports register input objects with script blocks' {
@@ -610,7 +610,7 @@ Describe 'Completer registration public API' {
             }
         )
 
-        $registrations = @($inputObjects | Register-CompleterRegistration -PassThru)
+        $registrations = @($inputObjects | Register-Completer -PassThru)
 
         $registrations.Count | Should -Be 2
         @($registrations.Key | Sort-Object) | Should -Be @('test-arrayone:name', 'test-arraytwo:path')
@@ -618,7 +618,7 @@ Describe 'Completer registration public API' {
 
     It 'throws for invalid register input objects' {
         {
-            [pscustomobject] @{ CommandName = 'Test-ArrayOne' } | Register-CompleterRegistration -PassThru
+            [pscustomobject] @{ CommandName = 'Test-ArrayOne' } | Register-Completer -PassThru
         } | Should -Throw '*Failed to resolve a completer target from InputObject*'
     }
 
@@ -630,7 +630,7 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('drivealpha', 'drivealpha', 'ParameterValue', 'drivealpha')
         }
 
-        $registration = [pscustomobject] @{ CommandName = $nativePath; IsNative = $true; ScriptBlock = $scriptBlock } | Register-CompleterRegistration -PassThru
+        $registration = [pscustomobject] @{ CommandName = $nativePath; IsNative = $true; ScriptBlock = $scriptBlock } | Register-Completer -PassThru
 
         $registration.Key | Should -Be $nativePath.ToLowerInvariant()
         $registration.CommandName | Should -Be $nativePath
@@ -642,17 +642,17 @@ Describe 'Completer registration public API' {
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         $completion.CompletionMatches.CompletionText | Should -Contain 'drivealpha'
 
-        $found = Get-CompleterRegistration -CommandName $nativePath -Native
+        $found = Get-Completer -CommandName $nativePath -Native
         $found.CompleterType | Should -Be 'Native'
         $found.CommandName | Should -Be $nativePath
         $found.Source | Should -Be 'Managed'
-        ($registration | Get-CompleterRegistration).Key | Should -Be $found.Key
+        ($registration | Get-Completer).Key | Should -Be $found.Key
 
-        $removed = @(Unregister-CompleterRegistration -CommandName $nativePath -Native -Confirm:$false -PassThru)
+        $removed = @(Unregister-Completer -CommandName $nativePath -Native -Confirm:$false -PassThru)
 
         $removed.Count | Should -Be 1
         $removed[0].CompleterType | Should -Be 'Native'
-        Get-CompleterRegistration -CommandName $nativePath -Native | Should -BeNullOrEmpty
+        Get-Completer -CommandName $nativePath -Native | Should -BeNullOrEmpty
 
         $completionAfterRemoval = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         $completionAfterRemoval.CompletionMatches.CompletionText | Should -Not -Contain 'drivealpha'
@@ -666,7 +666,7 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('drivescript', 'drivescript', 'ParameterValue', 'drivescript')
         }
 
-        $registration = [pscustomobject] @{ CommandName = 'C:/completeractions-tests/drive-script.ps1'; ParameterName = 'Name'; ScriptBlock = $scriptBlock } | Register-CompleterRegistration -PassThru
+        $registration = [pscustomobject] @{ CommandName = 'C:/completeractions-tests/drive-script.ps1'; ParameterName = 'Name'; ScriptBlock = $scriptBlock } | Register-Completer -PassThru
 
         $registration.CompleterType | Should -Be 'Parameter'
         $registration.CommandName | Should -Be 'C:/completeractions-tests/drive-script.ps1'
@@ -686,15 +686,15 @@ Describe 'Completer registration public API' {
         $runtimeTables.InParameterTable | Should -BeTrue
         $runtimeTables.InNativeTable | Should -BeFalse
 
-        $found = Get-CompleterRegistration -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name'
+        $found = Get-Completer -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name'
         $found.Source | Should -Be 'Managed'
         $found.Key | Should -Be $key.ToLowerInvariant()
 
-        $removed = @($registration | Unregister-CompleterRegistration -Confirm:$false -PassThru)
+        $removed = @($registration | Unregister-Completer -Confirm:$false -PassThru)
 
         $removed.Count | Should -Be 1
         $removed[0].CompleterType | Should -Be 'Parameter'
-        Get-CompleterRegistration -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'C:/completeractions-tests/drive-script.ps1' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'resolves a key input object only through its native indicator, never its shape' {
@@ -752,7 +752,7 @@ Describe 'Completer registration public API' {
         $importedRegistrations[0].Path | Should -Be $fixturePath
         $importedRegistrations[0].ScriptBlock.Module | Should -Not -BeNullOrEmpty
 
-        Get-CompleterRegistration -Native -CommandName 'importfixture' | Should -BeNullOrEmpty
+        Get-Completer -Native -CommandName 'importfixture' | Should -BeNullOrEmpty
 
         $commandAst = [System.Management.Automation.Language.Parser]::ParseInput(
             'importfixture a',
@@ -763,7 +763,7 @@ Describe 'Completer registration public API' {
         $completionMatches = @(& $importedRegistrations[0].ScriptBlock 'a' $commandAst 15)
         $completionMatches.CompletionText | Should -Contain 'alpha'
 
-        $registered = @($importedRegistrations | Register-CompleterRegistration -PassThru)
+        $registered = @($importedRegistrations | Register-Completer -PassThru)
         $registered.Count | Should -Be 2
         @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
     }
@@ -786,8 +786,8 @@ Describe 'Completer registration public API' {
         Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
 
         {
-            Get-CompleterRegistration -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' |
-                Unregister-CompleterRegistration -Confirm:$false
+            Get-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' |
+                Unregister-Completer -Confirm:$false
         } | Should -Throw '*-AllowUnmanaged*'
     }
 
@@ -803,7 +803,7 @@ Describe 'Completer registration public API' {
         }
 
         {
-            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+            Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
         } | Should -Throw '*forced managed-state failure*'
 
         $state = InModuleScope CompleterActions {
@@ -811,7 +811,7 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'restores the previous registration when a forced replacement fails to update the managed store' {
@@ -835,14 +835,14 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
         }
 
-        $original = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        $original = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
 
         & (Get-Module -Name 'CompleterActions') {
             function script:Add-ManagedCompleterRegistration { throw 'forced managed-state failure' }
         }
 
         {
-            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force
+            Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force
         } | Should -Throw '*forced managed-state failure*'
 
         $state = InModuleScope CompleterActions {
@@ -852,7 +852,7 @@ Describe 'Completer registration public API' {
         $state['Registrations'].Count | Should -Be 1
         [object]::ReferenceEquals($state['Registrations']['test-managedtool:name'], $original) | Should -BeTrue
 
-        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
         $registration.State | Should -Be 'Active'
         $registration.ScriptText | Should -Match 'old'
@@ -875,14 +875,14 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
 
         & (Get-Module -Name 'CompleterActions') {
             function script:Add-RuntimeCompleterRegistration { throw 'forced runtime-write failure' }
         }
 
         {
-            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force
+            Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force
         } | Should -Throw '*forced runtime-write failure*'
 
         $state = InModuleScope CompleterActions {
@@ -892,7 +892,7 @@ Describe 'Completer registration public API' {
         $state['Registrations'].Count | Should -Be 1
         $state['Registrations']['test-managedtool:name'].ScriptText | Should -Match 'old'
 
-        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
         $registration.State | Should -Be 'Active'
         $registration.ScriptText | Should -Match 'old'
@@ -913,7 +913,7 @@ Describe 'Completer registration public API' {
         $thrown = $null
         try
         {
-            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+            Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
         }
         catch
         {
@@ -950,7 +950,7 @@ Describe 'Completer registration public API' {
         }
 
         $thrown = {
-            Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock
+            Register-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayTwo' -ParameterName 'Name', 'Path' -ScriptBlock $scriptBlock
         } | Should -Throw -PassThru
 
         $thrown.Exception.Message | Should -Be "Failed to register the completer 'Test-ArrayTwo:Path'. forced write failure"
@@ -962,10 +962,10 @@ Describe 'Completer registration public API' {
         $state['Registrations'].Count | Should -Be 1
         $state['Registrations'].Contains('test-arrayone:name') | Should -BeTrue
 
-        $kept = Get-CompleterRegistration -CommandName 'Test-ArrayOne' -ParameterName 'Name'
+        $kept = Get-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name'
         $kept.Source | Should -Be 'Managed'
         $kept.State | Should -Be 'Active'
-        Get-CompleterRegistration -CommandName 'Test-ArrayTwo' -ParameterName 'Path' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ArrayTwo' -ParameterName 'Path' | Should -BeNullOrEmpty
     }
 
     It 'keeps the earlier targets of one call when a later target conflicts' {
@@ -984,18 +984,18 @@ Describe 'Completer registration public API' {
         Register-ArgumentCompleter -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -ScriptBlock $externalScriptBlock
 
         {
-            Register-CompleterRegistration -InputObject @(
+            Register-Completer -InputObject @(
                 [pscustomobject] @{ CommandName = 'Test-ArrayOne'; ParameterName = 'Name'; ScriptBlock = $scriptBlock },
                 [pscustomobject] @{ CommandName = 'Test-ArrayTwo'; ParameterName = 'Path'; ScriptBlock = $scriptBlock }
             )
         } | Should -Throw "*Failed to register the completer 'Test-ArrayTwo:Path'. A runtime completer registration already exists for 'Test-ArrayTwo:Path'. Use -Force to replace it.*"
 
-        $kept = Get-CompleterRegistration -CommandName 'Test-ArrayOne' -ParameterName 'Name' -ManagedOnly
+        $kept = Get-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name' -ManagedOnly
         $kept.Source | Should -Be 'Managed'
         $kept.State | Should -Be 'Active'
         $kept.ScriptText | Should -Match 'managed'
 
-        $external = Get-CompleterRegistration -CommandName 'Test-ArrayTwo' -ParameterName 'Path'
+        $external = Get-Completer -CommandName 'Test-ArrayTwo' -ParameterName 'Path'
         $external.Source | Should -Be 'Discovered'
         $external.ScriptText | Should -Match 'external'
     }
@@ -1007,7 +1007,7 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('repeat', 'repeat', 'ParameterValue', 'repeat')
         }
 
-        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Name' -ScriptBlock $scriptBlock -WhatIf -PassThru)
+        $registrations = @(Register-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Name' -ScriptBlock $scriptBlock -WhatIf -PassThru)
 
         $registrations.Count | Should -Be 0
 
@@ -1016,7 +1016,7 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-ArrayOne' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'resolves a target repeated within one call against the earlier registration of that call' {
@@ -1026,7 +1026,7 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('repeat', 'repeat', 'ParameterValue', 'repeat')
         }
 
-        $registrations = @(Register-CompleterRegistration -CommandName 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Name' -ScriptBlock $scriptBlock -PassThru)
+        $registrations = @(Register-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Name' -ScriptBlock $scriptBlock -PassThru)
 
         $registrations.Count | Should -Be 2
         [object]::ReferenceEquals($registrations[0], $registrations[1]) | Should -BeTrue
@@ -1044,13 +1044,13 @@ Describe 'Completer registration public API' {
         }
 
         {
-            Register-CompleterRegistration -InputObject @(
+            Register-Completer -InputObject @(
                 [pscustomobject] @{ CommandName = 'Test-ArrayTwo'; ParameterName = 'Path'; ScriptBlock = $scriptBlock },
                 [pscustomobject] @{ CommandName = 'Test-ArrayTwo'; ParameterName = 'Path'; ScriptBlock = $otherScriptBlock }
             )
         } | Should -Throw "*Failed to register the completer 'Test-ArrayTwo:Path'. A module-managed completer registration already exists for 'Test-ArrayTwo:Path'. Use -Force to replace it.*"
 
-        $first = Get-CompleterRegistration -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -ManagedOnly
+        $first = Get-Completer -CommandName 'Test-ArrayTwo' -ParameterName 'Path' -ManagedOnly
         $first.Source | Should -Be 'Managed'
         $first.State | Should -Be 'Active'
         $first.ScriptText | Should -Match 'repeat'
@@ -1077,44 +1077,44 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
 
         $inputScript = 'Test-ManagedTool -Name '
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         $completion.CompletionMatches.CompletionText | Should -Be @('external')
 
-        $liveRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $liveRegistration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $liveRegistration.Source | Should -Be 'Discovered'
         $liveRegistration.State | Should -Be 'Conflicted'
         $liveRegistration.IsManaged | Should -BeFalse
         $liveRegistration.ScriptText | Should -Match 'external'
 
-        $managedRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ManagedOnly
+        $managedRegistration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ManagedOnly
         $managedRegistration.Source | Should -Be 'Managed'
         $managedRegistration.State | Should -Be 'Stale'
         $managedRegistration.IsRuntimeRegistered | Should -BeFalse
         $managedRegistration.ScriptText | Should -Match 'old'
 
-        $discoveredRegistration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -DiscoveredOnly
+        $discoveredRegistration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -DiscoveredOnly
         $discoveredRegistration.State | Should -Be 'Conflicted'
         $discoveredRegistration.ScriptText | Should -Match 'external'
 
         {
-            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock
+            Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock
         } | Should -Throw '*is stale*Use -Force*'
 
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         $completion.CompletionMatches.CompletionText | Should -Be @('external')
 
         {
-            Unregister-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false
+            Unregister-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false
         } | Should -Throw '*is stale*-AllowUnmanaged*'
 
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
         $completion.CompletionMatches.CompletionText | Should -Be @('external')
 
-        $removed = Unregister-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+        $removed = Unregister-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
         $removed.Source | Should -Be 'Discovered'
         $removed.ScriptText | Should -Match 'external'
 
@@ -1123,7 +1123,7 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 
     It 'reconciles a stale managed record with a forced registration' {
@@ -1153,14 +1153,14 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
         Register-ArgumentCompleter -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
 
-        $registration = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force -PassThru
+        $registration = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $newScriptBlock -Force -PassThru
 
         $registration.State | Should -Be 'Active'
 
-        $resolved = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $resolved = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $resolved.Source | Should -Be 'Managed'
         $resolved.State | Should -Be 'Active'
         $resolved.ScriptText | Should -Match 'new'
@@ -1177,27 +1177,27 @@ Describe 'Completer registration public API' {
             [System.Management.Automation.CompletionResult]::new('old', 'old', 'ParameterValue', 'old')
         }
 
-        $null = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
 
-        $registration = Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
         $registration.State | Should -Be 'Stale'
         $registration.IsRuntimeRegistered | Should -BeFalse
 
-        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
 
         {
-            Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
+            Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock
         } | Should -Throw '*is stale*Use -Force*'
 
-        $reregistered = Register-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -Force -PassThru
+        $reregistered = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -Force -PassThru
         $reregistered.State | Should -Be 'Active'
-        (Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name').State | Should -Be 'Active'
+        (Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name').State | Should -Be 'Active'
 
         Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-ManagedTool' -ParameterName 'Name' -CompleterType 'Parameter'
 
-        $removed = Unregister-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru
+        $removed = Unregister-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru
         $removed.Source | Should -Be 'Managed'
 
         $state = InModuleScope CompleterActions {
@@ -1205,6 +1205,6 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 0
-        Get-CompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
     }
 }

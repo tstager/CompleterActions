@@ -48,7 +48,7 @@ target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
 registration can be scripted and asserted on.
 
 One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as `Get-CompleterRegistration` so
+The target parameters accept the same shapes as `Get-Completer` so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
@@ -69,11 +69,11 @@ Returns the completion matches the registered git completer produces for
 ### EXAMPLE 2
 
 ```PowerShell
-Get-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name |
+Get-Completer -CommandName Invoke-DemoTool -ParameterName Name |
     Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 ```
 
-Verifies a registration record returned by `Get-CompleterRegistration` by
+Verifies a registration record returned by `Get-Completer` by
 completing an argument for its parameter.
 
 ### EXAMPLE 3
@@ -140,7 +140,7 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies an object that describes the completer target, such as a record
-returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
+returned by `Get-Completer` or `Import-CompleterScript`. The object
 must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
 `Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.
 
@@ -264,6 +264,6 @@ completion engine when it is invoked from this command.
 
 ## RELATED LINKS
 
-[Get-CompleterRegistration](Get-CompleterRegistration.md)
+[Get-Completer](Get-Completer.md)
 
 [Test-CompleterScript](Test-CompleterScript.md)
