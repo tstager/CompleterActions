@@ -1,6 +1,13 @@
 $sourceRoot = Join-Path -Path $PSScriptRoot -ChildPath 'src'
 $functionFolders = @('Private', 'Public')
 
+Write-Verbose -Message 'Importing from Classes'
+$classDefinitions = Get-ChildItem -Path (Join-Path -Path $sourceRoot -ChildPath 'Classes') -Filter '*.ps1' |
+    Sort-Object -Property Name |
+    ForEach-Object { Get-Content -Path $_.FullName -Raw }
+
+. ([scriptblock]::Create($classDefinitions -join [Environment]::NewLine))
+
 ForEach ($folder in $functionFolders)
 {
     $folderPath = Join-Path -Path $sourceRoot -ChildPath $folder

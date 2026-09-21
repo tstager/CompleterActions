@@ -1,0 +1,5 @@
+enum CompleterType
+{
+    Native
+    Parameter
+}
