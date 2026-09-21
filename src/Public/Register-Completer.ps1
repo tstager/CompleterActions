@@ -94,7 +94,7 @@ retried.
 Returns the managed registration records that were created or reused.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 
 .EXAMPLE
@@ -125,7 +125,7 @@ have been fixed.
 function Register-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]

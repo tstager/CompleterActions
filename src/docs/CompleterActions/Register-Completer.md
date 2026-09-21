@@ -515,7 +515,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.CompleterRegistration
 
 When -PassThru is used, returns `CompleterActions.CompleterRegistration`
 records. Lazy registrations carry `State` `Pending`, the `ScriptPath` they

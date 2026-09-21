@@ -804,7 +804,7 @@ would when the script is dot-sourced from a profile. The emitted records carry
     <command:returnValues>
       <command:returnValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+          <maml:name>CompleterActions.ImportedCompleterRegistration</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
@@ -1082,7 +1082,7 @@ of failing the whole set.</maml:para>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+          <maml:name>CompleterActions.CompleterRegistration</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>Returns the `CompleterActions.CompleterRegistration` records that were created
@@ -1685,7 +1685,7 @@ the grammar when it loads.</maml:para>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+          <maml:name>CompleterActions.CompleterRegistration</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>When -PassThru is used, returns `CompleterActions.CompleterRegistration`
@@ -2155,7 +2155,7 @@ not checked further. `Test-CompleterScript` never executes the script.</maml:par
     <command:returnValues>
       <command:returnValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+          <maml:name>CompleterActions.CompleterScriptFinding</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>Returns `CompleterActions.CompleterScriptFinding` records with `Path`, `Line`,
@@ -2511,7 +2511,7 @@ targets.</maml:para>
     <command:returnValues>
       <command:returnValue>
         <dev:type>
-          <maml:name>System.Management.Automation.PSCustomObject</maml:name>
+          <maml:name>CompleterActions.CompleterRegistration</maml:name>
         </dev:type>
         <maml:description>
           <maml:para>When -PassThru is used</maml:para>

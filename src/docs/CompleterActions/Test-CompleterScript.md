@@ -141,7 +141,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.CompleterScriptFinding
 
 Returns `CompleterActions.CompleterScriptFinding` records with `Path`, `Line`,
 `Column`, `Severity`, `Construct`, `Message`, and `Hint` properties. Every

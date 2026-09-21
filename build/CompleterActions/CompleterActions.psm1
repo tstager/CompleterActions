@@ -751,7 +751,7 @@ would when the script is dot-sourced from a profile. The emitted records carry
 Trusted set to true.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.ImportedCompleterRegistration
 Returns CompleterActions.ImportedCompleterRegistration records compatible with
 Register-Completer -InputObject. The Trusted property records which
 tier produced the record.
@@ -788,7 +788,7 @@ function Import-CompleterScript
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.ImportedCompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
@@ -908,7 +908,7 @@ Replaces existing managed or runtime registrations for the targets in the set,
 including Failed lazy records whose load should be retried.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 Returns the CompleterActions.CompleterRegistration records that were created
 or reused for the set's targets, in state Pending until each script loads.
 
@@ -930,7 +930,7 @@ function Import-CompleterSet
 #>
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
@@ -1130,7 +1130,7 @@ retried.
 Returns the managed registration records that were created or reused.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns CompleterActions.CompleterRegistration records.
 
 .EXAMPLE
@@ -1164,7 +1164,7 @@ function Register-Completer
 #>
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
@@ -1662,7 +1662,7 @@ One or more paths to completer script files. Wildcards are supported.
 One or more literal paths to completer script files. Wildcards are not expanded.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterScriptFinding
 Returns CompleterActions.CompleterScriptFinding records with Path, Line,
 Column, Severity, Construct, Message, and Hint properties. Every finding the
 strict grammar produces has Severity 'Error'.
@@ -1685,7 +1685,7 @@ function Test-CompleterScript
 #>
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
@@ -1760,7 +1760,7 @@ module.
 Returns the registration records that were removed.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns removed CompleterActions.CompleterRegistration
 records.
 #>
@@ -1770,7 +1770,7 @@ function Unregister-Completer
 #>
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]

@@ -43,14 +43,14 @@ module.
 Returns the registration records that were removed.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 When -PassThru is used, returns removed CompleterActions.CompleterRegistration
 records.
 #>
 function Unregister-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]

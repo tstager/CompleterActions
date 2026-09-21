@@ -49,7 +49,7 @@ would when the script is dot-sourced from a profile. The emitted records carry
 Trusted set to true.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.ImportedCompleterRegistration
 Returns CompleterActions.ImportedCompleterRegistration records compatible with
 Register-Completer -InputObject. The Trusted property records which
 tier produced the record.
@@ -83,7 +83,7 @@ scripts for import:
 function Import-CompleterScript
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.ImportedCompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]

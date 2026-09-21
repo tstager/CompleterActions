@@ -265,7 +265,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.CompleterRegistration
 
 When -PassThru is used
 

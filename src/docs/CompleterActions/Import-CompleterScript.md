@@ -203,7 +203,7 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.ImportedCompleterRegistration
 
 Returns `CompleterActions.ImportedCompleterRegistration` records compatible with
 `Register-Completer -InputObject`. The `Trusted` property records

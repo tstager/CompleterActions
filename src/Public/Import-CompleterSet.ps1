@@ -57,7 +57,7 @@ Replaces existing managed or runtime registrations for the targets in the set,
 including Failed lazy records whose load should be retried.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 Returns the CompleterActions.CompleterRegistration records that were created
 or reused for the set's targets, in state Pending until each script loads.
 
@@ -76,7 +76,7 @@ registration for the same targets.
 function Import-CompleterSet
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]

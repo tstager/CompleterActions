@@ -250,7 +250,7 @@ A set file path, or `Get-ChildItem` output bound through `FullName`.
 
 ## OUTPUTS
 
-### System.Management.Automation.PSCustomObject
+### CompleterActions.CompleterRegistration
 
 Returns the `CompleterActions.CompleterRegistration` records that were created
 or reused for the set's targets, in state `Pending` until each script loads.

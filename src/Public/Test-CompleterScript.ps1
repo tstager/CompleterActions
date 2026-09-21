@@ -22,7 +22,7 @@ One or more paths to completer script files. Wildcards are supported.
 One or more literal paths to completer script files. Wildcards are not expanded.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterScriptFinding
 Returns CompleterActions.CompleterScriptFinding records with Path, Line,
 Column, Severity, Construct, Message, and Hint properties. Every finding the
 strict grammar produces has Severity 'Error'.
@@ -42,7 +42,7 @@ when every script conforms.
 function Test-CompleterScript
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
     param(
         [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [Alias('FullName')]
