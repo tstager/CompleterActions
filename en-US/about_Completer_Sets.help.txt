@@ -253,7 +253,7 @@ EXAMPLE 1
     Import a set and inspect what it registered:
 
         Import-CompleterSet -Path ~\Completers\completers.psd1 |
-            Format-Table Command, Parameter, Type, State
+            Format-Table CommandName, ParameterName, CompleterType, State
 
 EXAMPLE 2
 
@@ -277,7 +277,7 @@ EXAMPLE 4
     Find records that did not load and see why:
 
         Get-Completer -State Failed |
-            Format-List Command, ScriptPath, LoadError
+            Format-List CommandName, ScriptPath, LoadError
 
 SEE ALSO
 
