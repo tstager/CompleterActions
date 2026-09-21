@@ -14,7 +14,7 @@ class CompleterRegistration
     [CompleterType] $CompleterType
     [string] $TargetType
     [string] $Source
-    [string] $State
+    [CompleterState] $State
     [bool] $IsManaged
     [bool] $IsRuntimeRegistered
     [string] $ScriptPath

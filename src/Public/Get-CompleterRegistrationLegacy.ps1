@@ -25,6 +25,10 @@ function Get-CompleterRegistrationLegacy
         [switch] $Native,
 
         [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [CompleterState[]] $State,
+
+        [Parameter()]
         [switch] $ManagedOnly,
 
         [Parameter()]
@@ -35,7 +39,25 @@ function Get-CompleterRegistrationLegacy
     {
         Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
 
-        $steppablePipeline = { Get-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
+        if (($ManagedOnly -and $DiscoveredOnly) -or (($ManagedOnly -or $DiscoveredOnly) -and $PSBoundParameters.ContainsKey('State')))
+        {
+            throw 'ManagedOnly, DiscoveredOnly, and State cannot be used together.'
+        }
+
+        $forwardedParameters = [hashtable] $PSBoundParameters
+        $null = $forwardedParameters.Remove('ManagedOnly')
+        $null = $forwardedParameters.Remove('DiscoveredOnly')
+
+        if ($ManagedOnly)
+        {
+            $forwardedParameters['State'] = [CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
+        }
+        elseif ($DiscoveredOnly)
+        {
+            $forwardedParameters['State'] = [CompleterState[]] @('Discovered', 'Conflicted')
+        }
+
+        $steppablePipeline = { Get-Completer @forwardedParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
         $steppablePipeline.Begin($PSCmdlet)
     }
 

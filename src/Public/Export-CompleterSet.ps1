@@ -106,7 +106,7 @@ function Export-CompleterSet
         {
             if (-not $inputBound)
             {
-                $records.AddRange([psobject[]] @(Get-Completer -ManagedOnly | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+                $records.AddRange([psobject[]] @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
             }
 
             $entriesByPath = [ordered] @{}

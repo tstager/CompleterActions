@@ -117,7 +117,7 @@ Registers a script that needs the trusted tier lazily. The targets are named
 explicitly because a trusted script is not parsed.
 
 .EXAMPLE
-PS> Get-Completer -ManagedOnly | Where-Object State -eq Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
+PS> Get-Completer -State Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
 
 Retries every lazy registration whose script failed to load, after the scripts
 have been fixed.

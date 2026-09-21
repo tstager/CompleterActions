@@ -78,7 +78,7 @@ function Resolve-CompleterRegistrationConflict
             $registrationState = [pscustomobject] [ordered] @{
                 Key                 = $key
                 ManagedRegistration = $plannedRegistration
-                RuntimeRegistration = New-CompleterRegistrationRecord -Target $plannedRegistration -ScriptBlock $plannedRegistration.ScriptBlock -Source 'Discovered'
+                RuntimeRegistration = New-CompleterRegistrationRecord -Target $plannedRegistration -ScriptBlock $plannedRegistration.ScriptBlock -Source 'Discovered' -State Discovered
                 ManagedState        = $plannedRegistration.State
             }
         }

@@ -128,8 +128,7 @@ explicitly because a trusted script is not parsed.
 ### EXAMPLE 4
 
 ```PowerShell
-Get-Completer -ManagedOnly |
-    Where-Object State -eq Failed |
+Get-Completer -State Failed |
     ForEach-Object {
         Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
             -CommandName $_.CommandName -Native:$_.IsNative -Force

@@ -6,22 +6,21 @@ Gets completer registrations known to the module or discovered at runtime.
 Returns completer registration records for all registrations, native command
 completers, command parameter completers, or the targets described by piped
 registration records.
-By default the command merges module-managed registrations with
-runtime-discovered registrations and prefers the managed record when both refer
-to the same target and the managed record still matches the live runtime value.
-When the runtime registration was replaced outside this module, the live
-discovered value is returned with State 'Conflicted' instead; -ManagedOnly
-returns the managed record with State 'Stale'. When the runtime registration
-was removed outside this module, the managed record is returned with State
-'Stale' and IsRuntimeRegistered false. Lazy registrations report State
-'Pending' until their script loads on the first tab press and 'Failed' when
-that load failed; a Failed record has no runtime entry and carries the error
-in LoadError. Both are returned by default and by -ManagedOnly. The command
-accepts arrays for command and parameter lookups, and records piped back from
-Get-Completer or Import-CompleterScript resolve through their Key
-and IsNative properties. Keys are output-only identifiers: a hand-typed key
-string is not accepted, so name the target with -CommandName plus -Native or
--ParameterName instead.
+The command merges module-managed registrations with runtime-discovered
+registrations and reports each record's State once, so -State can select any
+subset. A managed record whose stored script is the live runtime value is
+'Active', or 'Pending' while a lazy registration still waits for its first tab
+press. A runtime value that no managed record describes is 'Discovered'. When
+the runtime registration was replaced outside this module, the managed record
+is returned with State 'Stale' and the live value with State 'Conflicted';
+when it was removed outside this module, the managed record is 'Stale' with
+IsRuntimeRegistered false. A lazy registration whose script failed to load is
+'Failed'; it has no runtime entry and carries the error in LoadError. Without
+-State every record is returned. The command accepts arrays for command and
+parameter lookups, and records piped back from Get-Completer or
+Import-CompleterScript resolve through their Key and IsNative properties. Keys
+are output-only identifiers: a hand-typed key string is not accepted, so name
+the target with -CommandName plus -Native or -ParameterName instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -48,22 +47,22 @@ Limits results to one or more parameter completer targets.
 Indicates that the lookup target is a native command completer instead of a
 command parameter completer.
 
-.PARAMETER ManagedOnly
-Returns only registrations tracked by this module.
-
-.PARAMETER DiscoveredOnly
-Returns only registrations discovered from the current PowerShell runtime.
+.PARAMETER State
+Returns only the records whose State is one of the given values: Active,
+Stale, Conflicted, Pending, Failed, or Discovered. Several values return the
+union.
 
 .OUTPUTS
-System.Management.Automation.PSCustomObject
+CompleterActions.CompleterRegistration
 Returns CompleterActions.CompleterRegistration records. The State property is
-'Active' for records that describe the live runtime value, 'Pending' for lazy
-registrations whose script has not loaded yet, 'Failed' for lazy registrations
-whose script failed to load, 'Stale' for managed records that no longer match
-the runtime, and 'Conflicted' for live runtime values that replaced a managed
-registration outside this module. ScriptPath names the completer script behind
-a lazy or imported registration and LoadError holds the failure message of a
-Failed record.
+'Active' for managed records that describe the live runtime value,
+'Discovered' for runtime values that no managed record describes, 'Pending'
+for lazy registrations whose script has not loaded yet, 'Failed' for lazy
+registrations whose script failed to load, 'Stale' for managed records that no
+longer match the runtime, and 'Conflicted' for live runtime values that
+replaced a managed registration outside this module. ScriptPath names the
+completer script behind a lazy or imported registration and LoadError holds
+the failure message of a Failed record.
 
 .EXAMPLE
 PS> Get-Completer -CommandName 'git' -Native
@@ -77,6 +76,12 @@ PS> Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'
 Gets multiple command-parameter completer registrations in a single call.
 
 .EXAMPLE
+PS> Get-Completer -State Pending, Failed
+
+Lists the lazy registrations that have not loaded yet and the ones whose script
+failed to load, with the failure message in LoadError.
+
+.EXAMPLE
 PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer
 
 Gets the live registrations for the targets a completer script defines by
@@ -85,7 +90,7 @@ piping its import records back in.
 function Get-Completer
 {
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
-    [OutputType([pscustomobject])]
+    [OutputType('CompleterActions.CompleterRegistration')]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
@@ -105,19 +110,12 @@ function Get-Completer
         [switch] $Native,
 
         [Parameter()]
-        [switch] $ManagedOnly,
-
-        [Parameter()]
-        [switch] $DiscoveredOnly
+        [ValidateNotNullOrEmpty()]
+        [CompleterState[]] $State
     )
 
     begin
     {
-        if ($ManagedOnly -and $DiscoveredOnly)
-        {
-            throw 'ManagedOnly and DiscoveredOnly cannot be used together.'
-        }
-
         $registrationsByKey = [ordered] @{}
     }
 
@@ -157,35 +155,21 @@ function Get-Completer
                 $targets = @(Resolve-CompleterTargetList @targetParameters)
             }
 
-            if (-not $DiscoveredOnly)
+            if ($targets.Count -eq 0)
             {
-                if ($targets.Count -eq 0)
+                $managedRegistrations = @(Find-ManagedCompleterRegistration)
+                $discoveredRegistrations = @(Find-RuntimeCompleterRegistration)
+            }
+            else
+            {
+                foreach ($target in $targets)
                 {
-                    $managedRegistrations = @(Find-ManagedCompleterRegistration)
-                }
-                else
-                {
-                    foreach ($target in $targets)
-                    {
-                        $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
-                    }
+                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
+                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
                 }
             }
 
-            if (-not $ManagedOnly)
-            {
-                if ($targets.Count -eq 0)
-                {
-                    $discoveredRegistrations = @(Find-RuntimeCompleterRegistration)
-                }
-                else
-                {
-                    foreach ($target in $targets)
-                    {
-                        $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
-                    }
-                }
-            }
+            $snapshot = Get-CompleterRegistrationSnapshot
 
             foreach ($registration in $managedRegistrations)
             {
@@ -194,55 +178,31 @@ function Get-Completer
                     continue
                 }
 
-                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
+                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key -Snapshot $snapshot
 
-                if ($registrationState.ManagedState -in 'Active', 'Pending')
+                if ($registrationState.ManagedState -in 'Active', 'Pending', 'Failed')
                 {
-                    $registrationsByKey[[string] $registration.Key] = $registration
-                }
-                elseif ($registrationState.ManagedState -eq 'Failed' -and ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration))
-                {
-                    $registrationsByKey[[string] $registration.Key] = $registration
-                }
-                elseif ($ManagedOnly -or $null -eq $registrationState.RuntimeRegistration)
-                {
-                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                    $registrationsByKey["Managed:$($registration.Key)"] = $registration
                 }
                 else
                 {
-                    $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                    $registrationsByKey["Managed:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                }
+
+                if ($registrationState.ManagedState -in 'Stale', 'Failed' -and $null -ne $registrationState.RuntimeRegistration)
+                {
+                    $registrationsByKey["Discovered:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                 }
             }
 
             foreach ($registration in $discoveredRegistrations)
             {
-                if ($null -eq $registration)
+                if ($null -eq $registration -or $registrationsByKey.Contains("Managed:$($registration.Key)"))
                 {
                     continue
                 }
 
-                if ($registrationsByKey.Contains([string] $registration.Key))
-                {
-                    continue
-                }
-
-                if ($DiscoveredOnly)
-                {
-                    $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key
-
-                    if ($registrationState.ManagedState -in 'Active', 'Pending')
-                    {
-                        continue
-                    }
-
-                    if ($registrationState.ManagedState -in 'Stale', 'Failed')
-                    {
-                        $registrationsByKey[[string] $registration.Key] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
-                        continue
-                    }
-                }
-
-                $registrationsByKey[[string] $registration.Key] = $registration
+                $registrationsByKey["Discovered:$($registration.Key)"] = $registration
             }
         }
         catch
@@ -260,6 +220,12 @@ function Get-Completer
     end
     {
         $registrations = @($registrationsByKey.Values)
+
+        if ($PSBoundParameters.ContainsKey('State'))
+        {
+            $registrations = @($registrations | Where-Object { $State -contains $_.State })
+        }
+
         $totalCount = $registrations.Count
 
         if ($PSCmdlet.PagingParameters.IncludeTotalCount)

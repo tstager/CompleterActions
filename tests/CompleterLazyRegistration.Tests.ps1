@@ -184,8 +184,8 @@ Describe 'Lazy completer registration' {
         $resolved.State | Should -Be 'Pending'
         $resolved.Source | Should -Be 'Managed'
 
-        @(Get-Completer -ManagedOnly | Where-Object State -EQ 'Pending').Count | Should -Be 2
-        Get-Completer -CommandName 'importfixture' -Native -DiscoveredOnly | Should -BeNullOrEmpty
+        @(Get-Completer -State Pending).Count | Should -Be 2
+        Get-Completer -CommandName 'importfixture' -Native -State Discovered, Conflicted | Should -BeNullOrEmpty
     }
 
     It 'loads the script on the first tab press and later presses hit the real script block' {
@@ -294,7 +294,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
             Register-Completer -Path $script:ThrowingFixturePath -Lazy -Trusted
         } | Should -Throw '*-Trusted lazy registration requires explicit targets*'
 
-        Get-Completer -ManagedOnly | Should -BeNullOrEmpty
+        Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
     }
 
     It 'accepts explicit strict targets the script registers and rejects ones it does not' {
@@ -343,8 +343,8 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $failed.ScriptPath | Should -Be $script:ThrowingFixturePath
         $failed.LoadError | Should -Match 'lazy fixture import failure'
 
-        @(Get-Completer -ManagedOnly | Where-Object State -EQ 'Failed').Key | Should -Be @('test-lazytrustedtool:name')
-        Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -DiscoveredOnly | Should -BeNullOrEmpty
+        @(Get-Completer -State Failed).Key | Should -Be @('test-lazytrustedtool:name')
+        Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -State Discovered, Conflicted | Should -BeNullOrEmpty
     }
 
     It 'returns nothing and writes nothing to the error stream when the stub itself is invoked for a script that fails to load' {
@@ -459,7 +459,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
     It 'supports WhatIf without registering a stub' {
         Register-Completer -Path $script:NativeFixturePath -Lazy -WhatIf
 
-        Get-Completer -ManagedOnly | Should -BeNullOrEmpty
+        Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         Get-TestRuntimeScriptBlock -Key 'importfixture' | Should -BeNullOrEmpty
     }
 
@@ -532,8 +532,8 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
 
         $null = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
         $null = TabExpansion2 -InputScript 'Test-LazyTrustedTool -Name ' -CursorColumn 27
-        $null = @(Get-Completer -ManagedOnly)
-        Get-Completer -ManagedOnly | Unregister-Completer -Confirm:$false
+        $null = @(Get-Completer -State Active, Pending, Failed, Stale)
+        Get-Completer -State Active, Pending, Failed, Stale | Unregister-Completer -Confirm:$false
 
         $after = Get-TestPSReadLineKeyHandlerSnapshot
 

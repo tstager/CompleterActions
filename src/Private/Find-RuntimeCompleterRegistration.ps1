@@ -95,7 +95,7 @@ function Find-RuntimeCompleterRegistration
             foreach ($entry in $runtime.NativeArgumentCompleters.GetEnumerator())
             {
                 $target = Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key) -Native
-                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered'))
+                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered' -State Discovered))
             }
         }
 
@@ -110,7 +110,7 @@ function Find-RuntimeCompleterRegistration
                 }
 
                 $target = Resolve-CompleterTarget -RuntimeKey ([string] $entry.Key)
-                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered'))
+                $registrations.Add((New-CompleterRegistrationRecord -Target $target -ScriptBlock $entry.Value -Source 'Discovered' -State Discovered))
             }
         }
 
@@ -129,7 +129,7 @@ function Find-RuntimeCompleterRegistration
                 {
                     if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
                     }
                 }
             }
@@ -145,7 +145,7 @@ function Find-RuntimeCompleterRegistration
 
                     if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
                     {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered'
+                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
                     }
                 }
             }
@@ -178,5 +178,5 @@ function Find-RuntimeCompleterRegistration
         return
     }
 
-    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered'
+    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered' -State Discovered
 }

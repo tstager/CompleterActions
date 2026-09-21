@@ -25,8 +25,10 @@ from Import-CompleterScript.
 
 .PARAMETER State
 Describes how the record relates to the live runtime. 'Active' records describe
-the value PowerShell is currently using. 'Pending' marks a lazy registration
-whose runtime value is still the stub that loads the script on first use.
+a managed registration whose value PowerShell is currently using. 'Discovered'
+marks a runtime value that no managed record describes. 'Pending' marks a lazy
+registration whose runtime value is still the stub that loads the script on
+first use.
 'Failed' marks a lazy registration whose script failed to load; its runtime
 entry was removed and LoadError holds the reason. 'Stale' marks a managed
 record whose stored script no longer matches the runtime because the target
@@ -76,8 +78,7 @@ function New-CompleterRegistrationRecord
         [System.Management.Automation.PSModuleInfo] $ImportModule,
 
         [Parameter()]
-        [ValidateSet('Active', 'Pending', 'Failed', 'Stale', 'Conflicted')]
-        [string] $State = 'Active',
+        [CompleterState] $State = 'Active',
 
         [Parameter()]
         [string] $ScriptPath,
