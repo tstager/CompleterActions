@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.0.0-rc1] - 2026-09-21
+
 The 2.0.0 breaking surface. Every incompatible change of the 2.x line lands
 here at once, with aliases for the old names, so there is one migration to
 make; `about_CompleterActions_Migration` walks through it with before and
