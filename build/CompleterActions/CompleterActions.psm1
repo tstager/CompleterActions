@@ -1,3 +1,19 @@
+enum CompleterState
+{
+    Active
+    Stale
+    Conflicted
+    Pending
+    Failed
+    Discovered
+}
+
+enum CompleterType
+{
+    Native
+    Parameter
+}
+
 class CompleterRegistration
 {
     CompleterRegistration()
@@ -24,54 +40,7 @@ class CompleterRegistration
     [scriptblock] $ScriptBlock = $null
     [string] $ScriptText
 }
-class CompleterScriptFinding
-{
-    CompleterScriptFinding()
-    {
-        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompleterScriptFinding')
-    }
 
-    [string] $Path
-    [int] $Line
-    [int] $Column
-    [string] $Severity
-    [string] $Construct
-    [string] $Message
-    [string] $Hint
-}
-enum CompleterState
-{
-    Active
-    Stale
-    Conflicted
-    Pending
-    Failed
-    Discovered
-}
-enum CompleterType
-{
-    Native
-    Parameter
-}
-class CompletionMatch
-{
-    CompletionMatch()
-    {
-        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompletionMatch')
-    }
-
-    [string] $Key
-    [string] $RuntimeKey
-    [string] $CommandName
-    [string] $ParameterName
-    [CompleterType] $CompleterType
-    [string] $InputText
-    [int] $CursorPosition
-    [string] $CompletionText
-    [string] $ListItemText
-    [System.Management.Automation.CompletionResultType] $ResultType
-    [string] $ToolTip
-}
 class ImportedCompleterRegistration
 {
     ImportedCompleterRegistration()
@@ -95,6 +64,42 @@ class ImportedCompleterRegistration
     [System.Management.Automation.PSModuleInfo] $ImportModule = $null
     [scriptblock] $ScriptBlock = $null
     [string] $ScriptText
+}
+
+class CompleterScriptFinding
+{
+    CompleterScriptFinding()
+    {
+        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompleterScriptFinding')
+    }
+
+    [string] $Path
+    [int] $Line
+    [int] $Column
+    [string] $Severity
+    [string] $Construct
+    [string] $Message
+    [string] $Hint
+}
+
+class CompletionMatch
+{
+    CompletionMatch()
+    {
+        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompletionMatch')
+    }
+
+    [string] $Key
+    [string] $RuntimeKey
+    [string] $CommandName
+    [string] $ParameterName
+    [CompleterType] $CompleterType
+    [string] $InputText
+    [int] $CursorPosition
+    [string] $CompletionText
+    [string] $ListItemText
+    [System.Management.Automation.CompletionResultType] $ResultType
+    [string] $ToolTip
 }
 <#
 .SYNOPSIS

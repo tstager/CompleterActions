@@ -69,6 +69,17 @@ Describe 'Completer classes' {
         { [CompleterRegistration]::new() } | Should -Throw
     }
 
+    It 'parses <Name> on its own without type errors' -TestCases @(
+        Get-ChildItem -Path (Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'src/Classes') -Filter '*.ps1' -File |
+            ForEach-Object { @{ Name = $_.Name; Path = $_.FullName } }
+    ) {
+        $tokens = $null
+        $parseErrors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref] $tokens, [ref] $parseErrors)
+
+        @($parseErrors | ForEach-Object { "$($_.ErrorId) at line $($_.Extent.StartLineNumber): $($_.Message)" }) | Should -BeNullOrEmpty -Because 'PSScriptAnalyzer parses each file alone, so every type a class uses must be defined in the same file'
+    }
+
     It 'defines every class and enum before the first function in the packaged module' {
         $builtModuleLines = @(Get-Content -LiteralPath (Join-Path -Path $script:RepoRoot -ChildPath 'build/CompleterActions/CompleterActions.psm1'))
         $firstFunctionLine = ($builtModuleLines | Select-String -Pattern '^\s*function\b' | Select-Object -First 1).LineNumber

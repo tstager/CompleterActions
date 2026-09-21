@@ -17,7 +17,7 @@ Roadmap: `docs/roadmap-2.0.md`, milestone 4. Ships as `v2.0.0-rc1` first, then `
 
 ## Class and enum model
 
-New folder `src/Classes`, one file per type, loaded before `Private` and `Public` in both the source psm1 and the packaged psm1.
+New folder `src/Classes`, loaded before `Private` and `Public` in both the source psm1 and the packaged psm1. Review round 1 collapsed the six files below into one, `src/Classes/CompleterTypes.ps1`, because PSScriptAnalyzer parses each file alone and reports an enum from a sibling file as a `TypeNotFound` parse error that fails the CI lint gate.
 
 | File | Type |
 | --- | --- |
