@@ -149,6 +149,13 @@ Describe 'Completer registration public API' {
         $help.Synopsis | Should -Match 'import standalone completer scripts'
     }
 
+    It 'loads the about help topic for the 2.0 migration' {
+        $help = Get-Help -Name 'about_CompleterActions_Migration' -ErrorAction Stop
+
+        $help.Name | Should -Be 'about_CompleterActions_Migration'
+        $help.Synopsis | Should -Match 'changed in CompleterActions 2.0.0'
+    }
+
     It 'treats repeated registration with the same script block as idempotent' {
         $scriptBlock = {
             param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)

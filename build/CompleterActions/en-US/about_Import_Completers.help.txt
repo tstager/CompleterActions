@@ -16,7 +16,7 @@ LONG DESCRIPTION
     objects.
 
     Those output objects pipe directly into
-    `Register-CompleterRegistration -InputObject`. This lets you move an
+    `Register-Completer -InputObject`. This lets you move an
     existing script into the module's managed workflow while keeping the live
     runtime unchanged until you explicitly register the imported definitions.
 
@@ -70,7 +70,7 @@ THE TRUSTED TIER
     it":
 
         Import-CompleterScript -Path .\git_completer.ps1 -Trusted |
-            Register-CompleterRegistration
+            Register-Completer
 
     Under `-Trusted`:
 
@@ -115,11 +115,11 @@ WHEN TO USE IMPORT-COMPLETERSCRIPT
     - convert old standalone completer scripts into managed registrations
     - preserve helper functions and script-scope state used by the completer
     - register the imported definitions later with
-      `Register-CompleterRegistration`
+      `Register-Completer`
 
     Do not use `Import-CompleterScript` if you only need to create a new
     completer from a script block you already have in memory. In that case, call
-    `Register-CompleterRegistration` directly.
+    `Register-Completer` directly.
 
 HOW IMPORT-COMPLETERSCRIPT WORKS
 
@@ -162,7 +162,7 @@ OUTPUT OBJECTS
 
     Each imported object is a
     `CompleterActions.ImportedCompleterRegistration` record with properties that
-    are ready for `Register-CompleterRegistration -InputObject`.
+    are ready for `Register-Completer -InputObject`.
 
     The most useful properties are:
 
@@ -548,7 +548,7 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
     Importing and registering a completer proves that the script ran. It does
     not prove that pressing Tab produces the right answers.
     `Test-CompleterRegistration` closes that gap: it resolves a target the
-    same way `Get-CompleterRegistration` does, checks that a live runtime
+    same way `Get-Completer` does, checks that a live runtime
     registration exists for it, runs `TabExpansion2` for the input you give
     it, and returns the matches as `CompleterActions.CompletionMatch` objects:
 
@@ -569,7 +569,7 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
     Registration records pipe in directly, and `-CursorPosition` moves the
     cursor away from the end of the input when the completion depends on it:
 
-        Get-CompleterRegistration -CommandName Invoke-DemoTool `
+        Get-Completer -CommandName Invoke-DemoTool `
             -ParameterName Name |
             Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
 
@@ -597,16 +597,16 @@ BASIC WORKFLOW
     2. Run `Test-CompleterScript` over the completer scripts. Fix the findings
        using the three shapes, or decide to import with `-Trusted`.
     3. Import the scripts with `Import-CompleterScript`.
-    4. Pipe the results into `Register-CompleterRegistration`.
+    4. Pipe the results into `Register-Completer`.
     5. Verify with `Test-CompleterRegistration` and inspect with
-       `Get-CompleterRegistration`.
+       `Get-Completer`.
 
 EXAMPLE 1
 
     Import a single parameter completer script and register it:
 
         Import-CompleterScript -Path .\MyTool.Completer.ps1 |
-            Register-CompleterRegistration -PassThru
+            Register-Completer -PassThru
 
     `-PassThru` returns the managed registration records so you can inspect the
     final registrations that were created.
@@ -630,7 +630,7 @@ EXAMPLE 3
 
         Get-ChildItem -Path ~\Completers -Recurse -Filter *_completer.ps1 |
             Import-CompleterScript -Trusted |
-            Register-CompleterRegistration
+            Register-Completer
 
     `Import-CompleterScript` accepts property-name binding from `FullName`, so
     `FileInfo` objects from `Get-ChildItem` work directly.
@@ -642,7 +642,7 @@ EXAMPLE 4
         Test-CompleterScript -Path .\demo_completer.ps1
         # ...fix the findings...
         Import-CompleterScript -Path .\demo_completer.ps1 |
-            Register-CompleterRegistration
+            Register-Completer
         Test-CompleterRegistration -CommandName demo -Native -InputText 'demo a'
 
 EXAMPLE 5
@@ -692,6 +692,7 @@ SEE ALSO
     Get-Help Import-CompleterScript -Full
     Get-Help Test-CompleterScript -Full
     Get-Help Test-CompleterRegistration -Full
-    Get-Help Register-CompleterRegistration -Full
-    Get-Help Get-CompleterRegistration -Full
+    Get-Help Register-Completer -Full
+    Get-Help Get-Completer -Full
+    about_CompleterActions_Migration
     Register-ArgumentCompleter
