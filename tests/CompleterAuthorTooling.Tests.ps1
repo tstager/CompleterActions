@@ -285,11 +285,11 @@ Describe 'Test-CompleterRegistration' {
         $matches[0].RuntimeKey | Should -Be 'importfixture'
     }
 
-    It 'accepts a piped registration record and a registration key' {
+    It 'accepts a piped registration record and a key-bearing input object with a native indicator' {
         $piped = @(Get-CompleterRegistration -CommandName 'importfixture' -Native | Test-CompleterRegistration -InputText 'importfixture b')
         @($piped.CompletionText) | Should -Be @('beta')
 
-        $byKey = @(Test-CompleterRegistration -Key 'importfixture' -InputText 'importfixture b')
+        $byKey = @(Test-CompleterRegistration -InputObject ([pscustomobject] @{ Key = 'importfixture'; IsNative = $true }) -InputText 'importfixture b')
         @($byKey.CompletionText) | Should -Be @('beta')
     }
 
@@ -314,9 +314,9 @@ Describe 'Test-CompleterRegistration' {
     }
 
     It 'refuses more than one target per call instead of stamping one completion onto every target (<Name>)' -TestCases @(
-        @{ Name = 'array key'; Run = { Test-CompleterRegistration -Key 'importfixture', 'Test-ImportedFixtureTool:Name' -InputText 'importfixture a' } },
+        @{ Name = 'input object array'; Run = { Test-CompleterRegistration -InputObject @([pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true }, [pscustomobject] @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name' }) -InputText 'importfixture a' } },
         @{ Name = 'array command name'; Run = { Test-CompleterRegistration -CommandName 'importfixture', 'Test-ImportedFixtureTool' -Native -InputText 'importfixture a' } },
-        @{ Name = 'piped records'; Run = { Get-CompleterRegistration -Key 'importfixture', 'Test-ImportedFixtureTool:Name' | Test-CompleterRegistration -InputText 'importfixture a' } }
+        @{ Name = 'piped records'; Run = { @(Get-CompleterRegistration -CommandName 'importfixture' -Native) + @(Get-CompleterRegistration -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name') | Test-CompleterRegistration -InputText 'importfixture a' } }
     ) {
         param($Run)
 

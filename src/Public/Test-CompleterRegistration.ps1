@@ -21,14 +21,8 @@ registration, and it never touches PSReadLine.
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
 returned by Get-CompleterRegistration or Import-CompleterScript. The object
-must expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Identifies the target by registration key. A key without a colon is treated
-as a native command. A key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'.
+must expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies the command name of the native or command-parameter completer
@@ -84,11 +78,6 @@ function Test-CompleterRegistration
         [ValidateNotNull()]
         [object[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
-
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
@@ -137,12 +126,6 @@ function Test-CompleterRegistration
 
             switch ($PSCmdlet.ParameterSetName)
             {
-                'ByKey'
-                {
-                    $targetParameters['Key'] = $Key
-                    break
-                }
-
                 'Native'
                 {
                     $targetParameters['CommandName'] = $CommandName

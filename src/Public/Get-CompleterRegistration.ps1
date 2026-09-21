@@ -3,8 +3,9 @@
 Gets completer registrations known to the module or discovered at runtime.
 
 .DESCRIPTION
-Returns completer registration records for all registrations, specific
-registration keys, native command completers, or command parameter completers.
+Returns completer registration records for all registrations, native command
+completers, command parameter completers, or the targets described by piped
+registration records.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
 to the same target and the managed record still matches the live runtime value.
@@ -16,8 +17,11 @@ was removed outside this module, the managed record is returned with State
 'Pending' until their script loads on the first tab press and 'Failed' when
 that load failed; a Failed record has no runtime entry and carries the error
 in LoadError. Both are returned by default and by -ManagedOnly. The command
-accepts arrays for key, command, and parameter lookup scenarios and supports
-property-name pipeline binding for key-based and target-based lookups.
+accepts arrays for command and parameter lookups, and records piped back from
+Get-CompleterRegistration or Import-CompleterScript resolve through their Key
+and IsNative properties. Keys are output-only identifiers: a hand-typed key
+string is not accepted, so name the target with -CommandName plus -Native or
+-ParameterName instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -27,13 +31,11 @@ name; such registrations are not returned and are reported with -Verbose as
 they are skipped, so they never prevent the supported registrations from being
 listed.
 
-.PARAMETER Key
-Gets the registrations that match one or more registration keys. A key without
-a colon is treated as a native command. A key with a colon is treated as a
-'Command:Parameter' target unless the text after its last colon contains a
-path separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
-the key shape is ambiguous.
+.PARAMETER InputObject
+Supplies one or more objects that describe the registrations to get, such as
+records returned by Get-CompleterRegistration or Import-CompleterScript. An
+input object exposes CommandName with IsNative/Native or ParameterName, or a
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter
@@ -70,19 +72,24 @@ Gets the registration record for the native completer currently associated with
 git.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
+PS> Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'
 
-Gets multiple completer registrations by key in a single call.
+Gets multiple command-parameter completer registrations in a single call.
+
+.EXAMPLE
+PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration
+
+Gets the live registrations for the targets a completer script defines by
+piping its import records back in.
 #>
 function Get-CompleterRegistration
 {
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -122,18 +129,16 @@ function Get-CompleterRegistration
 
         try
         {
-            if ($PSCmdlet.ParameterSetName -ne 'All')
+            if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+            {
+                $targets = @($InputObject | Resolve-CompleterInputObject | ForEach-Object { $_.Target })
+            }
+            elseif ($PSCmdlet.ParameterSetName -ne 'All')
             {
                 $targetParameters = @{}
 
                 switch ($PSCmdlet.ParameterSetName)
                 {
-                    'ByKey'
-                    {
-                        $targetParameters['Key'] = $Key
-                        break
-                    }
-
                     'Native'
                     {
                         $targetParameters['CommandName'] = $CommandName

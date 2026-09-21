@@ -354,8 +354,9 @@ function Export-CompleterSet
 Gets completer registrations known to the module or discovered at runtime.
 
 .DESCRIPTION
-Returns completer registration records for all registrations, specific
-registration keys, native command completers, or command parameter completers.
+Returns completer registration records for all registrations, native command
+completers, command parameter completers, or the targets described by piped
+registration records.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
 to the same target and the managed record still matches the live runtime value.
@@ -367,8 +368,11 @@ was removed outside this module, the managed record is returned with State
 'Pending' until their script loads on the first tab press and 'Failed' when
 that load failed; a Failed record has no runtime entry and carries the error
 in LoadError. Both are returned by default and by -ManagedOnly. The command
-accepts arrays for key, command, and parameter lookup scenarios and supports
-property-name pipeline binding for key-based and target-based lookups.
+accepts arrays for command and parameter lookups, and records piped back from
+Get-CompleterRegistration or Import-CompleterScript resolve through their Key
+and IsNative properties. Keys are output-only identifiers: a hand-typed key
+string is not accepted, so name the target with -CommandName plus -Native or
+-ParameterName instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -378,13 +382,11 @@ name; such registrations are not returned and are reported with -Verbose as
 they are skipped, so they never prevent the supported registrations from being
 listed.
 
-.PARAMETER Key
-Gets the registrations that match one or more registration keys. A key without
-a colon is treated as a native command. A key with a colon is treated as a
-'Command:Parameter' target unless the text after its last colon contains a
-path separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
-the key shape is ambiguous.
+.PARAMETER InputObject
+Supplies one or more objects that describe the registrations to get, such as
+records returned by Get-CompleterRegistration or Import-CompleterScript. An
+input object exposes CommandName with IsNative/Native or ParameterName, or a
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter
@@ -421,9 +423,15 @@ Gets the registration record for the native completer currently associated with
 git.
 
 .EXAMPLE
-PS> Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
+PS> Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'
 
-Gets multiple completer registrations by key in a single call.
+Gets multiple command-parameter completer registrations in a single call.
+
+.EXAMPLE
+PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration
+
+Gets the live registrations for the targets a completer script defines by
+piping its import records back in.
 #>
 function Get-CompleterRegistration
 <#
@@ -433,10 +441,9 @@ function Get-CompleterRegistration
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -476,18 +483,16 @@ function Get-CompleterRegistration
 
         try
         {
-            if ($PSCmdlet.ParameterSetName -ne 'All')
+            if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+            {
+                $targets = @($InputObject | Resolve-CompleterInputObject | ForEach-Object { $_.Target })
+            }
+            elseif ($PSCmdlet.ParameterSetName -ne 'All')
             {
                 $targetParameters = @{}
 
                 switch ($PSCmdlet.ParameterSetName)
                 {
-                    'ByKey'
-                    {
-                        $targetParameters['Key'] = $Key
-                        break
-                    }
-
                     'Native'
                     {
                         $targetParameters['CommandName'] = $CommandName
@@ -1024,14 +1029,11 @@ hooks key handlers, replaces TabExpansion2, or changes PSReadLine options.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
-expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
-property whose value is a script block. When only a key is supplied and no
-IsNative/Native property is present, a key without a colon is treated as a
-native command, and a key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'. An
-explicit IsNative/Native property always wins. ScriptPath or SourcePath and
+expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native, and must expose a
+ScriptBlock property whose value is a script block. A key without a native
+indicator is rejected; keys are output-only identifiers and are never
+classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record.
 
@@ -1342,14 +1344,8 @@ registration, and it never touches PSReadLine.
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
 returned by Get-CompleterRegistration or Import-CompleterScript. The object
-must expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Identifies the target by registration key. A key without a colon is treated
-as a native command. A key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'.
+must expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies the command name of the native or command-parameter completer
@@ -1408,11 +1404,6 @@ function Test-CompleterRegistration
         [ValidateNotNull()]
         [object[]] $InputObject,
 
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
-
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
@@ -1461,12 +1452,6 @@ function Test-CompleterRegistration
 
             switch ($PSCmdlet.ParameterSetName)
             {
-                'ByKey'
-                {
-                    $targetParameters['Key'] = $Key
-                    break
-                }
-
                 'Native'
                 {
                     $targetParameters['CommandName'] = $CommandName
@@ -1606,8 +1591,8 @@ function Test-CompleterScript
 Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
-Removes completer registrations identified by registration key, native command,
-command parameter target, or pipeline InputObject values. Managed registrations
+Removes completer registrations identified by native command, command
+parameter target, or pipeline InputObject values. Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table. Runtime-only registrations require -AllowUnmanaged before they can be
 removed. The same gate applies when a managed record is stale because the
@@ -1617,21 +1602,15 @@ When the runtime registration was already removed outside this module, only
 the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
-its managed record is removed. The command supports array inputs for keys and
-target fields, plus pipeline input from Get-CompleterRegistration output.
+its managed record is removed. The command supports array inputs for the
+target fields, plus pipeline input from Get-CompleterRegistration output. Keys
+are output-only identifiers: a hand-typed key string is not accepted, so name
+the target with -CommandName plus -Native or -ParameterName instead.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
-objects can expose Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Removes the registrations that match one or more registration keys. A key
-without a colon is treated as a native command. A key with a colon is treated
-as a 'Command:Parameter' target unless the text after its last colon contains
-a path separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
-the key shape is ambiguous.
+objects expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.
@@ -1661,17 +1640,12 @@ function Unregister-CompleterRegistration
 .EXTERNALHELP CompleterActions-help.xml
 #>
 {
-    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'ByKey', ConfirmImpact = 'Medium')]
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
         [object[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -1709,12 +1683,6 @@ function Unregister-CompleterRegistration
 
                 switch ($PSCmdlet.ParameterSetName)
                 {
-                    'ByKey'
-                    {
-                        $targetParameters['Key'] = $Key
-                        break
-                    }
-
                     'Native'
                     {
                         $targetParameters['CommandName'] = $CommandName
@@ -4119,8 +4087,11 @@ Resolves a pipeline input object into a completer target definition.
 .DESCRIPTION
 Normalizes public pipeline input into the target metadata used by the module's
 registration, lookup, and removal commands. The helper accepts module
-registration records and custom objects that expose either key-based target
-properties or command/parameter metadata. A ScriptBlock, ImportModule,
+registration records and custom objects that expose CommandName with
+IsNative/Native or ParameterName, or a Key, RegistrationKey, or RuntimeKey
+together with IsNative/Native. Keys are output-only identifiers, so a key
+without a native indicator is rejected rather than classified by its shape.
+A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
 so imported and managed records round-trip into Register-CompleterRegistration.
 
@@ -4159,7 +4130,6 @@ function Resolve-CompleterInputObject
     process
     {
         $keyValue = $null
-        $runtimeKey = $null
         $commandName = $null
         $parameterName = $null
         $hasNativeIndicator = $false
@@ -4177,15 +4147,7 @@ function Resolve-CompleterInputObject
                 $property = $InputObject.PSObject.Properties[$propertyName]
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                 {
-                    if ($propertyName -eq 'RuntimeKey')
-                    {
-                        $runtimeKey = [string] $property.Value
-                    }
-                    else
-                    {
-                        $keyValue = [string] $property.Value
-                    }
-
+                    $keyValue = [string] $property.Value
                     break
                 }
             }
@@ -4261,36 +4223,14 @@ function Resolve-CompleterInputObject
                     throw 'InputObject must expose ParameterName for command-parameter targets or IsNative/Native for native targets.'
                 }
             }
-            elseif (-not [string]::IsNullOrWhiteSpace($runtimeKey))
-            {
-                if ($hasNativeIndicator -and $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
-                }
-                elseif ($hasNativeIndicator -and -not $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
-                }
-                elseif (Test-CompleterNativeKeyShape -Key $runtimeKey)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
-                }
-                else
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
-                }
-            }
             elseif (-not [string]::IsNullOrWhiteSpace($keyValue))
             {
-                if ($hasNativeIndicator -and $isNative)
+                if (-not $hasNativeIndicator)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                    throw "InputObject supplies the key '$keyValue' without an IsNative or Native property. Keys are output-only identifiers and are no longer classified by their shape: add IsNative or Native alongside the key, or supply CommandName with Native or ParameterName. See about_CompleterActions_Migration."
                 }
-                elseif ($hasNativeIndicator -and -not $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
-                }
-                elseif (Test-CompleterNativeKeyShape -Key $keyValue)
+
+                if ($isNative)
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
@@ -4301,7 +4241,7 @@ function Resolve-CompleterInputObject
             }
             else
             {
-                throw 'InputObject must expose Key, RegistrationKey, RuntimeKey, or CommandName.'
+                throw 'InputObject must expose CommandName with Native or ParameterName, or Key, RegistrationKey, or RuntimeKey with IsNative or Native.'
             }
 
             [pscustomobject] [ordered] @{
@@ -4321,7 +4261,6 @@ function Resolve-CompleterInputObject
         finally
         {
             $keyValue = $null
-            $runtimeKey = $null
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
@@ -5145,9 +5084,6 @@ throughout the module. Command and parameter arrays are paired by position when
 they have matching lengths, or broadcast when either side contains a single
 value.
 
-.PARAMETER Key
-One or more normalized or runtime keys to resolve.
-
 .PARAMETER CommandName
 One or more command names to resolve.
 
@@ -5165,13 +5101,9 @@ function Resolve-CompleterTargetList
 .EXTERNALHELP CompleterActions-help.xml
 #>
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
-
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
         [ValidateNotNullOrEmpty()]
@@ -5187,22 +5119,6 @@ function Resolve-CompleterTargetList
 
     switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey'
-        {
-            foreach ($keyItem in $Key)
-            {
-                if (Test-CompleterNativeKeyShape -Key $keyItem)
-                {
-                    Resolve-CompleterTarget -RuntimeKey $keyItem -Native
-                    continue
-                }
-
-                Resolve-CompleterTarget -RuntimeKey $keyItem
-            }
-
-            break
-        }
-
         'Native'
         {
             foreach ($commandNameItem in $CommandName)
@@ -5271,63 +5187,6 @@ function Set-CompleterRuntimeDictionaryValue
     $Dictionary[$Key] = $Value
 
     return $Dictionary[$Key]
-}
-<#
-.SYNOPSIS
-Determines whether a key-only input should be treated as a native completer target.
-
-.DESCRIPTION
-Applies the module's shared rule for classifying a key when no explicit native
-indicator is available. A key without a colon is a native command name. A key
-with a colon is still native when the text after its last colon contains a path
-separator, because a 'Command:Parameter' key never contains a path separator in
-its parameter part; this covers drive-qualified paths such as
-'C:\tools\example.exe' with either separator. Every other colon-bearing key,
-including a drive-qualified path followed by ':Parameter', is a
-command-parameter target.
-
-.PARAMETER Key
-The registration or runtime key to classify.
-
-.OUTPUTS
-System.Boolean
-Returns $true when the key should be resolved as a native completer target.
-
-.EXAMPLE
-Test-CompleterNativeKeyShape -Key 'C:\tools\example.exe'
-
-Returns $true because the key is a drive-qualified native path.
-
-.EXAMPLE
-Test-CompleterNativeKeyShape -Key 'Get-Item:Path'
-
-Returns $false because the key is a command-parameter key.
-
-.NOTES
-Resolve-CompleterTargetList and Resolve-CompleterInputObject both use this
-helper so key-only inputs classify identically on every public path.
-#>
-function Test-CompleterNativeKeyShape
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding()]
-    [OutputType([bool])]
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key
-    )
-
-    if ($Key -notmatch ':')
-    {
-        return $true
-    }
-
-    $parameterPart = $Key.Substring($Key.LastIndexOf(':') + 1)
-
-    return $parameterPart.IndexOfAny([char[]] @('\', '/')) -ge 0
 }
 <#
 .SYNOPSIS

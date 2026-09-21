@@ -27,14 +27,7 @@ Test-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> -In
 ### InputObject
 
 ```PowerShell
-Test-CompleterRegistration -InputObject <psobject[]> -InputText <string> [-CursorPosition <int>]
- [<CommonParameters>]
-```
-
-### ByKey
-
-```PowerShell
-Test-CompleterRegistration -Key <string[]> -InputText <string> [-CursorPosition <int>]
+Test-CompleterRegistration -InputObject <Object[]> -InputText <string> [-CursorPosition <int>]
  [<CommonParameters>]
 ```
 
@@ -148,8 +141,8 @@ HelpMessage: ''
 
 Supplies an object that describes the completer target, such as a record
 returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
-must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
-`CommandName`/`ParameterName` plus `IsNative`/`Native`.
+must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
+`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.
 
 ```yaml
 Type: System.Object[]
@@ -185,31 +178,6 @@ ParameterSets:
   IsRequired: true
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: false
-  ValueFromRemainingArguments: false
-DontShow: false
-AcceptedValues: []
-HelpMessage: ''
-```
-
-### -Key
-
-Identifies the target by registration key. A key without a colon is treated
-as a native command. A key with a colon is treated as a `Command:Parameter`
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as `C:\tools\example.exe`.
-
-```yaml
-Type: System.String[]
-DefaultValue: ''
-SupportsWildcards: false
-Aliases:
-- RegistrationKey
-ParameterSets:
-- Name: ByKey
-  Position: Named
-  IsRequired: true
-  ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []

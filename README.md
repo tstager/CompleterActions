@@ -218,7 +218,7 @@ Register-CompleterRegistration `
 # Remove a managed registration
 Unregister-CompleterRegistration -CommandName Invoke-DemoTool -ParameterName Name -Confirm:$false
 
-# Remove by key
+# Remove by piping a registration record back in
 Get-CompleterRegistration -CommandName demoexe -Native |
     Unregister-CompleterRegistration -Confirm:$false
 
@@ -278,7 +278,7 @@ Get-CompleterRegistration -Skip 10 -First 10 -IncludeTotalCount
 
 Pipeline highlights:
 
-- `Get-CompleterRegistration` supports property-name binding for key, command, and parameter lookups
+- `Get-CompleterRegistration` accepts registration records from `Get-CompleterRegistration` and `Import-CompleterScript` through `InputObject`, and property-name binding for command and parameter lookups; keys are output-only identifiers and are never accepted as typed input
 - `Import-CompleterScript` emits input objects that are ready for `Register-CompleterRegistration -InputObject`
 - `Export-CompleterSet` accepts records from `Get-CompleterRegistration` and `Import-CompleterScript`; `Import-CompleterSet` accepts `Get-ChildItem` output through `FullName` binding
 - `Test-CompleterScript` accepts `Get-ChildItem` output directly through `FullName` binding

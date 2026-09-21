@@ -3,8 +3,8 @@
 Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
-Removes completer registrations identified by registration key, native command,
-command parameter target, or pipeline InputObject values. Managed registrations
+Removes completer registrations identified by native command, command
+parameter target, or pipeline InputObject values. Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table. Runtime-only registrations require -AllowUnmanaged before they can be
 removed. The same gate applies when a managed record is stale because the
@@ -14,21 +14,15 @@ When the runtime registration was already removed outside this module, only
 the stale managed record remains and it is removed without the gate. A Pending
 lazy registration is removed like any managed registration, stub and record
 together. A Failed lazy registration has no runtime entry of its own, so only
-its managed record is removed. The command supports array inputs for keys and
-target fields, plus pipeline input from Get-CompleterRegistration output.
+its managed record is removed. The command supports array inputs for the
+target fields, plus pipeline input from Get-CompleterRegistration output. Keys
+are output-only identifiers: a hand-typed key string is not accepted, so name
+the target with -CommandName plus -Native or -ParameterName instead.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
-objects can expose Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
-
-.PARAMETER Key
-Removes the registrations that match one or more registration keys. A key
-without a colon is treated as a native command. A key with a colon is treated
-as a 'Command:Parameter' target unless the text after its last colon contains
-a path separator, in which case it is treated as a native command path such as
-'C:\tools\example.exe'. Use -CommandName with -Native or -ParameterName when
-the key shape is ambiguous.
+objects expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.
@@ -55,17 +49,12 @@ records.
 #>
 function Unregister-CompleterRegistration
 {
-    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'ByKey', ConfirmImpact = 'Medium')]
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
         [ValidateNotNull()]
         [object[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'ByKey', ValueFromPipelineByPropertyName)]
-        [Alias('RegistrationKey')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
 
         [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
@@ -103,12 +92,6 @@ function Unregister-CompleterRegistration
 
                 switch ($PSCmdlet.ParameterSetName)
                 {
-                    'ByKey'
-                    {
-                        $targetParameters['Key'] = $Key
-                        break
-                    }
-
                     'Native'
                     {
                         $targetParameters['CommandName'] = $CommandName

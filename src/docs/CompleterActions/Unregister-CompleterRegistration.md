@@ -17,25 +17,18 @@ Removes completer registrations from runtime and, when applicable, module state.
 
 ## SYNTAX
 
-### ByKey (Default)
+### CommandParameter (Default)
 
 ```PowerShell
-Unregister-CompleterRegistration -Key <string[]> [-AllowUnmanaged] [-PassThru] [-WhatIf] [-Confirm]
- [<CommonParameters>]
+Unregister-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> [-AllowUnmanaged]
+ [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### InputObject
 
 ```PowerShell
-Unregister-CompleterRegistration -InputObject <psobject[]> [-AllowUnmanaged] [-PassThru] [-WhatIf]
+Unregister-CompleterRegistration -InputObject <Object[]> [-AllowUnmanaged] [-PassThru] [-WhatIf]
  [-Confirm] [<CommonParameters>]
-```
-
-### CommandParameter
-
-```PowerShell
-Unregister-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> [-AllowUnmanaged]
- [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### Native
@@ -51,8 +44,8 @@ This cmdlet has the following aliases,
 
 ## DESCRIPTION
 
-Removes completer registrations identified by registration key, native command,
-command parameter target, or pipeline InputObject values.
+Removes completer registrations identified by native command, command
+parameter target, or pipeline InputObject values.
 Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table.
@@ -66,8 +59,10 @@ stale managed record remains and it is removed without the gate.
 A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
-The command supports array inputs for keys and target fields, plus
-pipeline input from Get-CompleterRegistration output.
+The command supports array inputs for the target fields, plus pipeline input
+from Get-CompleterRegistration output. Keys are output-only identifiers: a
+hand-typed key string is not accepted, so name the target with -CommandName
+plus -Native or -ParameterName instead.
 
 ## EXAMPLES
 
@@ -146,9 +141,8 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies one or more objects that describe registrations to remove.
-Input
-objects can expose Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.
+Input objects expose CommandName with IsNative/Native or ParameterName, or a
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 ```yaml
 Type: System.Object[]
@@ -161,28 +155,6 @@ ParameterSets:
   IsRequired: true
   ValueFromPipeline: true
   ValueFromPipelineByPropertyName: false
-  ValueFromRemainingArguments: false
-DontShow: false
-AcceptedValues: []
-HelpMessage: ''
-```
-
-### -Key
-
-Removes the registrations that match one or more registration keys.
-
-```yaml
-Type: System.String[]
-DefaultValue: ''
-SupportsWildcards: false
-Aliases:
-- RegistrationKey
-ParameterSets:
-- Name: ByKey
-  Position: Named
-  IsRequired: true
-  ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []

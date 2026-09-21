@@ -40,14 +40,11 @@ hooks key handlers, replaces TabExpansion2, or changes PSReadLine options.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
-expose target metadata through Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native, and must expose a ScriptBlock
-property whose value is a script block. When only a key is supplied and no
-IsNative/Native property is present, a key without a colon is treated as a
-native command, and a key with a colon is treated as a 'Command:Parameter'
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as 'C:\tools\example.exe'. An
-explicit IsNative/Native property always wins. ScriptPath or SourcePath and
+expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native, and must expose a
+ScriptBlock property whose value is a script block. A key without a native
+indicator is rejected; keys are output-only identifiers and are never
+classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record.
 

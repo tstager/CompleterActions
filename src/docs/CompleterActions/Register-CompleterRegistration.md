@@ -232,9 +232,11 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies one or more objects that describe completer targets. Input objects
-must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
-`CommandName`/`ParameterName` plus `IsNative`/`Native`, and must expose a
-`ScriptBlock` property whose value is a script block. `ScriptPath` or
+must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
+`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`,
+and must expose a `ScriptBlock` property whose value is a script block. A key
+without a native indicator is rejected; keys are output-only identifiers and
+are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
 records, are carried onto the managed record.
 

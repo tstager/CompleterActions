@@ -214,8 +214,9 @@ current session.</maml:para>
       <command:noun>CompleterRegistration</command:noun>
     </command:details>
     <maml:description>
-      <maml:para>Returns completer registration records for all registrations, specific
-registration keys, native command completers, or command parameter completers.
+      <maml:para>Returns completer registration records for all registrations, native command
+completers, command parameter completers, or the targets described by piped
+registration records.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
 to the same target and the managed record still matches the live runtime value.
@@ -228,9 +229,11 @@ Lazy registrations report State 'Pending' until their script loads on the
 first tab press and 'Failed' when that load failed; a Failed record has no
 runtime entry and carries the error in LoadError. Both are returned by default
 and by -ManagedOnly.
-The command accepts arrays for key, command, and parameter
-lookup scenarios and supports property-name pipeline binding for key-based and
-target-based lookups.
+The command accepts arrays for command and parameter lookups, and records
+piped back from Get-CompleterRegistration or Import-CompleterScript resolve
+through their Key and IsNative properties. Keys are output-only identifiers: a
+hand-typed key string is not accepted, so name the target with -CommandName
+plus -Native or -ParameterName instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -283,12 +286,12 @@ registrations from being listed.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Get-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="RegistrationKey">
-          <maml:name>Key</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>InputObject</maml:name>
           <maml:description />
-          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
           <dev:type>
-            <maml:name>System.String[]</maml:name>
+            <maml:name>System.Object[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -481,14 +484,17 @@ completers.</maml:para>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="RegistrationKey">
-        <maml:name>Key</maml:name>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="Named" aliases="none">
+        <maml:name>InputObject</maml:name>
         <maml:description>
-          <maml:para>Gets the registrations that match one or more registration keys.</maml:para>
+          <maml:para>Supplies one or more objects that describe the registrations to get, such as
+records returned by Get-CompleterRegistration or Import-CompleterScript. An
+input object exposes CommandName with IsNative/Native or ParameterName, or a
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.</maml:para>
         </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
-          <maml:name>System.String[]</maml:name>
+          <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
@@ -532,6 +538,14 @@ command parameter completer.</maml:para>
       </command:parameter>
     </command:parameters>
     <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.Object[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para />
+        </maml:description>
+      </command:inputType>
       <command:inputType>
         <dev:type>
           <maml:name>System.String[]</maml:name>
@@ -594,9 +608,9 @@ git.</maml:para>
       <command:example>
         <maml:title>--------- EXAMPLE 2 ---------</maml:title>
         <maml:introduction>
-          <maml:para>Get-CompleterRegistration -Key 'git:checkout', 'git:branch'</maml:para>
+          <maml:para>Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'</maml:para>
           <maml:para>&#x80;</maml:para>
-          <maml:para>Gets multiple completer registrations by key in a single call.</maml:para>
+          <maml:para>Gets multiple command-parameter completer registrations in a single call.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -608,6 +622,17 @@ git.</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Lists the lazy registrations that have not loaded yet and the ones whose script
 failed to load, with the failure message in LoadError.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 4 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Gets the live registrations for the targets a completer script defines by
+piping its import records back in.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -1517,9 +1542,11 @@ retried.</maml:para>
         <maml:name>InputObject</maml:name>
         <maml:description>
           <maml:para>Supplies one or more objects that describe completer targets. Input objects
-must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
-`CommandName`/`ParameterName` plus `IsNative`/`Native`, and must expose a
-`ScriptBlock` property whose value is a script block. `ScriptPath` or
+must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
+`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`,
+and must expose a `ScriptBlock` property whose value is a script block. A key
+without a native indicator is rejected; keys are output-only identifiers and
+are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
 records, are carried onto the managed record.</maml:para>
         </maml:description>
@@ -1819,36 +1846,9 @@ registration, and it never touches PSReadLine.</maml:para>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
-          <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
+          <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
           <dev:type>
             <maml:name>System.Object[]</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>InputText</maml:name>
-          <maml:description />
-          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
-          <dev:type>
-            <maml:name>System.String</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>CursorPosition</maml:name>
-          <maml:description />
-          <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
-          <dev:type>
-            <maml:name>System.Int32</maml:name>
-          </dev:type>
-        </command:parameter>
-      </command:syntaxItem>
-      <command:syntaxItem>
-        <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="RegistrationKey">
-          <maml:name>Key</maml:name>
-          <maml:description />
-          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
-          <dev:type>
-            <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -1931,8 +1931,8 @@ default is the end of the input.</maml:para>
         <maml:description>
           <maml:para>Supplies an object that describes the completer target, such as a record
 returned by `Get-CompleterRegistration` or `Import-CompleterScript`. The object
-must expose target metadata through `Key`, `RegistrationKey`, `RuntimeKey`, or
-`CommandName`/`ParameterName` plus `IsNative`/`Native`.</maml:para>
+must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
+`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
@@ -1949,19 +1949,6 @@ command the text names.</maml:para>
         <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
         <dev:type>
           <maml:name>System.String</maml:name>
-        </dev:type>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="RegistrationKey">
-        <maml:name>Key</maml:name>
-        <maml:description>
-          <maml:para>Identifies the target by registration key. A key without a colon is treated
-as a native command. A key with a colon is treated as a `Command:Parameter`
-target unless the text after its last colon contains a path separator, in which
-case it is treated as a native command path such as `C:\tools\example.exe`.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
-        <dev:type>
-          <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="IsNative">
@@ -2256,8 +2243,8 @@ Describe 'completer conformance' {
       <command:noun>CompleterRegistration</command:noun>
     </command:details>
     <maml:description>
-      <maml:para>Removes completer registrations identified by registration key, native command,
-command parameter target, or pipeline InputObject values.
+      <maml:para>Removes completer registrations identified by native command, command
+parameter target, or pipeline InputObject values.
 Managed registrations
 are removed from both the PowerShell runtime and the module's registration
 table.
@@ -2271,14 +2258,24 @@ stale managed record remains and it is removed without the gate.
 A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
-The command supports array inputs for keys and target fields, plus
-pipeline input from Get-CompleterRegistration output.</maml:para>
+The command supports array inputs for the target fields, plus pipeline input
+from Get-CompleterRegistration output. Keys are output-only identifiers: a
+hand-typed key string is not accepted, so name the target with -CommandName
+plus -Native or -ParameterName instead.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Unregister-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="RegistrationKey">
-          <maml:name>Key</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>CommandName</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
           <dev:type>
@@ -2319,56 +2316,9 @@ pipeline input from Get-CompleterRegistration output.</maml:para>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
-          <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
+          <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
           <dev:type>
             <maml:name>System.Object[]</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>AllowUnmanaged</maml:name>
-          <maml:description />
-          <dev:type>
-            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>PassThru</maml:name>
-          <maml:description />
-          <dev:type>
-            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>WhatIf</maml:name>
-          <maml:description />
-          <dev:type>
-            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>Confirm</maml:name>
-          <maml:description />
-          <dev:type>
-            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
-          </dev:type>
-        </command:parameter>
-      </command:syntaxItem>
-      <command:syntaxItem>
-        <maml:name>Unregister-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>CommandName</maml:name>
-          <maml:description />
-          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
-          <dev:type>
-            <maml:name>System.String[]</maml:name>
-          </dev:type>
-        </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
-          <maml:name>ParameterName</maml:name>
-          <maml:description />
-          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
-          <dev:type>
-            <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -2480,23 +2430,12 @@ pipeline input from Get-CompleterRegistration output.</maml:para>
         <maml:name>InputObject</maml:name>
         <maml:description>
           <maml:para>Supplies one or more objects that describe registrations to remove.
-Input
-objects can expose Key, RegistrationKey, RuntimeKey, or
-CommandName/ParameterName plus IsNative/Native.</maml:para>
+Input objects expose CommandName with IsNative/Native or ParameterName, or a
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
           <maml:name>System.Object[]</maml:name>
-        </dev:type>
-      </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="RegistrationKey">
-        <maml:name>Key</maml:name>
-        <maml:description>
-          <maml:para>Removes the registrations that match one or more registration keys.</maml:para>
-        </maml:description>
-        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
-        <dev:type>
-          <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="IsNative">

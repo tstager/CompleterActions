@@ -24,10 +24,10 @@ Get-CompleterRegistration [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount] 
  [-First <ulong>] [<CommonParameters>]
 ```
 
-### ByKey
+### InputObject
 
 ```PowerShell
-Get-CompleterRegistration -Key <string[]> [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount]
+Get-CompleterRegistration -InputObject <Object[]> [-ManagedOnly] [-DiscoveredOnly] [-IncludeTotalCount]
  [-Skip <ulong>] [-First <ulong>] [<CommonParameters>]
 ```
 
@@ -51,8 +51,9 @@ This cmdlet has the following aliases,
 
 ## DESCRIPTION
 
-Returns completer registration records for all registrations, specific
-registration keys, native command completers, or command parameter completers.
+Returns completer registration records for all registrations, native command
+completers, command parameter completers, or the targets described by piped
+registration records.
 By default the command merges module-managed registrations with
 runtime-discovered registrations and prefers the managed record when both refer
 to the same target and the managed record still matches the live runtime value.
@@ -65,9 +66,11 @@ Lazy registrations report State 'Pending' until their script loads on the
 first tab press and 'Failed' when that load failed; a Failed record has no
 runtime entry and carries the error in LoadError. Both are returned by default
 and by -ManagedOnly.
-The command accepts arrays for key, command, and parameter
-lookup scenarios and supports property-name pipeline binding for key-based and
-target-based lookups.
+The command accepts arrays for command and parameter lookups, and records
+piped back from Get-CompleterRegistration or Import-CompleterScript resolve
+through their Key and IsNative properties. Keys are output-only identifiers: a
+hand-typed key string is not accepted, so name the target with -CommandName
+plus -Native or -ParameterName instead.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -88,9 +91,9 @@ git.
 
 ### EXAMPLE 2
 
-Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
+Get-CompleterRegistration -CommandName 'git' -ParameterName 'checkout', 'branch'
 
-Gets multiple completer registrations by key in a single call.
+Gets multiple command-parameter completer registrations in a single call.
 
 ### EXAMPLE 3
 
@@ -98,6 +101,13 @@ Get-CompleterRegistration -ManagedOnly | Where-Object State -in Pending, Failed
 
 Lists the lazy registrations that have not loaded yet and the ones whose script
 failed to load, with the failure message in LoadError.
+
+### EXAMPLE 4
+
+Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-CompleterRegistration
+
+Gets the live registrations for the targets a completer script defines by
+piping its import records back in.
 
 ## PARAMETERS
 
@@ -188,22 +198,24 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
-### -Key
+### -InputObject
 
-Gets the registrations that match one or more registration keys.
+Supplies one or more objects that describe the registrations to get, such as
+records returned by Get-CompleterRegistration or Import-CompleterScript. An
+input object exposes CommandName with IsNative/Native or ParameterName, or a
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
 
 ```yaml
-Type: System.String[]
+Type: System.Object[]
 DefaultValue: ''
 SupportsWildcards: false
-Aliases:
-- RegistrationKey
+Aliases: []
 ParameterSets:
-- Name: ByKey
+- Name: InputObject
   Position: Named
   IsRequired: true
-  ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipeline: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -302,6 +314,8 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 [about_CommonParameters](https://go.microsoft.com/fwlink/?LinkID=113216).
 
 ## INPUTS
+
+### System.Object[]
 
 ### System.String[]
 

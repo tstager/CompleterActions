@@ -5,8 +5,11 @@ Resolves a pipeline input object into a completer target definition.
 .DESCRIPTION
 Normalizes public pipeline input into the target metadata used by the module's
 registration, lookup, and removal commands. The helper accepts module
-registration records and custom objects that expose either key-based target
-properties or command/parameter metadata. A ScriptBlock, ImportModule,
+registration records and custom objects that expose CommandName with
+IsNative/Native or ParameterName, or a Key, RegistrationKey, or RuntimeKey
+together with IsNative/Native. Keys are output-only identifiers, so a key
+without a native indicator is rejected rather than classified by its shape.
+A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
 so imported and managed records round-trip into Register-CompleterRegistration.
 
@@ -42,7 +45,6 @@ function Resolve-CompleterInputObject
     process
     {
         $keyValue = $null
-        $runtimeKey = $null
         $commandName = $null
         $parameterName = $null
         $hasNativeIndicator = $false
@@ -60,15 +62,7 @@ function Resolve-CompleterInputObject
                 $property = $InputObject.PSObject.Properties[$propertyName]
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                 {
-                    if ($propertyName -eq 'RuntimeKey')
-                    {
-                        $runtimeKey = [string] $property.Value
-                    }
-                    else
-                    {
-                        $keyValue = [string] $property.Value
-                    }
-
+                    $keyValue = [string] $property.Value
                     break
                 }
             }
@@ -144,36 +138,14 @@ function Resolve-CompleterInputObject
                     throw 'InputObject must expose ParameterName for command-parameter targets or IsNative/Native for native targets.'
                 }
             }
-            elseif (-not [string]::IsNullOrWhiteSpace($runtimeKey))
-            {
-                if ($hasNativeIndicator -and $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
-                }
-                elseif ($hasNativeIndicator -and -not $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
-                }
-                elseif (Test-CompleterNativeKeyShape -Key $runtimeKey)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
-                }
-                else
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $runtimeKey
-                }
-            }
             elseif (-not [string]::IsNullOrWhiteSpace($keyValue))
             {
-                if ($hasNativeIndicator -and $isNative)
+                if (-not $hasNativeIndicator)
                 {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
+                    throw "InputObject supplies the key '$keyValue' without an IsNative or Native property. Keys are output-only identifiers and are no longer classified by their shape: add IsNative or Native alongside the key, or supply CommandName with Native or ParameterName. See about_CompleterActions_Migration."
                 }
-                elseif ($hasNativeIndicator -and -not $isNative)
-                {
-                    $target = Resolve-CompleterTarget -RuntimeKey $keyValue
-                }
-                elseif (Test-CompleterNativeKeyShape -Key $keyValue)
+
+                if ($isNative)
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
@@ -184,7 +156,7 @@ function Resolve-CompleterInputObject
             }
             else
             {
-                throw 'InputObject must expose Key, RegistrationKey, RuntimeKey, or CommandName.'
+                throw 'InputObject must expose CommandName with Native or ParameterName, or Key, RegistrationKey, or RuntimeKey with IsNative or Native.'
             }
 
             [pscustomobject] [ordered] @{
@@ -204,7 +176,6 @@ function Resolve-CompleterInputObject
         finally
         {
             $keyValue = $null
-            $runtimeKey = $null
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
