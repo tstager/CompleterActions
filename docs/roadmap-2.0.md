@@ -3,14 +3,14 @@
 Drafted: 2026-09-08
 Baseline: 1.2.0, merge commit `4318821`
 Live page: https://claude.ai/code/artifact/55cc8aca-46d5-4180-a763-c36c5505dd3a
-Status (2026-09-21): all four milestones built; milestone 4 shipped as the 2.0.0-rc1 release candidate and is soaking before 2.0.0 stable.
+Status (2026-09-23): complete. All four milestones shipped; 2.0.0 stable was cut from the rc1 code on 2026-09-23 after the soak passed.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 1 Safety net | 1.3.0 | Shipped 2026-09-09, tag v1.3.0, PR #2 |
 | 2 Author tooling and trust tiers | 1.4.0 | Shipped 2026-09-10, tag v1.4.0, PR #3 |
 | 3 Lazy loading and completer sets | 2.0.0-preview1 | Shipped 2026-09-11, tag v2.0.0-preview1, PR #4; lazy 1316 ms vs eager 7063 ms, ratio 0.19 |
-| 4 Breaking surface and release | 2.0.0-rc1, then 2.0.0 | Candidate shipped 2026-09-21, tag v2.0.0-rc1, PR #6; stable after soak |
+| 4 Breaking surface and release | 2.0.0-rc1, then 2.0.0 | Candidate shipped 2026-09-21, tag v2.0.0-rc1, PR #6; stable shipped 2026-09-23, tag v2.0.0 |
 
 Four milestones from the 1.2.0 baseline to a major release. The first two ship on the 1.x line so users get value early; the breaking surface lands last and all at once.
 
@@ -93,7 +93,7 @@ Get-Completer -State Failed   # shows the broken script and its error; tab on th
 
 Every incompatible change lands in one milestone, with aliases for the old names, so there is exactly one migration for users to make.
 
-**Candidate shipped 2026-09-21 as v2.0.0-rc1** (PR #6, merge 92b73f2, release commit 6b29344). All six items landed plus the class model, the exported legacy wrappers, and the migration topic; 234 Pester tests, eight CI legs green, the 169-script set imports untouched, PSReadLine snapshots identical, the PS_Completers gate 174 of 174. Two adversarial review rounds confirmed 19 findings, all fixed before merge. Stable 2.0.0 waits for the soak.
+**Candidate shipped 2026-09-21 as v2.0.0-rc1** (PR #6, merge 92b73f2, release commit 6b29344). All six items landed plus the class model, the exported legacy wrappers, and the migration topic; 234 Pester tests, eight CI legs green, the 169-script set imports untouched, PSReadLine snapshots identical, the PS_Completers gate 174 of 174. Two adversarial review rounds confirmed 19 findings, all fixed before merge. Stable 2.0.0 shipped 2026-09-23 (release commit b2de0be, tag v2.0.0) from the same code after the soak passed.
 
 The milestone ships twice. The first tag is `v2.0.0-rc1` (PSGallery prerelease label `rc1`), so the breaking surface can soak in the user's profile and in the PS_Completers conformance CI before anything is promoted. Only when the candidate has run without a defect does the same code go out as `v2.0.0` stable; a defect found in the candidate ships as `rc2`, never as a stable patch. Decided 2026-09-21.
 
