@@ -3,7 +3,7 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-09-23): drafted; milestone 0 done the same day, nothing else started.
+Status (2026-09-23): drafted; milestone 0 done and all six decisions locked the same day. Milestone 1 is next.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
@@ -104,11 +104,11 @@ Everything 2.0 kept as an alias is removed in 3.0. Nothing else in the public su
 
 ## Decisions
 
-Open as of 2026-09-23, with a recommendation on each. Lock them before milestone 1 branches.
+All six locked on 2026-09-23; the user accepted every recommendation as written. These settle the shape of milestones 1 to 3; reopen one only with a reason worth a changelog entry.
 
-1. **The parse cache lives in the set file, not in a per-user cache directory.** A `Hash` per entry is written by the export that already knows the targets, so the set is self-validating and a repo-tracked set stays the single artifact. A per-user cache would be a second thing to invalidate. Lean: yes. Affects: milestone 1, set schema and Import-CompleterSet.
-2. **Reset-Completer is a new command, not a switch on Register-Completer.** Re-arming a record is a state change on something already registered; overloading `-Force` would hide it. Lean: new command, same target contract as Unregister. Affects: milestone 1.
-3. **Engine cmdlet detection ships in 2.x as soon as the engine has the cmdlets, and does not wait for 3.0.** Additive and invisible when the cmdlets are absent. Lean: yes, milestone 2, gated on PR #26680 landing in a shipped engine. Affects: milestone 2 and the shape of milestone 3.
-4. **The compiled core is C# built with the dotnet SDK in CI, and the record types become public.** The alternative, keeping PowerShell classes and accepting the module-private type problem, leaves the 2.0 wart in place for good. Lean: C#, with the assembly built in the existing build task and the CI matrix unchanged. Affects: milestone 3, build and the class model.
-5. **Reflection stays as the path for engines without the cmdlets, inside the compiled layer.** The alternative, a 3.0 engine floor at the first version with the cmdlets, is not available until that version ships and is adopted. Revisit for 4.0. Lean: keep it, version-gated. Affects: milestone 3.
+1. **The parse cache lives in the set file, not in a per-user cache directory.** A `Hash` per entry is written by the export that already knows the targets, so the set is self-validating and a repo-tracked set stays the single artifact. A per-user cache would be a second thing to invalidate. Affects: milestone 1, set schema and Import-CompleterSet.
+2. **Reset-Completer is a new command, not a switch on Register-Completer.** Re-arming a record is a state change on something already registered; overloading `-Force` would hide it. Same target contract as Unregister. Affects: milestone 1.
+3. **Engine cmdlet detection ships in 2.x as soon as the engine has the cmdlets, and does not wait for 3.0.** Additive and invisible when the cmdlets are absent. Gated on PR #26680 landing in a shipped engine. Affects: milestone 2 and the shape of milestone 3.
+4. **The compiled core is C# built with the dotnet SDK in CI, and the record types become public.** The alternative, keeping PowerShell classes and accepting the module-private type problem, leaves the 2.0 wart in place for good. The assembly is built in the existing build task with the CI matrix unchanged. Affects: milestone 3, build and the class model.
+5. **Reflection stays as the path for engines without the cmdlets, inside the compiled layer.** The alternative, a 3.0 engine floor at the first version with the cmdlets, is not available until that version ships and is adopted. Revisit for 4.0. Affects: milestone 3.
 6. **3.0.0 ships as a release candidate before it ships as stable.** Carried over from decision 6 of the 2.0 roadmap without change. Affects: milestone 3, release order.
