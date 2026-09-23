@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-23
+
+The stable 2.0.0 release. Same code as 2.0.0-rc1, promoted after the candidate
+soaked in a profile and in the PS_Completers conformance CI without a defect,
+per roadmap decision 6. The 2.0.0-rc1 section below is the full record of the
+breaking surface; `about_CompleterActions_Migration` walks through the move
+from 1.x.
+
 ## [2.0.0-rc1] - 2026-09-21
 
 The 2.0.0 breaking surface. Every incompatible change of the 2.x line lands
@@ -454,7 +462,9 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview3...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0-rc1...v2.0.0
+[2.0.0-rc1]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview3...v2.0.0-rc1
 [2.0.0-preview3]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview2...v2.0.0-preview3
 [2.0.0-preview2]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview1...v2.0.0-preview2
 [2.0.0-preview1]: https://github.com/tstager/CompleterActions/compare/v1.4.0...v2.0.0-preview1
