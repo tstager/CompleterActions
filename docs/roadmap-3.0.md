@@ -3,12 +3,12 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-09-23): drafted; milestone 0 done and all six decisions locked the same day. Milestone 1 is next.
+Status (2026-09-28): milestone 0 done; milestone 1 spec and plan accepted (docs/roadmap-3.0/milestone-1-spec.md and milestone-1-plan.md), ready to branch as feat/milestone-1-faster-imports.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
-| 1 Faster imports and recovery | 2.1.0 | Planned, additive |
+| 1 Faster imports and recovery | 2.1.0 | Spec and plan accepted 2026-09-28, additive, next to branch |
 | 2 Authoring and distribution | 2.2.0 | Planned, additive |
 | 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking |
 
