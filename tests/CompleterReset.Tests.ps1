@@ -650,4 +650,33 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
         $loaded.Trusted | Should -BeTrue
         $loaded.LoadError | Should -BeNullOrEmpty
     }
+
+    It 'leaves PSReadLine key handlers unchanged across Reset-Completer, the reloading tab press, and Test-CompleterSet' {
+        Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
+
+        if ($null -eq (Get-Module -Name 'PSReadLine'))
+        {
+            Set-ItResult -Skipped -Because 'PSReadLine is not loaded in this session'
+        }
+
+        $before = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $setRoot = Join-Path -Path $TestDrive -ChildPath 'NeutralSet'
+        $scriptPath = Join-Path -Path $setRoot -ChildPath 'reset_completer/reset_completer.ps1'
+        $setPath = Join-Path -Path $setRoot -ChildPath 'completers.psd1'
+        Write-TestResetScript -Path $scriptPath -CommandName 'resetfixture' -Value 'first-one'
+        Write-TestResetSet -Path $setPath -Entry @{ Path = 'reset_completer/reset_completer.ps1'; CommandName = 'resetfixture' }
+        $null = Import-CompleterSet -LiteralPath $setPath
+        Invoke-TestResetPress -CommandName 'resetfixture' | Should -Be @('first-one')
+
+        Write-TestResetScript -Path $scriptPath -CommandName 'resetfixture' -Value 'second-one'
+        Reset-Completer -CommandName 'resetfixture' -Native
+        Invoke-TestResetPress -CommandName 'resetfixture' | Should -Be @('second-one')
+        $null = @(Test-CompleterSet -LiteralPath $setPath)
+
+        $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $before.Count | Should -BeGreaterThan 0
+        $after | Should -Be $before
+    }
 }
