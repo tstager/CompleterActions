@@ -8,7 +8,7 @@ Status (2026-09-28): milestone 0 done; milestone 1 spec and plan accepted (docs/
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
-| 1 Faster imports and recovery | 2.1.0 | Spec and plan accepted 2026-09-28, additive, next to branch |
+| 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Implemented on feat/milestone-1-faster-imports, PR #7 open with CI green (2026-09-29); benchmark ratio 0.49 to 0.54 accepted; ships as a preview first |
 | 2 Authoring and distribution | 2.2.0 | Planned, additive |
 | 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking |
 
@@ -46,12 +46,12 @@ The two performance levers left after milestone 3 of the 2.0 roadmap, plus the o
 Exit criteria:
 
 ```powershell
-Import-CompleterSet ~\Completers\completers.psd1   # 0.54 of the 2.0.0 lazy import time when no file changed
+Import-CompleterSet ~\Completers\completers.psd1   # 0.50 to 0.54 of the 2.0.0 lazy import time when no file changed (measured range)
 Get-Completer -State Failed | Reset-Completer      # records return to Pending; next tab press loads the fixed script
 Test-CompleterSet ~\Completers\completers.psd1     # empty when the set matches the folder; the PS_Completers gate becomes one call
 ```
 
-The first criterion is restated from "under half the 2.0.0 lazy import time" to the measured ratio, under the section 7 fallback of the milestone 1 spec. The same-run benchmark (173 scripts, 366 targets, ten interleaved samples per leg) measured a 2.1.0 lazy median of 862.9 ms against 2.0.0's 1589.6 ms, a ratio of 0.54, so the 0.50 target was missed. The same set without `Hash` measured 1423.9 ms, 0.90 of 2.0.0, which is also outside the spec's within-10-percent band, on the fast side. The restatement stands only with the owner's sign-off on the milestone 1 pull request.
+The first criterion was "under half the 2.0.0 lazy import time". Under the section 7 fallback of the milestone 1 spec it is restated to the measured range, accepted by the owner on 2026-09-29: across four ten-sample runs on the branch (173 scripts, pwsh 7.6.6, Windows), the 2.1.0 lazy median was 815 to 886 ms against 2.0.0's 1589 to 1676 ms, a ratio of 0.49 to 0.54, so the 0.50 target sits inside the run-to-run spread rather than below it. The same set without `Hash` imports 10 to 17 percent faster than 2.0.0 because the bulk path applies to it too; the spec's within-10-percent band for that leg is read as "not slower than 2.0.0", also accepted 2026-09-29.
 
 ## Milestone 2: Authoring and distribution (2.2.0, additive)
 
@@ -114,3 +114,4 @@ All six locked on 2026-09-23; the user accepted every recommendation as written.
 4. **The compiled core is C# built with the dotnet SDK in CI, and the record types become public.** The alternative, keeping PowerShell classes and accepting the module-private type problem, leaves the 2.0 wart in place for good. The assembly is built in the existing build task with the CI matrix unchanged. Affects: milestone 3, build and the class model.
 5. **Reflection stays as the path for engines without the cmdlets, inside the compiled layer.** The alternative, a 3.0 engine floor at the first version with the cmdlets, is not available until that version ships and is adopted. Revisit for 4.0. Affects: milestone 3.
 6. **3.0.0 ships as a release candidate before it ships as stable.** Carried over from decision 6 of the 2.0 roadmap without change. Affects: milestone 3, release order.
+7. **2.1.0 ships as a preview before it ships as stable.** Decided 2026-09-29. Milestone 1 is additive, but it changes the set schema, the import path every profile runs, and adds two commands, so it goes to PSGallery first as `2.1.0-preview1` (tag `v2.1.0-preview1`) and soaks in the owner's profile and the PS_Completers CI, as the 2.0 previews did. Stable `v2.1.0` is cut from the same code once the preview has run without a defect; a defect means `preview2`. Affects: milestone 1, release recipe and changelog headings.
