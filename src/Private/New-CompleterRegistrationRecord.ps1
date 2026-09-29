@@ -92,7 +92,7 @@ function New-CompleterRegistrationRecord
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }

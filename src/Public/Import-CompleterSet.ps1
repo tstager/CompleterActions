@@ -199,7 +199,7 @@ function Import-CompleterSet
                 $registrations = @(foreach ($entry in $confirmedEntries) { $entry.Registrations })
                 $conflicts = @(foreach ($entry in $confirmedEntries) { $entry.Conflicts })
 
-                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts
+                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts -Snapshot $snapshot
             }
         }
         catch

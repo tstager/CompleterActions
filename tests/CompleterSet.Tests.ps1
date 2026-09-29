@@ -968,7 +968,7 @@ Describe 'Completer sets' {
             }
 
             $counts.Snapshots | Should -Be 1
-            $counts.States | Should -Be 3 -Because 'each entry resolves its targets in one pass against the shared snapshot'
+            $counts.States | Should -Be 1 -Because 'the set resolves every target in one state pass'
         }
 
         It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {

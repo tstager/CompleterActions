@@ -3,11 +3,12 @@
 Decides whether each of a batch of completer registrations can be written over the current managed and runtime state.
 
 .DESCRIPTION
-Reconciles the records through one Resolve-CompleterRegistrationState pass and
-applies the module's replacement rules in one place. Without -Force an
-existing managed record blocks a registration when it is stale, when its lazy
-load failed, or when it describes a different completer, and an unmanaged
-runtime registration blocks it as well. A managed record that already
+Reconciles the records through one Resolve-CompleterRegistrationState pass,
+or through the states the caller already resolved for them, and applies the
+module's replacement rules in one place. Without -Force an existing managed
+record blocks a registration when it is stale, when its lazy load failed, or
+when it describes a different completer, and an unmanaged runtime
+registration blocks it as well. A managed record that already
 describes the same completer, the same script block text for an eager
 registration or the same script and tier for a lazy one, is reported as
 existing so the caller can reuse it. A record is lazy when its State is
@@ -30,6 +31,12 @@ written, in the order they will be written.
 .PARAMETER Snapshot
 A CompleterActions.CompleterRegistrationSnapshot to resolve against. When it is
 omitted, one is taken for this call.
+
+.PARAMETER RegistrationState
+The rows Resolve-CompleterRegistrationState already returned for these records,
+one per record in the same order. When it is supplied no state pass is made
+here, so a caller that resolves many batches against one snapshot can resolve
+every key in one pass and hand each batch its slice.
 
 .PARAMETER Force
 Indicates that existing registrations are replaced, so nothing is reported as
@@ -55,6 +62,10 @@ function Resolve-CompleterRegistrationConflict
         [psobject] $Snapshot,
 
         [Parameter()]
+        [AllowEmptyCollection()]
+        [psobject[]] $RegistrationState,
+
+        [Parameter()]
         [switch] $Force
     )
 
@@ -63,7 +74,13 @@ function Resolve-CompleterRegistrationConflict
         return
     }
 
-    $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    $registrationStates = $RegistrationState
+
+    if (-not $PSBoundParameters.ContainsKey('RegistrationState'))
+    {
+        $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    }
+
     $plannedRegistrations = @{}
 
     for ($index = 0; $index -lt $Registration.Count; $index++)

@@ -15,6 +15,13 @@ the entries after it. The entry's Registrations and Conflicts are what
 Import-CompleterSet writes, so the session's registrations are read once per
 set.
 
+Every target of the set is reconciled with the session in one
+Resolve-CompleterRegistrationState pass, in set order. Each entry's conflicts
+are then decided on its own slice of that pass, so an entry is planned
+exactly as if it were resolved alone and a target two entries share stays a
+DuplicateTarget problem, not a conflict with the earlier entry. When no entry
+resolved a target there is nothing to reconcile and no pass is made.
+
 Each entry record is completed in place: Registrations and Conflicts are
 filled, the session problems are appended after the entry's static ones, and
 IsValid is recomputed.
@@ -52,10 +59,39 @@ function Resolve-CompleterSetRegistration
         [switch] $Force
     )
 
-    $claimedTargets = @{}
+    $entryRegistrations = [System.Collections.Generic.List[object]]::new()
+    $keys = [System.Collections.Generic.List[string]]::new()
 
     foreach ($entryItem in $Entry)
     {
+        $registrations = @(
+            foreach ($target in @($entryItem.Targets))
+            {
+                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
+            }
+        )
+
+        $entryRegistrations.Add($registrations)
+
+        foreach ($registration in $registrations)
+        {
+            $keys.Add([string] $registration.Key)
+        }
+    }
+
+    $registrationStates = @()
+
+    if ($keys.Count -gt 0)
+    {
+        $registrationStates = @(Resolve-CompleterRegistrationState -Key $keys.ToArray() -Snapshot $Snapshot)
+    }
+
+    $claimedTargets = @{}
+    $stateIndex = 0
+
+    for ($entryIndex = 0; $entryIndex -lt $Entry.Count; $entryIndex++)
+    {
+        $entryItem = $Entry[$entryIndex]
         $problems = [System.Collections.Generic.List[hashtable]]::new()
 
         foreach ($problem in $entryItem.Problems)
@@ -64,13 +100,15 @@ function Resolve-CompleterSetRegistration
         }
 
         $targets = @($entryItem.Targets)
-        $registrations = @(
-            foreach ($target in $targets)
-            {
-                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
-            }
-        )
-        $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Snapshot $Snapshot -Force:$Force)
+        $registrations = $entryRegistrations[$entryIndex]
+        $conflicts = @()
+
+        if ($registrations.Count -gt 0)
+        {
+            $stateSlice = $registrationStates[$stateIndex..($stateIndex + $registrations.Count - 1)]
+            $stateIndex += $registrations.Count
+            $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -RegistrationState $stateSlice -Force:$Force)
+        }
 
         for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
         {

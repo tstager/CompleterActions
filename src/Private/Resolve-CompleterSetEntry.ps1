@@ -118,7 +118,7 @@ function Resolve-CompleterSetEntry
             $declaredPath = [string] $Entry['Path']
             $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
+            if (-not [System.IO.File]::Exists($resolvedPath))
             {
                 $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }

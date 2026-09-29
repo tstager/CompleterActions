@@ -12,6 +12,11 @@ after re-registering a completer.
 The registration record to store. The object must expose a non-empty Key
 property.
 
+.PARAMETER Table
+The managed registration table to write to, as a registration snapshot
+carries it in Managed. When it is omitted the module's table is looked up for
+this call.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns the record that is stored in the managed registration table.
@@ -29,19 +34,28 @@ function Add-ManagedCompleterRegistration
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject] $Registration
+        [psobject] $Registration,
+
+        [Parameter()]
+        [System.Collections.IDictionary] $Table
     )
 
     process
     {
-        if ($Registration.PSObject.Properties.Match('Key').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string] $Registration.Key))
+        if ($null -eq $Registration.PSObject.Properties['Key'] -or [string]::IsNullOrWhiteSpace([string] $Registration.Key))
         {
             throw 'Registration records must expose a non-empty Key property.'
         }
 
         try
         {
-            $registrations = Get-ManagedCompleterRegistrationTable
+            $registrations = $Table
+
+            if ($null -eq $registrations)
+            {
+                $registrations = Get-ManagedCompleterRegistrationTable
+            }
+
             $registrations[[string] $Registration.Key] = $Registration
 
             return $registrations[[string] $Registration.Key]

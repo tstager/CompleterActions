@@ -1109,7 +1109,7 @@ function Import-CompleterSet
                 $registrations = @(foreach ($entry in $confirmedEntries) { $entry.Registrations })
                 $conflicts = @(foreach ($entry in $confirmedEntries) { $entry.Conflicts })
 
-                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts
+                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts -Snapshot $snapshot
             }
         }
         catch
@@ -2365,21 +2365,25 @@ Writes a batch of completer registrations to the runtime and the managed state a
 Performs the write half of a registration after the caller has resolved every
 record's conflicts and confirmed the operation. Each record whose conflict
 result reports IsExisting is not written; the managed record it already
-matches is returned in its place. Every other record's script block is added
-to the live completer dictionary and the record is stored in the managed
-registration table, in order, and the stored records are returned in the same
-order as the input.
+matches is returned in its place. The batch is written in two passes: every
+other record's script block is first added to the live completer dictionary,
+in order, and only then is every such record stored in the managed
+registration table, in order. The stored records are returned in the same
+order as the input. With one record the two passes are the runtime write and
+then the managed write of that record.
 
-If any write fails, the batch is rolled back in reverse: for every record that
-was written, the earlier runtime value carried on its conflict result is put
-back or the new one removed, and the earlier managed record is put back or the
-new one removed, so the session ends exactly as it was before the batch. The
-error names the target whose write failed, and a failure during the rollback
-is reported together with the original error so the caller can say the target
-may be inconsistent. Register-Completer writes each target through
-this helper on its own, so every target of a call stays its own transaction,
-and Import-CompleterSet writes a whole set through it, so an eager, a lazy,
-and a completer set registration share one write path.
+If any write fails, the batch is rolled back in reverse from the last record
+whose runtime write was started: for each written record, the earlier runtime
+value carried on its conflict result is put back or the new one removed, and
+the earlier managed record is put back or the new one removed, so the session
+ends exactly as it was before the batch. A managed write that fails therefore
+also undoes the runtime values of the records after it, which the runtime pass
+had already written. The error names the target whose write failed, and a
+failure during the rollback is reported together with the original error so
+the caller can say the target may be inconsistent. Register-Completer writes
+each target through this helper on its own, so every target of a call stays
+its own transaction, and Import-CompleterSet writes a whole set through it,
+so an eager, a lazy, and a completer set registration share one write path.
 
 .PARAMETER Registration
 The CompleterActions.CompleterRegistration records to store, in write order.
@@ -2389,6 +2393,12 @@ Each record's ScriptBlock is the value written to the runtime dictionary.
 The results Resolve-CompleterRegistrationConflict returned for the same
 records, in the same order. Their RuntimeRegistration and ManagedRegistration
 are the state restored when a write fails.
+
+.PARAMETER Snapshot
+The CompleterActions.CompleterRegistrationSnapshot the records were resolved
+against. Its RuntimeContext and Managed table are written through, so a batch
+looks up the runtime dictionaries and the managed table once instead of once
+per record. When it is omitted each write looks them up itself.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
@@ -2412,7 +2422,10 @@ function Add-CompleterRegistration
         [Parameter(Mandatory)]
         [ValidateNotNull()]
         [AllowEmptyCollection()]
-        [psobject[]] $Conflict
+        [psobject[]] $Conflict,
+
+        [Parameter()]
+        [psobject] $Snapshot
     )
 
     if ($Registration.Count -ne $Conflict.Count)
@@ -2420,11 +2433,32 @@ function Add-CompleterRegistration
         throw "Each registration needs the conflict result resolved for it, but $($Registration.Count) registrations came with $($Conflict.Count) conflict results."
     }
 
+    $runtimeParameters = @{}
+    $managedParameters = @{}
+
+    if ($null -ne $Snapshot)
+    {
+        $runtimeParameters['Runtime'] = $Snapshot.RuntimeContext
+        $managedParameters['Table'] = $Snapshot.Managed
+    }
+
     $storedRegistrations = [System.Collections.Generic.List[psobject]]::new()
-    $writeIndex = -1
+    $runtimeIndex = -1
+    $managedIndex = -1
 
     try
     {
+        for ($index = 0; $index -lt $Registration.Count; $index++)
+        {
+            if ($Conflict[$index].IsExisting)
+            {
+                continue
+            }
+
+            $runtimeIndex = $index
+            $null = Add-RuntimeCompleterRegistration -Target $Registration[$index] -ScriptBlock $Registration[$index].ScriptBlock @runtimeParameters
+        }
+
         for ($index = 0; $index -lt $Registration.Count; $index++)
         {
             if ($Conflict[$index].IsExisting)
@@ -2433,9 +2467,8 @@ function Add-CompleterRegistration
                 continue
             }
 
-            $writeIndex = $index
-            $null = Add-RuntimeCompleterRegistration -Target $Registration[$index] -ScriptBlock $Registration[$index].ScriptBlock
-            $storedRegistrations.Add((Add-ManagedCompleterRegistration -Registration $Registration[$index]))
+            $managedIndex = $index
+            $storedRegistrations.Add((Add-ManagedCompleterRegistration -Registration $Registration[$index] @managedParameters))
         }
 
         return $storedRegistrations
@@ -2443,10 +2476,11 @@ function Add-CompleterRegistration
     catch
     {
         $registrationError = $_
-        $failedRegistration = $Registration[$writeIndex]
+        $failedIndex = if ($managedIndex -ge 0) { $managedIndex } else { $runtimeIndex }
+        $failedRegistration = $Registration[$failedIndex]
         $rollbackErrors = [System.Collections.Generic.List[string]]::new()
 
-        for ($index = $writeIndex; $index -ge 0; $index--)
+        for ($index = $runtimeIndex; $index -ge 0; $index--)
         {
             if ($Conflict[$index].IsExisting)
             {
@@ -2457,7 +2491,7 @@ function Add-CompleterRegistration
             {
                 if ($null -ne $Conflict[$index].RuntimeRegistration)
                 {
-                    $null = Add-RuntimeCompleterRegistration -Target $Conflict[$index].RuntimeRegistration -ScriptBlock $Conflict[$index].RuntimeRegistration.ScriptBlock
+                    $null = Add-RuntimeCompleterRegistration -Target $Conflict[$index].RuntimeRegistration -ScriptBlock $Conflict[$index].RuntimeRegistration.ScriptBlock @runtimeParameters
                 }
                 else
                 {
@@ -2466,7 +2500,7 @@ function Add-CompleterRegistration
 
                 if ($null -ne $Conflict[$index].ManagedRegistration)
                 {
-                    $null = Add-ManagedCompleterRegistration -Registration $Conflict[$index].ManagedRegistration
+                    $null = Add-ManagedCompleterRegistration -Registration $Conflict[$index].ManagedRegistration @managedParameters
                 }
                 else
                 {
@@ -2503,6 +2537,11 @@ after re-registering a completer.
 The registration record to store. The object must expose a non-empty Key
 property.
 
+.PARAMETER Table
+The managed registration table to write to, as a registration snapshot
+carries it in Managed. When it is omitted the module's table is looked up for
+this call.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns the record that is stored in the managed registration table.
@@ -2523,19 +2562,28 @@ function Add-ManagedCompleterRegistration
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject] $Registration
+        [psobject] $Registration,
+
+        [Parameter()]
+        [System.Collections.IDictionary] $Table
     )
 
     process
     {
-        if ($Registration.PSObject.Properties.Match('Key').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string] $Registration.Key))
+        if ($null -eq $Registration.PSObject.Properties['Key'] -or [string]::IsNullOrWhiteSpace([string] $Registration.Key))
         {
             throw 'Registration records must expose a non-empty Key property.'
         }
 
         try
         {
-            $registrations = Get-ManagedCompleterRegistrationTable
+            $registrations = $Table
+
+            if ($null -eq $registrations)
+            {
+                $registrations = Get-ManagedCompleterRegistrationTable
+            }
+
             $registrations[[string] $Registration.Key] = $Registration
 
             return $registrations[[string] $Registration.Key]
@@ -2560,6 +2608,13 @@ The completer target or registration object. It must expose RuntimeKey and IsNat
 
 .PARAMETER ScriptBlock
 The completer script block to register.
+
+.PARAMETER Runtime
+The CompleterActions.CompleterRuntime object to write through, as a
+registration snapshot carries it in RuntimeContext. When it is omitted the
+runtime is looked up for this call. A dictionary the helper creates is also
+stored on this object, so every later write of the same batch reuses it
+instead of creating another.
 #>
 function Add-RuntimeCompleterRegistration
 <#
@@ -2576,31 +2631,39 @@ function Add-RuntimeCompleterRegistration
 
         [Parameter(Mandatory)]
         [ValidateNotNull()]
-        [scriptblock] $ScriptBlock
+        [scriptblock] $ScriptBlock,
+
+        [Parameter()]
+        [psobject] $Runtime
     )
 
     foreach ($requiredProperty in 'RuntimeKey', 'IsNative')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }
     }
 
-    $runtime = Get-CompleterRuntime
+    if ($null -eq $Runtime)
+    {
+        $Runtime = Get-CompleterRuntime
+    }
+
     $propertyName = if ($Target.IsNative) { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
-    $dictionary = $runtime.$propertyName
+    $dictionary = $Runtime.$propertyName
 
     if ($null -eq $dictionary)
     {
-        $runtimeProperty = if ($Target.IsNative) { $runtime.NativeProperty } else { $runtime.CustomProperty }
+        $runtimeProperty = if ($Target.IsNative) { $Runtime.NativeProperty } else { $Runtime.CustomProperty }
         if ($null -eq $runtimeProperty)
         {
             throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
         }
 
         $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $runtimeProperty.SetValue($runtime.ExecutionContext, $dictionary)
+        $runtimeProperty.SetValue($Runtime.ExecutionContext, $dictionary)
+        $Runtime.$propertyName = $dictionary
     }
 
     $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
@@ -3198,18 +3261,22 @@ Resolve-CompleterRegistrationState resolves keys against a snapshot, taking
 its own when the caller passes none, and Import-CompleterSet takes one
 snapshot per set so validating and registering hundreds of targets costs one
 runtime read. The snapshot holds references to the live table and
-dictionaries: it describes the session at the moment it was taken and is meant
-to be consumed before the same batch writes. Parameter-only entries of the
+dictionaries: its views describe the session at the moment it was taken and
+are meant to be consumed before the same batch writes, and the batch then
+writes through its RuntimeContext and Managed table instead of looking them
+up again for every target. Parameter-only entries of the
 custom dictionary, registered with Register-ArgumentCompleter -ParameterName
 alone, are left out of the index because the module does not manage them and
 a native-shaped key must never resolve against one.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
-Returns an object with Managed, the managed registration table, and Runtime,
-one view per runtime dictionary in the order Find-RuntimeCompleterRegistration
-searches them, native first. Each view carries IsNative, the Dictionary, and
-Keys, a case-insensitive map from a key to the casing the dictionary stores.
+Returns an object with Managed, the managed registration table; Runtime, one
+view per runtime dictionary in the order Find-RuntimeCompleterRegistration
+searches them, native first; and RuntimeContext, the
+CompleterActions.CompleterRuntime object the views were read from. Each view
+carries IsNative, the Dictionary, and Keys, a case-insensitive map from a key
+to the casing the dictionary stores.
 
 .EXAMPLE
 PS> $snapshot = Get-CompleterRegistrationSnapshot
@@ -3257,9 +3324,10 @@ function Get-CompleterRegistrationSnapshot
     )
 
     return [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterRegistrationSnapshot'
-        Managed    = Get-ManagedCompleterRegistrationTable
-        Runtime    = $views
+        PSTypeName     = 'CompleterActions.CompleterRegistrationSnapshot'
+        Managed        = Get-ManagedCompleterRegistrationTable
+        Runtime        = $views
+        RuntimeContext = $runtime
     }
 }
 <#
@@ -4188,7 +4256,7 @@ function New-CompleterRegistrationRecord
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }
@@ -4919,11 +4987,12 @@ function Resolve-CompleterInputObject
 Decides whether each of a batch of completer registrations can be written over the current managed and runtime state.
 
 .DESCRIPTION
-Reconciles the records through one Resolve-CompleterRegistrationState pass and
-applies the module's replacement rules in one place. Without -Force an
-existing managed record blocks a registration when it is stale, when its lazy
-load failed, or when it describes a different completer, and an unmanaged
-runtime registration blocks it as well. A managed record that already
+Reconciles the records through one Resolve-CompleterRegistrationState pass,
+or through the states the caller already resolved for them, and applies the
+module's replacement rules in one place. Without -Force an existing managed
+record blocks a registration when it is stale, when its lazy load failed, or
+when it describes a different completer, and an unmanaged runtime
+registration blocks it as well. A managed record that already
 describes the same completer, the same script block text for an eager
 registration or the same script and tier for a lazy one, is reported as
 existing so the caller can reuse it. A record is lazy when its State is
@@ -4946,6 +5015,12 @@ written, in the order they will be written.
 .PARAMETER Snapshot
 A CompleterActions.CompleterRegistrationSnapshot to resolve against. When it is
 omitted, one is taken for this call.
+
+.PARAMETER RegistrationState
+The rows Resolve-CompleterRegistrationState already returned for these records,
+one per record in the same order. When it is supplied no state pass is made
+here, so a caller that resolves many batches against one snapshot can resolve
+every key in one pass and hand each batch its slice.
 
 .PARAMETER Force
 Indicates that existing registrations are replaced, so nothing is reported as
@@ -4974,6 +5049,10 @@ function Resolve-CompleterRegistrationConflict
         [psobject] $Snapshot,
 
         [Parameter()]
+        [AllowEmptyCollection()]
+        [psobject[]] $RegistrationState,
+
+        [Parameter()]
         [switch] $Force
     )
 
@@ -4982,7 +5061,13 @@ function Resolve-CompleterRegistrationConflict
         return
     }
 
-    $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    $registrationStates = $RegistrationState
+
+    if (-not $PSBoundParameters.ContainsKey('RegistrationState'))
+    {
+        $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    }
+
     $plannedRegistrations = @{}
 
     for ($index = 0; $index -lt $Registration.Count; $index++)
@@ -5424,7 +5509,7 @@ function Resolve-CompleterSetEntry
             $declaredPath = [string] $Entry['Path']
             $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
+            if (-not [System.IO.File]::Exists($resolvedPath))
             {
                 $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }
@@ -5653,6 +5738,13 @@ the entries after it. The entry's Registrations and Conflicts are what
 Import-CompleterSet writes, so the session's registrations are read once per
 set.
 
+Every target of the set is reconciled with the session in one
+Resolve-CompleterRegistrationState pass, in set order. Each entry's conflicts
+are then decided on its own slice of that pass, so an entry is planned
+exactly as if it were resolved alone and a target two entries share stays a
+DuplicateTarget problem, not a conflict with the earlier entry. When no entry
+resolved a target there is nothing to reconcile and no pass is made.
+
 Each entry record is completed in place: Registrations and Conflicts are
 filled, the session problems are appended after the entry's static ones, and
 IsValid is recomputed.
@@ -5693,10 +5785,39 @@ function Resolve-CompleterSetRegistration
         [switch] $Force
     )
 
-    $claimedTargets = @{}
+    $entryRegistrations = [System.Collections.Generic.List[object]]::new()
+    $keys = [System.Collections.Generic.List[string]]::new()
 
     foreach ($entryItem in $Entry)
     {
+        $registrations = @(
+            foreach ($target in @($entryItem.Targets))
+            {
+                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
+            }
+        )
+
+        $entryRegistrations.Add($registrations)
+
+        foreach ($registration in $registrations)
+        {
+            $keys.Add([string] $registration.Key)
+        }
+    }
+
+    $registrationStates = @()
+
+    if ($keys.Count -gt 0)
+    {
+        $registrationStates = @(Resolve-CompleterRegistrationState -Key $keys.ToArray() -Snapshot $Snapshot)
+    }
+
+    $claimedTargets = @{}
+    $stateIndex = 0
+
+    for ($entryIndex = 0; $entryIndex -lt $Entry.Count; $entryIndex++)
+    {
+        $entryItem = $Entry[$entryIndex]
         $problems = [System.Collections.Generic.List[hashtable]]::new()
 
         foreach ($problem in $entryItem.Problems)
@@ -5705,13 +5826,15 @@ function Resolve-CompleterSetRegistration
         }
 
         $targets = @($entryItem.Targets)
-        $registrations = @(
-            foreach ($target in $targets)
-            {
-                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
-            }
-        )
-        $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Snapshot $Snapshot -Force:$Force)
+        $registrations = $entryRegistrations[$entryIndex]
+        $conflicts = @()
+
+        if ($registrations.Count -gt 0)
+        {
+            $stateSlice = $registrationStates[$stateIndex..($stateIndex + $registrations.Count - 1)]
+            $stateIndex += $registrations.Count
+            $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -RegistrationState $stateSlice -Force:$Force)
+        }
 
         for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
         {
