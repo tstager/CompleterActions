@@ -8,7 +8,7 @@ Status (2026-09-28): milestone 0 done; milestone 1 spec and plan accepted (docs/
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
-| 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Implemented on feat/milestone-1-faster-imports, PR #7 open with CI green (2026-09-29); benchmark ratio 0.49 to 0.54 accepted; ships as a preview first |
+| 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Preview shipped 2026-09-29, tag v2.1.0-preview1, PR #7 (merge ad267e1); stable after soak |
 | 2 Authoring and distribution | 2.2.0 | Planned, additive |
 | 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking |
 
@@ -34,6 +34,8 @@ Public commands: 8 (11 exported functions). Private helpers: 45. Source: about 6
 **Shipped 2026-09-23 as v2.0.0** (release commit b2de0be) from the rc1 code after the soak passed. Everything below builds on stable 2.0.0.
 
 ## Milestone 1: Faster imports and recovery (2.1.0, additive)
+
+**Preview shipped 2026-09-29 as v2.1.0-preview1** (PR #7 merged as ad267e1, release commit e6078f4, PSGallery prerelease label preview1). All five items landed plus two new commands; 337 Pester tests, eight CI legs green, 173-script set regenerates with exactly one Hash line per entry, PSReadLine snapshots identical. Benchmark over the 173-script set, ten samples each, four runs: 2.0.0 lazy 1589 to 1676 ms, 2.1.0 lazy 815 to 886 ms, ratio 0.49 to 0.54; unhashed set 0.83 to 0.90 of 2.0.0. Stable 2.1.0 waits for the soak per decision 7.
 
 The two performance levers left after milestone 3 of the 2.0 roadmap, plus the one operational gap the soak has shown.
 
