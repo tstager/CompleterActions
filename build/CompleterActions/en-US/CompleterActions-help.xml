@@ -2623,6 +2623,210 @@ Describe 'completer conformance' {
   </command:command>
   <command:command>
     <command:details>
+      <command:name>Test-CompleterSet</command:name>
+      <maml:description>
+        <maml:para>Reports drift between a completer set file and the scripts on disk.</maml:para>
+      </maml:description>
+      <command:verb>Test</command:verb>
+      <command:noun>CompleterSet</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Reads a completer set the way `Import-CompleterSet` does, checks every entry in
+full against the scripts on disk, and returns one
+`CompleterActions.CompleterScriptFinding` record per problem. A set that
+matches its folder produces no output, so a gate can assert that the command
+returns nothing, the same shape `Test-CompleterScript` uses.
+
+The set is read with `Import-PowerShellDataFile`, which evaluates data only,
+and the set file is also parsed, never evaluated, to point each finding at a
+line and column of the set. Every strict entry is parsed once, whether or not
+its `Hash` matches, because the command verifies rather than takes the fast
+path. A trusted entry is never parsed, as at import, so it can report only
+`MissingScript`, `InvalidEntry`, `DuplicateTarget`, and the three `Hash` kinds.
+No script is executed, and the session's registrations are neither read nor
+changed, so a conflict with what the session has registered is not drift.
+
+`Construct` names the kind of drift, and `Severity` is `Error` when
+`Import-CompleterSet` without `-SkipInvalid` would reject the set because of
+it, or `Warning` when the set still imports but is stale or slower:
+
+- `MissingScript` (`Error`): `Path` does not resolve to an existing file.
+- `InvalidEntry` (`Error`): any other problem `Import-CompleterSet` reports for
+  the entry itself, with its text word for word.
+- `UnreadableTargets` (`Error`): a strict script does not parse or does not
+  name its targets with literal arguments.
+- `TargetMismatch` (`Error`): a strict entry's `Targets` differ from the
+  targets its script registers.
+- `DuplicateTarget` (`Error`): an earlier entry already lists the target, under
+  import's rule that only an entry with no `Error` claims its targets.
+- `HashMismatch` (`Warning`): the script changed since the `Hash` was written.
+- `MissingHash` (`Warning`): the entry has no `Hash`.
+- `InvalidHash` (`Warning`): the `Hash` is not `SHA256:` and 64 hexadecimal
+  digits.
+- `UnlistedScript` (`Warning`): a file under the set's directory matches
+  `-Filter` and no entry lists it.
+
+Findings come in set order, each entry's in the order above, and the
+`UnlistedScript` findings follow, sorted by path. `Path` is the set file for
+every finding, because the fix is always made in the set, usually by
+regenerating it with `Export-CompleterSet`.
+
+Every `-Path` or `-LiteralPath` value is resolved before any set is tested.
+The sets are then tested in the order given, and each set's findings are
+written before the next set is read. A set that cannot be read, such as one
+without `Version = 1`, stops the call with a terminating error after the
+findings of the earlier sets.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+          <maml:name>Path</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Filter</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Test-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+          <maml:name>LiteralPath</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Filter</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="false" variableLength="false" globbing="true" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Filter</maml:name>
+        <maml:description>
+          <maml:para>The file-name pattern of the scan for scripts that no entry lists. The scan is
+recursive under the set file's directory. The default is `*_completer.ps1`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="PSPath">
+        <maml:name>LiteralPath</maml:name>
+        <maml:description>
+          <maml:para>The literal path to a completer set file. Wildcards are not expanded.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="true" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
+        <maml:name>Path</maml:name>
+        <maml:description>
+          <maml:para>The path to a completer set file. Wildcards are supported.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>A set file path, or `Get-ChildItem` output bound through `FullName`.</maml:para>
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <maml:name>CompleterActions.CompleterScriptFinding</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>Returns `CompleterActions.CompleterScriptFinding` records with `Path`, `Line`,
+`Column`, `Severity`, `Construct`, `Message`, and `Hint` properties, or nothing
+when the set matches its folder.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para>The set file schema and its `Hash` key are described in `about_Completer_Sets`.
+The command never registers a completer, never hooks PSReadLine key handlers,
+replaces `TabExpansion2`, or changes PSReadLine options.</maml:para>
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterSet -Path ~\Completers\completers.psd1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Reports every entry that no longer matches its script and every completer
+script the set does not list, or nothing when the set is current.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterSet -LiteralPath .\completers.psd1 | Where-Object Severity -eq Error
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Lists only the drift that would make `Import-CompleterSet` reject the set.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Import-CompleterSet</maml:linkText>
+        <maml:uri>Import-CompleterSet.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Export-CompleterSet</maml:linkText>
+        <maml:uri>Export-CompleterSet.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Test-CompleterScript</maml:linkText>
+        <maml:uri>Test-CompleterScript.md</maml:uri>
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
       <command:name>Unregister-Completer</command:name>
       <maml:description>
         <maml:para>Removes completer registrations from runtime and, when applicable, module state.</maml:para>

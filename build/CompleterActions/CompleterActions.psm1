@@ -2070,6 +2070,139 @@ function Test-CompleterScript
 }
 <#
 .SYNOPSIS
+Reports drift between a completer set file and the scripts on disk.
+
+.DESCRIPTION
+Reads a completer set the way Import-CompleterSet does, checks every entry
+in full against the scripts on disk, and returns one
+CompleterActions.CompleterScriptFinding record per problem. A set that
+matches its folder produces no output, so a gate can assert that the command
+returns nothing, the same shape Test-CompleterScript uses.
+
+The set is read with Import-PowerShellDataFile, which evaluates data only,
+and the set file is also parsed, never evaluated, to point each finding at a
+line and column of the set. Every strict entry is parsed once, whether or not
+its Hash matches, because the command verifies rather than takes the fast
+path. A trusted entry is never parsed, as at import, so it can report only
+MissingScript, InvalidEntry, DuplicateTarget, and the three Hash kinds. No
+script is executed, and the session's registrations are neither read nor
+changed, so a conflict with what the session has registered is not drift.
+
+Construct names the kind of drift, and Severity is Error when
+Import-CompleterSet without -SkipInvalid would reject the set because of it,
+or Warning when the set still imports but is stale or slower:
+
+- MissingScript (Error): Path does not resolve to an existing file.
+- InvalidEntry (Error): any other problem Import-CompleterSet reports for the
+  entry itself, with its text word for word.
+- UnreadableTargets (Error): a strict script does not parse or does not name
+  its targets with literal arguments.
+- TargetMismatch (Error): a strict entry's Targets differ from the targets its
+  script registers.
+- DuplicateTarget (Error): an earlier entry already lists the target, under
+  import's rule that only an entry with no Error claims its targets.
+- HashMismatch (Warning): the script changed since the Hash was written.
+- MissingHash (Warning): the entry has no Hash.
+- InvalidHash (Warning): the Hash is not 'SHA256:' and 64 hexadecimal digits.
+- UnlistedScript (Warning): a file under the set's directory matches -Filter
+  and no entry lists it.
+
+Findings come in set order, each entry's in the order above, and the
+UnlistedScript findings follow, sorted by path. Path is the set file for
+every finding, because the fix is always made in the set, usually by
+regenerating it with Export-CompleterSet.
+
+Every -Path or -LiteralPath value is resolved before any set is tested. The
+sets are then tested in the order given, and each set's findings are written
+before the next set is read. A set that cannot be read, such as one without
+Version = 1, stops the call with a terminating error after the findings of
+the earlier sets.
+
+.PARAMETER Path
+The path to a completer set file. Wildcards are supported.
+
+.PARAMETER LiteralPath
+The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Filter
+The file-name pattern of the scan for scripts that no entry lists. The scan
+is recursive under the set file's directory. The default is *_completer.ps1.
+
+.OUTPUTS
+CompleterActions.CompleterScriptFinding
+Returns CompleterActions.CompleterScriptFinding records with Path, Line,
+Column, Severity, Construct, Message, and Hint properties, or nothing when
+the set matches its folder.
+
+.EXAMPLE
+PS> Test-CompleterSet -Path ~\Completers\completers.psd1
+
+Reports every entry that no longer matches its script and every completer
+script the set does not list, or nothing when the set is current.
+
+.EXAMPLE
+PS> Test-CompleterSet -LiteralPath .\completers.psd1 | Where-Object Severity -eq Error
+
+Lists only the drift that would make Import-CompleterSet reject the set.
+#>
+function Test-CompleterSet
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'Path')]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
+    param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath', ValueFromPipelineByPropertyName)]
+        [Alias('PSPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $Filter = '*_completer.ps1'
+    )
+
+    process
+    {
+        try
+        {
+            $resolvedPaths = @(
+                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+                {
+                    foreach ($literalPathItem in $LiteralPath)
+                    {
+                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                    }
+                }
+                else
+                {
+                    foreach ($pathItem in $Path)
+                    {
+                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                    }
+                }
+            )
+
+            foreach ($setPath in $resolvedPaths)
+            {
+                $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+                Get-CompleterSetFinding -SetDefinition $setDefinition -Filter $Filter
+            }
+        }
+        catch
+        {
+            throw "Failed to test completer set. $($_.Exception.Message)"
+        }
+    }
+}
+<#
+.SYNOPSIS
 Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
@@ -3735,6 +3868,294 @@ function Get-CompleterScriptTarget
     }
 
     return @($targetsByKey.Values)
+}
+<#
+.SYNOPSIS
+Finds the source positions of a completer set file's entries.
+
+.DESCRIPTION
+Parses the set file with the PowerShell parser, never evaluating it, and
+returns the position of the Entries key and, for each element of the Entries
+array, the element's own extent (the entry's @{ for a hashtable) and the
+extents of its Path value, Hash key and value, and Targets key.
+Test-CompleterSet uses them to point a finding at the part of the set that
+needs fixing.
+
+The elements are walked the way Import-CompleterSetDefinition reads them, so
+the positions line up with its entry numbers: an Entries array written with
+one element per line and one written with commas both work, and a $null
+element is skipped because the definition reader drops it before the entries
+are numbered.
+
+.PARAMETER LiteralPath
+The full path of the completer set file.
+
+.OUTPUTS
+CompleterActions.CompleterSetEntryExtent
+Returns one record with EntriesExtent, the extent of the Entries key or of the
+whole set when the key cannot be found, and Entries, one record per element
+in set order with Extent, PathExtent, HashExtent, and TargetsExtent. An
+extent the element does not have is null.
+#>
+function Get-CompleterSetEntryExtent
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($LiteralPath, [ref] $tokens, [ref] $parseErrors)
+
+    # Output of a statement enumerates arrays, as the data reader's @() and
+    # pipeline do; the elements of a comma array are not enumerated again.
+    $getStatementElement = $null
+    $getOutputElement = {
+        param($Expression)
+
+        if ($Expression -is [System.Management.Automation.Language.ArrayLiteralAst])
+        {
+            foreach ($element in $Expression.Elements)
+            {
+                if (-not ($element -is [System.Management.Automation.Language.VariableExpressionAst] -and $element.VariablePath.UserPath -eq 'null'))
+                {
+                    $element
+                }
+            }
+        }
+        elseif ($Expression -is [System.Management.Automation.Language.ArrayExpressionAst])
+        {
+            foreach ($statement in $Expression.SubExpression.Statements)
+            {
+                & $getStatementElement $statement
+            }
+        }
+        elseif ($Expression -is [System.Management.Automation.Language.ParenExpressionAst])
+        {
+            & $getStatementElement $Expression.Pipeline
+        }
+        elseif (-not ($Expression -is [System.Management.Automation.Language.VariableExpressionAst] -and $Expression.VariablePath.UserPath -eq 'null'))
+        {
+            $Expression
+        }
+    }
+    $getStatementElement = {
+        param($Statement)
+
+        if ($Statement -is [System.Management.Automation.Language.PipelineAst] -and
+            $Statement.PipelineElements.Count -eq 1 -and
+            $Statement.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst])
+        {
+            & $getOutputElement $Statement.PipelineElements[0].Expression
+        }
+        else
+        {
+            $Statement
+        }
+    }
+
+    $findKeyValue = {
+        param($Hashtable, $Name)
+
+        foreach ($keyValuePair in $Hashtable.KeyValuePairs)
+        {
+            if ($keyValuePair.Item1 -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $keyValuePair.Item1.Value -eq $Name)
+            {
+                return $keyValuePair
+            }
+        }
+    }
+
+    $setHashtable = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false)
+    $entriesPair = if ($null -ne $setHashtable) { & $findKeyValue $setHashtable 'Entries' }
+    $entryExtents = [System.Collections.Generic.List[object]]::new()
+
+    if ($null -ne $entriesPair)
+    {
+        foreach ($element in @(& $getStatementElement $entriesPair.Item2))
+        {
+            $pathPair = $null
+            $hashPair = $null
+            $targetsPair = $null
+
+            if ($element -is [System.Management.Automation.Language.HashtableAst])
+            {
+                $pathPair = & $findKeyValue $element 'Path'
+                $hashPair = & $findKeyValue $element 'Hash'
+                $targetsPair = & $findKeyValue $element 'Targets'
+            }
+
+            $entryExtents.Add([pscustomobject] [ordered] @{
+                    Extent        = $element.Extent
+                    PathExtent    = if ($null -ne $pathPair) { $pathPair.Item2.Extent } else { $null }
+                    HashExtent    = if ($null -ne $hashPair) { $hashPair.Item2.Extent } else { $null }
+                    TargetsExtent = if ($null -ne $targetsPair) { $targetsPair.Item1.Extent } else { $null }
+                })
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName    = 'CompleterActions.CompleterSetEntryExtent'
+        EntriesExtent = if ($null -ne $entriesPair) { $entriesPair.Item1.Extent } else { $ast.Extent }
+        Entries       = $entryExtents.ToArray()
+    }
+}
+<#
+.SYNOPSIS
+Checks one completer set against the scripts on disk and returns its drift findings.
+
+.DESCRIPTION
+Runs the checks shared with Import-CompleterSet for every entry of a set that
+Import-CompleterSetDefinition has read, and adds the checks only a drift
+report needs. Each entry goes through Resolve-CompleterSetEntry -Verify, the
+static phase of an import with the fast path turned off, so a strict script
+is parsed once and its current hash and targets come from that one parse. A
+trusted script is never parsed; its hash is read from the file.
+
+The static phase's problems become MissingScript, InvalidEntry,
+UnreadableTargets, and TargetMismatch findings with import's problem text.
+DuplicateTarget follows import's claiming rule without the session: entries
+are walked in set order, an entry with no Error finding claims its targets,
+and a later entry that lists a claimed target gets import's duplicate text.
+The declared Hash is then compared with the script's current hash
+(HashMismatch), or reported as MissingHash or InvalidHash. Last, every file
+under the set's directory that matches -Filter and that no entry lists is an
+UnlistedScript finding, compared case-insensitively on Windows and
+case-sensitively elsewhere.
+
+Nothing here reads or writes the session's registrations or runs a script.
+
+.PARAMETER SetDefinition
+The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
+returned for the set.
+
+.PARAMETER Filter
+The file-name pattern of the unlisted-script scan.
+
+.OUTPUTS
+CompleterActions.CompleterScriptFinding
+Returns the findings in set order, each entry's in the order MissingScript,
+InvalidEntry, UnreadableTargets, TargetMismatch, DuplicateTarget,
+HashMismatch, MissingHash, InvalidHash, followed by the UnlistedScript
+findings sorted by path. Path is the set file for every finding.
+#>
+function Get-CompleterSetFinding
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $SetDefinition,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Filter
+    )
+
+    $regenerateHint = 'Regenerate the set with Export-CompleterSet.'
+    $hints = @{
+        MissingScript     = 'Restore the script or remove the entry, then regenerate the set.'
+        InvalidEntry      = 'Fix the entry in the set, or regenerate the set with Export-CompleterSet.'
+        UnreadableTargets = 'Run Test-CompleterScript on the script, or mark the entry Trusted and list its targets.'
+        TargetMismatch    = 'Regenerate the set with Export-CompleterSet; a strict entry must list every target its script registers.'
+    }
+    $hints['DuplicateTarget'] = $hints['TargetMismatch']
+
+    $setPath = $SetDefinition.Path
+    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+    $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $claimedTargets = @{}
+    $entryIndex = 0
+
+    foreach ($rawEntry in $SetDefinition.Entries)
+    {
+        $entryIndex++
+        $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
+        $entryExtent = $extents.Entries[$entryIndex - 1]
+        $findings = [System.Collections.Generic.List[object]]::new()
+
+        if ($null -ne $entry.Path)
+        {
+            $null = $listedPaths.Add($entry.Path)
+        }
+
+        $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $entryIndex" } else { "Entry $entryIndex ('$($entry.DeclaredPath)')" }
+        $entryStart = $entryExtent.Extent
+        $pathStart = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryStart }
+        $hashStart = if ($null -ne $entryExtent.HashExtent) { $entryExtent.HashExtent } else { $entryStart }
+        $targetsStart = if ($null -ne $entryExtent.TargetsExtent) { $entryExtent.TargetsExtent } else { $entryStart }
+        $problemExtents = @{
+            MissingScript     = $pathStart
+            InvalidEntry      = $entryStart
+            UnreadableTargets = $pathStart
+            TargetMismatch    = $targetsStart
+        }
+
+        foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
+        {
+            foreach ($problem in @($entry.Problems | Where-Object { $_.Kind -eq $kind }))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $problemExtents[$kind] -Construct $kind -Message "${entryLabel}: $($problem.Message)" -Hint $hints[$kind]))
+            }
+        }
+
+        foreach ($target in @($entry.Targets))
+        {
+            if ($claimedTargets.Contains([string] $target.Key))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." -Hint $hints['DuplicateTarget']))
+            }
+        }
+
+        if ($findings.Count -eq 0)
+        {
+            foreach ($target in @($entry.Targets))
+            {
+                $claimedTargets[[string] $target.Key] = $entryIndex
+            }
+        }
+
+        if ($rawEntry -is [System.Collections.IDictionary])
+        {
+            if (-not $rawEntry.Contains('Hash'))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $entryStart -Construct 'MissingHash' -Severity Warning -Message "${entryLabel}: The entry has no Hash, so a change to its script cannot be detected." -Hint $regenerateHint))
+            }
+            elseif (-not (Test-CompleterSetHashFormat -Value $entry.DeclaredHash))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'InvalidHash' -Severity Warning -Message "${entryLabel}: The Hash '$($entry.DeclaredHash)' is not 'SHA256:' followed by 64 hexadecimal digits, so it is ignored." -Hint $regenerateHint))
+            }
+            elseif ($null -ne $entry.ActualHash -and $entry.ActualHash -ne [string] $entry.DeclaredHash)
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'HashMismatch' -Severity Warning -Message "${entryLabel}: The script has changed since the set was written. Declared: $($entry.DeclaredHash). Script: $($entry.ActualHash)." -Hint $regenerateHint))
+            }
+        }
+
+        $findings
+    }
+
+    $unlistedScripts = @(
+        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -ErrorAction Stop |
+            Where-Object { -not $listedPaths.Contains($_.FullName) } |
+            Sort-Object -Property FullName
+    )
+
+    foreach ($unlistedScript in $unlistedScripts)
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extents.EntriesExtent -Construct 'UnlistedScript' -Severity Warning -Message "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it." -Hint $regenerateHint
+    }
 }
 <#
 .SYNOPSIS

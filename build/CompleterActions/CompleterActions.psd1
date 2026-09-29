@@ -75,7 +75,8 @@ FunctionsToExport = 'Export-CompleterSet', 'Get-Completer',
                'Import-CompleterSet', 'Register-Completer', 
                'Register-CompleterRegistrationLegacy', 'Reset-Completer', 
                'Test-CompleterRegistration', 'Test-CompleterScript', 
-               'Unregister-Completer', 'Unregister-CompleterRegistrationLegacy'
+               'Test-CompleterSet', 'Unregister-Completer', 
+               'Unregister-CompleterRegistrationLegacy'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()

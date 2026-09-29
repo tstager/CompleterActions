@@ -83,6 +83,7 @@ FormatsToProcess = @(
      'Reset-Completer',
      'Test-CompleterRegistration',
      'Test-CompleterScript',
+    'Test-CompleterSet',
      'Unregister-Completer',
      'Unregister-CompleterRegistrationLegacy'
  )

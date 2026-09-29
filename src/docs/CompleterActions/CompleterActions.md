@@ -48,6 +48,10 @@ Runs tab completion for an input against a registered completer target.
 
 Checks completer scripts against the strict import grammar and reports findings.
 
+### [Test-CompleterSet](Test-CompleterSet.md)
+
+Reports drift between a completer set file and the scripts on disk.
+
 ### [Unregister-Completer](Unregister-Completer.md)
 
 Removes completer registrations from runtime and, when applicable, module state.
