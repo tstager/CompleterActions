@@ -84,6 +84,10 @@ BeforeAll {
     $script:UnsafeFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'UnsafeTopLevelScript.ps1'
     $script:DynamicFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'DynamicCommandName.ps1'
     $script:ThrowingStrictFixturePath = Join-Path -Path $script:FixtureRoot -ChildPath (Join-Path -Path 'LazyRegistration' -ChildPath 'ThrowingStrictCompleter.ps1')
+    $script:SetFixtureRoot = Join-Path -Path $script:FixtureRoot -ChildPath 'CompleterSet'
+    $script:HashFixturePath = Join-Path -Path $script:SetFixtureRoot -ChildPath 'HashFixture.ps1'
+    $script:NoHashFixtureRoot = Join-Path -Path $script:SetFixtureRoot -ChildPath 'NoHash'
+    $script:HashLinePattern = "^\s{12}Hash    = 'SHA256:[0-9A-F]{64}'$"
     $script:SetCleanupTargets = @(
         @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
@@ -92,7 +96,12 @@ BeforeAll {
         @{ CommandName = 'Test-ImportedOne'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'Test-ImportedTwo'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-        @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+        @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+        @{ CommandName = 'hashfixture'; CompleterType = 'Native' },
+        @{ CommandName = 'HashFixture.exe'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixturealpha'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixturealpha.exe'; CompleterType = 'Native' },
+        @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name'; CompleterType = 'Parameter' }
     )
 }
 
@@ -302,6 +311,186 @@ Describe 'Completer sets' {
             Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path $script:SetPath -WhatIf
 
             Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+        }
+
+        It 'writes a Hash between Trusted and Targets for every strict and trusted entry' {
+            $records = @(Import-CompleterScript -Path $script:HashFixturePath) +
+                @(Import-CompleterScript -Path $script:ParameterFixturePath) +
+                @(Import-CompleterScript -Path $script:TrustedFixturePath -Trusted)
+
+            $records | Export-CompleterSet -Path $script:SetPath
+
+            $lines = @(Get-Content -LiteralPath $script:SetPath)
+            $hashIndexes = @(0..($lines.Count - 1) | Where-Object { $lines[$_] -match '^\s*Hash\s*=' })
+
+            $hashIndexes.Count | Should -Be 3
+
+            foreach ($hashIndex in $hashIndexes)
+            {
+                $lines[$hashIndex] | Should -MatchExactly $script:HashLinePattern
+                $lines[$hashIndex - 1] | Should -MatchExactly '^\s{12}Trusted = \$(true|false)$'
+                $lines[$hashIndex + 1] | Should -MatchExactly '^\s{12}Targets = @\($'
+            }
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+
+            foreach ($entry in $data.Entries)
+            {
+                $scriptPath = [System.IO.Path]::GetFullPath($entry.Path, $script:SetRoot)
+                $expectedHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $scriptPath
+
+                $entry.Hash | Should -BeExactly $expectedHash -Because "the entry for '$scriptPath' hashes that script"
+            }
+        }
+
+        It 'writes the 2.0.0 export text once the Hash lines are removed' {
+            $setFolder = Join-Path -Path $script:SetRoot -ChildPath 'NoHash'
+            Copy-Item -LiteralPath $script:NoHashFixtureRoot -Destination $setFolder -Recurse
+            $outputPath = Join-Path -Path $setFolder -ChildPath 'completers.psd1'
+            $expected = @(Get-Content -LiteralPath $outputPath)
+
+            $records = @(Register-Completer -LiteralPath (Join-Path -Path $setFolder -ChildPath 'alpha_completer' -AdditionalChildPath 'alpha_completer.ps1') -Lazy -PassThru) +
+                @(Register-Completer -LiteralPath (Join-Path -Path $setFolder -ChildPath 'beta_completer' -AdditionalChildPath 'beta_completer.ps1') -Lazy -PassThru)
+
+            $records | Export-CompleterSet -Path $outputPath
+
+            $written = @(Get-Content -LiteralPath $outputPath)
+
+            @($written | Where-Object { $_ -match '^\s*Hash\s*=' }).Count | Should -Be 2
+            @($written | Where-Object { $_ -notmatch '^\s*Hash\s*=' }) | Should -BeExactly $expected -Because 'the checked-in NoHash set is what 2.0.0 wrote for the same records, and Hash is the only line 2.1.0 adds'
+        }
+
+        It 'hashes LF, CRLF, UTF-8 BOM plus CRLF, and lone-CR copies of one script to the same value' {
+            $text = [System.IO.File]::ReadAllText($script:HashFixturePath).Replace("`r`n", "`n")
+            $utf8 = [System.Text.UTF8Encoding]::new($false)
+            $variants = [ordered] @{
+                'lf.ps1'       = $utf8.GetBytes($text)
+                'crlf.ps1'     = $utf8.GetBytes($text.Replace("`n", "`r`n"))
+                'bom-crlf.ps1' = [byte[]] (@(0xEF, 0xBB, 0xBF) + $utf8.GetBytes($text.Replace("`n", "`r`n")))
+                'cr.ps1'       = $utf8.GetBytes($text.Replace("`n", "`r"))
+            }
+
+            $hashes = foreach ($variantName in $variants.Keys)
+            {
+                $variantPath = Join-Path -Path $script:SetRoot -ChildPath $variantName
+                [System.IO.File]::WriteAllBytes($variantPath, $variants[$variantName])
+
+                & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $variantPath
+            }
+
+            @($variants.Values | ForEach-Object { [System.Convert]::ToBase64String($_) } | Select-Object -Unique).Count | Should -Be 4 -Because 'the four copies differ on disk'
+            @($hashes).Count | Should -Be 4
+            @($hashes | Select-Object -Unique).Count | Should -Be 1
+            $hashes[0] | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
+        }
+
+        It 'hashes the checked-in hash fixture to its recorded literal' {
+            # Cross-checked with: git cat-file blob :tests/Fixtures/CompleterSet/HashFixture.ps1 | sha256sum
+            # The index blob is LF without a byte-order mark, which is the normalised
+            # form the Hash describes, so the literal holds on CRLF and LF checkouts.
+            $expectedHash = 'SHA256:170A3987A41EF7ED650911ED953487441C9EC47C1C7DD4C1C4096D469F66E6B1'
+
+            $hash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $script:HashFixturePath
+
+            $hash | Should -BeExactly $expectedHash
+
+            Import-CompleterScript -Path $script:HashFixturePath | Export-CompleterSet -Path $script:SetPath
+
+            (Import-PowerShellDataFile -LiteralPath $script:SetPath).Entries[0].Hash | Should -BeExactly $expectedHash
+        }
+
+        It "writes a strict entry's targets in script order and script casing when the records arrive in another order" {
+            $null = Register-Completer -LiteralPath $script:HashFixturePath -Lazy -PassThru
+            $sorted = @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.CommandName -like 'hashfixture*' })
+
+            @($sorted.CommandName) | Should -BeExactly @('hashfixture', 'HashFixture.exe') -Because 'Get-Completer sorts by CommandName, which is not the order the script registers them in'
+
+            Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @('HashFixture.exe', 'hashfixture')
+
+            $reordered = @(
+                [pscustomobject] @{ CommandName = 'HASHFIXTURE'; IsNative = $true; ScriptPath = $script:HashFixturePath; Trusted = $false }
+                [pscustomobject] @{ CommandName = 'hashfixture.EXE'; IsNative = $true; ScriptPath = $script:HashFixturePath; Trusted = $false }
+            )
+
+            $reordered | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @('HashFixture.exe', 'hashfixture')
+            @($data.Entries[0].Targets.Native | Select-Object -Unique) | Should -Be @($true)
+        }
+
+        It 'writes a trusted entry whose script is missing without Hash, warns once, and still succeeds' {
+            $missingPath = Join-Path -Path $script:SetRoot -ChildPath 'missing_completer.ps1'
+            $records = @(Import-CompleterScript -Path $script:ParameterFixturePath) + @(
+                [pscustomobject] @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name'; ScriptPath = $missingPath; Trusted = $true }
+            )
+
+            $written = $records | Export-CompleterSet -Path $script:SetPath -PassThru -WarningVariable exportWarnings -WarningAction SilentlyContinue
+
+            $written.FullName | Should -Be $script:SetPath
+            @($exportWarnings).Count | Should -Be 1
+            [string] $exportWarnings[0] | Should -Match ('^' + [regex]::Escape("The script '$missingPath' could not be read, so its entry was written without a Hash. ") + '\S')
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 2
+
+            $trustedEntry = $data.Entries | Where-Object { $_.Trusted }
+            $trustedEntry.ContainsKey('Hash') | Should -BeFalse
+            $trustedEntry.Path | Should -Be 'missing_completer.ps1'
+            @($trustedEntry.Targets.CommandName) | Should -Be @('Test-TrustedFixtureTool')
+
+            ($data.Entries | Where-Object { -not $_.Trusted }).Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
+        }
+
+        It 'reads each strict script once for both its targets and its hash' {
+            $records = @(Import-CompleterScript -Path $script:NativeFixturePath) +
+                @(Import-CompleterScript -Path $script:ParameterFixturePath) +
+                @(Import-CompleterScript -Path $script:TrustedFixturePath -Trusted)
+
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestParseCount = 0
+                $script:TestHashReadCount = 0
+                $script:TestParseFunction = ${function:Get-CompleterScriptParseResult}
+                $script:TestHashFunction = ${function:Get-CompleterScriptHash}
+
+                function script:Get-CompleterScriptParseResult
+                {
+                    param($LiteralPath)
+
+                    $script:TestParseCount++
+                    & $script:TestParseFunction -LiteralPath $LiteralPath
+                }
+
+                function script:Get-CompleterScriptHash
+                {
+                    param($Text, $LiteralPath)
+
+                    if ($PSBoundParameters.ContainsKey('LiteralPath'))
+                    {
+                        $script:TestHashReadCount++
+                    }
+
+                    & $script:TestHashFunction @PSBoundParameters
+                }
+            }
+
+            $records | Export-CompleterSet -Path $script:SetPath
+
+            $counts = & (Get-Module -Name 'CompleterActions') {
+                [pscustomobject] @{
+                    Parses    = $script:TestParseCount
+                    HashReads = $script:TestHashReadCount
+                }
+            }
+
+            $counts.Parses | Should -Be 2 -Because 'each of the two strict scripts is parsed once for its targets'
+            $counts.HashReads | Should -Be 1 -Because 'only the trusted script is read for its hash; a strict script is hashed from its parse'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries | Where-Object { $_.Hash -match '^SHA256:[0-9A-F]{64}$' }).Count | Should -Be 3
         }
     }
 
