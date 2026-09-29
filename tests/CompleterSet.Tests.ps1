@@ -75,6 +75,113 @@ BeforeAll {
         Set-Content -LiteralPath $Path -Value $content -Encoding utf8
     }
 
+    function Get-TestSetSessionState
+    {
+        param(
+            [Parameter(Mandatory)]
+            [string[]] $Key
+        )
+
+        & (Get-Module -Name 'CompleterActions') {
+            param($Key)
+
+            $snapshot = Get-CompleterRegistrationSnapshot
+
+            foreach ($keyItem in $Key)
+            {
+                $runtimeScriptBlock = $null
+
+                foreach ($view in $snapshot.Runtime)
+                {
+                    if ($view.Keys.ContainsKey($keyItem))
+                    {
+                        $runtimeScriptBlock = $view.Dictionary[$view.Keys[$keyItem]]
+                        break
+                    }
+                }
+
+                [pscustomobject] @{
+                    Key     = $keyItem
+                    Managed = if ($snapshot.Managed.Contains($keyItem)) { $snapshot.Managed[$keyItem] } else { $null }
+                    Runtime = $runtimeScriptBlock
+                }
+            }
+        } $Key
+    }
+
+    if (-not ('CompleterActionsTests.ScriptedHost' -as [type]))
+    {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Globalization;
+using System.Management.Automation;
+using System.Management.Automation.Host;
+using System.Security;
+
+namespace CompleterActionsTests
+{
+    public class ScriptedHostUserInterface : PSHostUserInterface
+    {
+        public readonly Queue<string> Answers = new Queue<string>();
+        public readonly List<string> Prompts = new List<string>();
+
+        public override PSHostRawUserInterface RawUI { get { return null; } }
+
+        public override int PromptForChoice(string caption, string message, Collection<ChoiceDescription> choices, int defaultChoice)
+        {
+            Prompts.Add(message);
+            string answer = Answers.Dequeue();
+
+            for (int index = 0; index < choices.Count; index++)
+            {
+                if (choices[index].Label.Replace("&", string.Empty) == answer)
+                {
+                    return index;
+                }
+            }
+
+            throw new InvalidOperationException("No choice is labelled '" + answer + "'.");
+        }
+
+        public override Dictionary<string, PSObject> Prompt(string caption, string message, Collection<FieldDescription> descriptions) { throw new NotSupportedException(); }
+        public override PSCredential PromptForCredential(string caption, string message, string userName, string targetName) { throw new NotSupportedException(); }
+        public override PSCredential PromptForCredential(string caption, string message, string userName, string targetName, PSCredentialTypes allowedCredentialTypes, PSCredentialUIOptions options) { throw new NotSupportedException(); }
+        public override string ReadLine() { throw new NotSupportedException(); }
+        public override SecureString ReadLineAsSecureString() { throw new NotSupportedException(); }
+        public override void Write(string value) { }
+        public override void Write(ConsoleColor foregroundColor, ConsoleColor backgroundColor, string value) { }
+        public override void WriteLine(string value) { }
+        public override void WriteErrorLine(string value) { }
+        public override void WriteDebugLine(string message) { }
+        public override void WriteProgress(long sourceId, ProgressRecord record) { }
+        public override void WriteVerboseLine(string message) { }
+        public override void WriteWarningLine(string message) { }
+    }
+
+    public class ScriptedHost : PSHost
+    {
+        private readonly Guid instanceId = Guid.NewGuid();
+        private readonly ScriptedHostUserInterface userInterface = new ScriptedHostUserInterface();
+
+        public ScriptedHostUserInterface ScriptedUI { get { return userInterface; } }
+        public override CultureInfo CurrentCulture { get { return CultureInfo.CurrentCulture; } }
+        public override CultureInfo CurrentUICulture { get { return CultureInfo.CurrentUICulture; } }
+        public override Guid InstanceId { get { return instanceId; } }
+        public override string Name { get { return "CompleterActionsScriptedHost"; } }
+        public override PSHostUserInterface UI { get { return userInterface; } }
+        public override Version Version { get { return new Version(1, 0); } }
+        public override void EnterNestedPrompt() { throw new NotSupportedException(); }
+        public override void ExitNestedPrompt() { throw new NotSupportedException(); }
+        public override void NotifyBeginApplication() { }
+        public override void NotifyEndApplication() { }
+        public override void SetShouldExit(int exitCode) { }
+    }
+}
+'@
+    }
+
     $script:FixtureRoot = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures'
     $script:ImportFixtureRoot = Join-Path -Path $script:FixtureRoot -ChildPath 'ImportCompleterScript'
     $script:ParameterFixturePath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'ParameterCompleter.ps1'
@@ -969,6 +1076,436 @@ Describe 'Completer sets' {
 
             $counts.Snapshots | Should -Be 1
             $counts.States | Should -Be 1 -Because 'the set resolves every target in one state pass'
+        }
+
+        It 'resolves the runtime dictionaries and the managed table once per set' {
+            $secondSetPath = Join-Path -Path $script:SetRoot -ChildPath 'second.psd1'
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:NativeFixturePath' }"
+            Write-TestCompleterSet -Path $secondSetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestRuntimeCallers = [System.Collections.Generic.List[string]]::new()
+                $script:TestTableCallers = [System.Collections.Generic.List[string]]::new()
+                $script:TestRuntimeFunction = ${function:Get-CompleterRuntime}
+                $script:TestTableFunction = ${function:Get-ManagedCompleterRegistrationTable}
+
+                function script:Get-CompleterRuntime
+                {
+                    $script:TestRuntimeCallers.Add((Get-PSCallStack)[1].Command)
+                    & $script:TestRuntimeFunction
+                }
+
+                function script:Get-ManagedCompleterRegistrationTable
+                {
+                    $script:TestTableCallers.Add((Get-PSCallStack)[1].Command)
+                    & $script:TestTableFunction
+                }
+            }
+
+            $registered = @(Import-CompleterSet -LiteralPath $script:SetPath, $secondSetPath)
+
+            $callers = & (Get-Module -Name 'CompleterActions') {
+                [pscustomobject] @{
+                    Runtime = @($script:TestRuntimeCallers)
+                    Table   = @($script:TestTableCallers)
+                }
+            }
+
+            @($registered.Key) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
+            @($callers.Runtime) | Should -Be @('Get-CompleterRegistrationSnapshot', 'Get-CompleterRegistrationSnapshot') -Because 'each set resolves the runtime dictionaries once, in its snapshot'
+            @($callers.Table) | Should -Be @('Get-CompleterRegistrationSnapshot', 'Get-CompleterRegistrationSnapshot') -Because 'each set resolves the managed table once, in its snapshot'
+            @(Get-Completer -State Active, Pending, Failed, Stale).Count | Should -Be 4
+        }
+
+        It 'imports only the confirmed entries as one transaction under -Confirm' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            $scriptedHost = [CompleterActionsTests.ScriptedHost]::new()
+
+            foreach ($answer in 'Yes', 'No', 'Yes')
+            {
+                $scriptedHost.ScriptedUI.Answers.Enqueue($answer)
+            }
+
+            $runspace = [runspacefactory]::CreateRunspace($scriptedHost)
+            $powerShell = [powershell]::Create()
+
+            try
+            {
+                $runspace.Open()
+                $powerShell.Runspace = $runspace
+                $null = $powerShell.AddScript({
+                        param($ModulePath, $SetPath)
+
+                        Import-Module -Name $ModulePath -Force
+                        $imported = @(Import-CompleterSet -LiteralPath $SetPath -Confirm)
+
+                        [pscustomobject] @{
+                            Returned   = @($imported.Key)
+                            Registered = @((Get-Completer -State Active, Pending, Failed, Stale).Key | Sort-Object)
+                        }
+                    }).AddArgument((Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1')).AddArgument($script:SetPath)
+                $result = @($powerShell.Invoke())
+                $errors = @($powerShell.Streams.Error)
+            }
+            finally
+            {
+                $powerShell.Dispose()
+                $runspace.Dispose()
+            }
+
+            $errors | Should -BeNullOrEmpty
+            $scriptedHost.ScriptedUI.Answers.Count | Should -Be 0
+            $scriptedHost.ScriptedUI.Prompts.Count | Should -Be 3
+            $scriptedHost.ScriptedUI.Prompts[1] | Should -BeLike '*Import completer set entry*ParameterCompleter.ps1*'
+            $result.Count | Should -Be 1
+            @($result[0].Returned) | Should -Be @('importfixture', 'importfixture.exe', 'test-trustedfixturetool:name')
+            @($result[0].Registered) | Should -Be @('importfixture', 'importfixture.exe', 'test-trustedfixturetool:name')
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty -Because 'the scripted import ran in its own runspace'
+        }
+
+        It 'treats each set of one call as its own transaction' {
+            $secondSetPath = Join-Path -Path $script:SetRoot -ChildPath 'second.psd1'
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:NativeFixturePath' }"
+            Write-TestCompleterSet -Path $secondSetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    if ($Registration.Key -eq 'test-trustedfixturetool:name')
+                    {
+                        throw 'forced second set failure'
+                    }
+
+                    & $script:TestManagedWriteFunction @PSBoundParameters
+                }
+            }
+
+            $thrown = { Import-CompleterSet -LiteralPath $script:SetPath, $secondSetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'Test-TrustedFixtureTool:Name'. forced second set failure"
+            @((Get-Completer -State Active, Pending, Failed, Stale).Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            @(Get-TestSetSessionState -Key 'test-importedfixturetool:name', 'test-trustedfixturetool:name' | Where-Object { $null -ne $_.Managed -or $null -ne $_.Runtime }) | Should -BeNullOrEmpty
+        }
+
+        It 'rolls back the set when a runtime write fails partway through the batch' {
+            $keys = @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestManagedWriteCount = 0
+                $script:TestRuntimeWriteFunction = ${function:Add-RuntimeCompleterRegistration}
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-RuntimeCompleterRegistration
+                {
+                    param($Target, $ScriptBlock, $Runtime)
+
+                    if ($Target.Key -eq 'test-importedfixturetool:name')
+                    {
+                        throw 'forced runtime failure'
+                    }
+
+                    & $script:TestRuntimeWriteFunction @PSBoundParameters
+                }
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    $script:TestManagedWriteCount++
+                    & $script:TestManagedWriteFunction @PSBoundParameters
+                }
+            }
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'Test-ImportedFixtureTool:Name'. forced runtime failure"
+            & (Get-Module -Name 'CompleterActions') { $script:TestManagedWriteCount } | Should -Be 0 -Because 'the managed pass starts only after every runtime write succeeded'
+
+            foreach ($state in Get-TestSetSessionState -Key $keys)
+            {
+                $state.Managed | Should -BeNullOrEmpty -Because "no managed record may remain for '$($state.Key)'"
+                $state.Runtime | Should -BeNullOrEmpty -Because "no runtime value may remain for '$($state.Key)'"
+            }
+        }
+
+        It 'rolls back every runtime write of the set when the managed write of the first record fails' {
+            $keys = @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestRuntimeWrites = [System.Collections.Generic.List[string]]::new()
+                $script:TestRuntimeWriteFunction = ${function:Add-RuntimeCompleterRegistration}
+
+                function script:Add-RuntimeCompleterRegistration
+                {
+                    param($Target, $ScriptBlock, $Runtime)
+
+                    $script:TestRuntimeWrites.Add([string] $Target.Key)
+                    & $script:TestRuntimeWriteFunction @PSBoundParameters
+                }
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    throw "forced managed failure for '$($Registration.Key)'"
+                }
+            }
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'importfixture'. forced managed failure for 'importfixture'"
+            & (Get-Module -Name 'CompleterActions') { @($script:TestRuntimeWrites) } | Should -Be $keys -Because 'every runtime write of the set succeeded before the first managed write'
+
+            foreach ($state in Get-TestSetSessionState -Key $keys)
+            {
+                $state.Managed | Should -BeNullOrEmpty -Because "no managed record may be added for '$($state.Key)'"
+                $state.Runtime | Should -BeNullOrEmpty -Because "no runtime value may remain for '$($state.Key)'"
+            }
+        }
+
+        It 'rolls back both passes when the managed write of the second of three entries fails' {
+            $keys = @('test-trustedfixturetool:name', 'test-importedfixturetool:name', 'importfixture', 'importfixture.exe')
+            $externalScriptBlock = {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+
+                [System.Management.Automation.CompletionResult]::new('external', 'external', 'ParameterValue', 'external')
+            }
+
+            Register-ArgumentCompleter -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name' -ScriptBlock $externalScriptBlock
+            $null = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture' -Native
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:NativeFixturePath' }"
+            )
+            $before = @(Get-TestSetSessionState -Key $keys)
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    if ($Registration.Key -eq 'test-importedfixturetool:name')
+                    {
+                        throw 'forced managed failure'
+                    }
+
+                    & $script:TestManagedWriteFunction @PSBoundParameters
+                }
+            }
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath -Force } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'Test-ImportedFixtureTool:Name'. forced managed failure"
+            $after = @(Get-TestSetSessionState -Key $keys)
+            $before[1].Runtime | Should -Not -BeNullOrEmpty
+            $before[2].Managed | Should -Not -BeNullOrEmpty
+
+            for ($index = 0; $index -lt $keys.Count; $index++)
+            {
+                [object]::ReferenceEquals($after[$index].Managed, $before[$index].Managed) | Should -BeTrue -Because "the managed record of '$($keys[$index])' is back to its state before the import"
+                [object]::ReferenceEquals($after[$index].Runtime, $before[$index].Runtime) | Should -BeTrue -Because "the runtime value of '$($keys[$index])' is back to its state before the import"
+            }
+        }
+
+        It 'restores the replaced runtime values and managed records when a forced re-import fails partway through' {
+            $keys = @('test-importedfixturetool:name', 'importfixture', 'importfixture.exe', 'test-trustedfixturetool:name')
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            $first = @(Import-CompleterSet -Path $script:SetPath)
+            $inputScript = 'Test-ImportedFixtureTool -Name '
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Contain 'imported-alpha'
+            $before = @(Get-TestSetSessionState -Key $keys)
+            $before[0].Managed.State | Should -Be 'Active'
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestManagedWriteFailed = $false
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    if ($Registration.Key -eq 'importfixture' -and -not $script:TestManagedWriteFailed)
+                    {
+                        $script:TestManagedWriteFailed = $true
+                        throw 'forced managed failure'
+                    }
+
+                    & $script:TestManagedWriteFunction @PSBoundParameters
+                }
+            }
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath -Force } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'importfixture'. forced managed failure"
+            $after = @(Get-TestSetSessionState -Key $keys)
+
+            [object]::ReferenceEquals($after[0].Managed, $before[0].Managed) | Should -BeTrue -Because 'the Active record is restored exactly'
+            [object]::ReferenceEquals($after[0].Runtime, $before[0].Runtime) | Should -BeTrue -Because 'the live script block of the Active record is restored exactly'
+            $after[0].Managed.State | Should -Be 'Active'
+
+            for ($index = 1; $index -lt $keys.Count; $index++)
+            {
+                [object]::ReferenceEquals($after[$index].Managed, $first[$index]) | Should -BeTrue -Because "'$($keys[$index])' keeps the Pending record of the first import"
+                [object]::ReferenceEquals($after[$index].Runtime, $first[$index].ScriptBlock) | Should -BeTrue -Because "'$($keys[$index])' keeps the stub of the first import"
+                $after[$index].Managed.State | Should -Be 'Pending'
+            }
+        }
+
+        It 'reports a rollback failure of the batch after the registration failure' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    if ($Registration.Key -eq 'test-trustedfixturetool:name')
+                    {
+                        throw 'forced managed failure'
+                    }
+
+                    & $script:TestManagedWriteFunction @PSBoundParameters
+                }
+
+                function script:Remove-RuntimeCompleterRegistration { throw 'forced rollback failure' }
+            }
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Be "Failed to import completer set. Failed to register the completer 'Test-TrustedFixtureTool:Name'. forced managed failure Rollback of the previous runtime and managed state also failed, so the target may be inconsistent: forced rollback failure forced rollback failure"
+        }
+
+        It 'writes every runtime value of the set before the first managed record' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            )
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestWriteEvents = [System.Collections.Generic.List[string]]::new()
+                $script:TestRuntimeWriteFunction = ${function:Add-RuntimeCompleterRegistration}
+                $script:TestManagedWriteFunction = ${function:Add-ManagedCompleterRegistration}
+
+                function script:Add-RuntimeCompleterRegistration
+                {
+                    param($Target, $ScriptBlock, $Runtime)
+
+                    $script:TestWriteEvents.Add("Runtime $($Target.Key)")
+                    & $script:TestRuntimeWriteFunction @PSBoundParameters
+                }
+
+                function script:Add-ManagedCompleterRegistration
+                {
+                    param($Registration, $Table)
+
+                    $script:TestWriteEvents.Add("Managed $($Registration.Key)")
+                    & $script:TestManagedWriteFunction @PSBoundParameters
+                }
+            }
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $events = @(& (Get-Module -Name 'CompleterActions') { @($script:TestWriteEvents) })
+            $runtimeEvents = @($events | Where-Object { $_ -like 'Runtime *' })
+            $managedEvents = @($events | Where-Object { $_ -like 'Managed *' })
+            $lastRuntimeIndex = [array]::LastIndexOf($events, $runtimeEvents[-1])
+            $firstManagedIndex = [array]::IndexOf($events, $managedEvents[0])
+
+            $registered.Count | Should -Be 4
+            $runtimeEvents | Should -Be @('Runtime importfixture', 'Runtime importfixture.exe', 'Runtime test-importedfixturetool:name', 'Runtime test-trustedfixturetool:name')
+            $managedEvents | Should -Be @('Managed importfixture', 'Managed importfixture.exe', 'Managed test-importedfixturetool:name', 'Managed test-trustedfixturetool:name')
+            $lastRuntimeIndex | Should -BeLessThan $firstManagedIndex
+        }
+
+        It 'reports a set whose entries are all invalid without a state pass' -TestCases @(
+            @{ SkipInvalid = $false }
+            @{ SkipInvalid = $true }
+        ) {
+            param($SkipInvalid)
+
+            Set-Content -LiteralPath (Join-Path -Path $script:SetRoot -ChildPath 'notes.txt') -Value 'not a script' -Encoding utf8
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = 'missing.ps1' }"
+                "@{ Path = 'notes.txt' }"
+            )
+            $resolvedSetPath = (Resolve-Path -LiteralPath $script:SetPath).ProviderPath
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestStateCount = 0
+                $script:TestWriteBatches = [System.Collections.Generic.List[string]]::new()
+                $script:TestStateFunction = ${function:Resolve-CompleterRegistrationState}
+                $script:TestWriteFunction = ${function:Add-CompleterRegistration}
+
+                function script:Resolve-CompleterRegistrationState
+                {
+                    param($Key, $Snapshot)
+
+                    $script:TestStateCount++
+                    & $script:TestStateFunction -Key $Key -Snapshot $Snapshot
+                }
+
+                function script:Add-CompleterRegistration
+                {
+                    param($Registration, $Conflict, $Snapshot)
+
+                    $script:TestWriteBatches.Add(('{0} registrations, {1} conflicts' -f @($Registration).Count, @($Conflict).Count))
+                    & $script:TestWriteFunction @PSBoundParameters
+                }
+            }
+
+            if ($SkipInvalid)
+            {
+                $registered = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningVariable warnings -WarningAction SilentlyContinue)
+
+                $registered | Should -BeNullOrEmpty
+                $warningText = @($warnings | ForEach-Object { $_.Message })
+                $warningText.Count | Should -Be 2
+                $warningText[0] | Should -BeLike "Completer set '$resolvedSetPath' skipped Entry 1 ('missing.ps1'): The file '*missing.ps1' does not exist."
+                $warningText[1] | Should -BeLike "Completer set '$resolvedSetPath' skipped Entry 2 ('notes.txt'): The file '*notes.txt' is not a .ps1 script."
+                & (Get-Module -Name 'CompleterActions') { @($script:TestWriteBatches) } | Should -Be @('0 registrations, 0 conflicts')
+            }
+            else
+            {
+                $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+                $thrown.Exception.Message.StartsWith("Failed to import completer set. Completer set '$resolvedSetPath' has 2 invalid entries and nothing was registered. ") | Should -BeTrue
+                & (Get-Module -Name 'CompleterActions') { @($script:TestWriteBatches) } | Should -BeNullOrEmpty
+            }
+
+            & (Get-Module -Name 'CompleterActions') { $script:TestStateCount } | Should -Be 0 -Because 'no entry resolved a target, so there is nothing to reconcile'
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
 
         It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {

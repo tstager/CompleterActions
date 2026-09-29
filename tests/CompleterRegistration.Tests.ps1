@@ -456,6 +456,76 @@ Describe 'Private completer registration helpers' {
         $result.RemainingCount | Should -Be 0
     }
 
+    It 'creates a missing runtime dictionary once and reuses it for every write of a batch' {
+        if (-not ('CompleterActionsTests.RuntimeContextProbe' -as [type]))
+        {
+            Add-Type -TypeDefinition @'
+namespace CompleterActionsTests
+{
+    public class RuntimeContextProbe
+    {
+        private object nativeArgumentCompleters;
+
+        public int NativeSetCount { get; private set; }
+
+        public object NativeArgumentCompleters
+        {
+            get { return nativeArgumentCompleters; }
+            set { nativeArgumentCompleters = value; NativeSetCount++; }
+        }
+    }
+}
+'@
+        }
+
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $script:TestRuntimeLookupCount = 0
+
+            function script:Get-CompleterRuntime
+            {
+                $script:TestRuntimeLookupCount++
+                throw 'the batch must write through the runtime object it was given'
+            }
+
+            $context = [CompleterActionsTests.RuntimeContextProbe]::new()
+            $runtime = [pscustomobject] [ordered] @{
+                PSTypeName               = 'CompleterActions.CompleterRuntime'
+                ExecutionContext         = $context
+                CustomProperty           = $null
+                CustomArgumentCompleters = $null
+                NativeProperty           = $context.GetType().GetProperty('NativeArgumentCompleters')
+                NativeArgumentCompleters = $null
+            }
+            $firstScriptBlock = { 'first' }
+            $secondScriptBlock = { 'second' }
+
+            $null = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'batchfirst' -Native) -ScriptBlock $firstScriptBlock -Runtime $runtime
+            $dictionaryAfterFirstWrite = $runtime.NativeArgumentCompleters
+            $null = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'batchsecond' -Native) -ScriptBlock $secondScriptBlock -Runtime $runtime
+
+            [pscustomobject] @{
+                SetCount      = $context.NativeSetCount
+                LookupCount   = $script:TestRuntimeLookupCount
+                SameOnRuntime = [object]::ReferenceEquals($dictionaryAfterFirstWrite, $runtime.NativeArgumentCompleters)
+                SameOnContext = [object]::ReferenceEquals($context.NativeArgumentCompleters, $runtime.NativeArgumentCompleters)
+                Keys          = @($runtime.NativeArgumentCompleters.Keys | Sort-Object)
+                FirstStored   = [object]::ReferenceEquals($runtime.NativeArgumentCompleters['batchfirst'], $firstScriptBlock)
+                SecondStored  = [object]::ReferenceEquals($runtime.NativeArgumentCompleters['batchsecond'], $secondScriptBlock)
+            }
+        }
+
+        $result.SetCount | Should -Be 1 -Because 'the dictionary is created and set on the execution context once'
+        $result.LookupCount | Should -Be 0
+        $result.SameOnRuntime | Should -BeTrue -Because 'the created dictionary is written back onto the runtime object'
+        $result.SameOnContext | Should -BeTrue
+        $result.Keys | Should -Be @('batchfirst', 'batchsecond')
+        $result.FirstStored | Should -BeTrue -Because 'the second write must not replace the dictionary that holds the first'
+        $result.SecondStored | Should -BeTrue
+    }
+
     It 'throws a clear error when runtime execution context internals are unavailable' {
         $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
         $module = Import-Module -Name $moduleManifestPath -Force -PassThru
