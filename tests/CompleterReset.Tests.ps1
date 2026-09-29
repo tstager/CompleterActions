@@ -574,7 +574,7 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
 
         # The error stream, not -ErrorVariable: the write helper's own throw,
         # caught inside Reset-Completer, is also collected by -ErrorVariable.
-        $resetErrors = @(Reset-Completer -CommandName 'resetfixture' -Native 2>&1)
+        $resetErrors = @(Reset-Completer -CommandName 'resetfixture' -Native -ErrorAction Continue 2>&1)
 
         $resetErrors.Count | Should -Be 1
         $resetErrors[0].Exception.Message | Should -BeExactly "Failed to reset the completer 'resetfixture'. Failed to register the completer 'resetfixture'. forced reset failure"
@@ -592,7 +592,7 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
 
         # The error stream, not -ErrorVariable: the resolver's own throw, caught
         # inside Reset-Completer, is also collected by -ErrorVariable.
-        $output = @(Reset-Completer -InputObject @([pscustomobject] @{ Key = 'resetfixture' }, $active) -PassThru 2>&1)
+        $output = @(Reset-Completer -InputObject @([pscustomobject] @{ Key = 'resetfixture' }, $active) -PassThru -ErrorAction Continue 2>&1)
         $succeeded = $?
         $resetErrors = @($output | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
         $records = @($output | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] })
