@@ -28,3 +28,15 @@ LazyNoHash     173     366      10  1447.40 1375.90 1588.10         0.17        
 | `LazyNoHash` against `Baseline` | within 10 percent | 1447.4 / 1592.8 ms, 9.1 percent faster | Pass |
 
 The `Targets` column counts the records of the eager export the tool builds its set from (366). The committed `ps_completers.psd1` resolves to 362 records (checks 4, 7, and 9).
+
+## Rerun after `fa3f43f`
+
+`fa3f43f` removes redundant helper calls from the per-target import path (no record changes). The same command was run three times on 2026-09-28 at `fa3f43f`, pwsh 7.6.6, PS_Completers at `c821644`, with the baseline package extracted from `v2.0.0` the same way. Each run reported `Scripts: 173, targets: 366` and `Set: 173 entries, 173 Hash lines. No-Hash copy: 173 entries, 0 Hash lines.`
+
+| Run | Eager ms | Baseline ms | Lazy ms | LazyNoHash ms | `Lazy` `RatioToBaseline` | `LazyNoHash` `RatioToBaseline` |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | 8152.7 | 1589.4 | 815.1 | 1362.2 | 0.51 | 0.86 |
+| 2 | 8675.2 | 1676.2 | 824.1 | 1388.4 | 0.49 | 0.83 |
+| 3 | 9053.7 | 1656.3 | 886.0 | 1427.8 | 0.53 | 0.86 |
+
+Interleaved child-process A/B runs of `Import-CompleterSet` alone over the hashed set put `fa3f43f` about 40 to 60 ms below `1432534`, which is smaller than the run-to-run spread of the `Lazy` median above (815 to 886 ms). The `Lazy` ratio therefore sits on the 0.50 line rather than below it: one run of three passes, and check 1 stays a miss under the section 7 fallback. The `LazyNoHash` leg is now 14 to 17 percent faster than 2.0.0, outside the within-10-percent band on the fast side, as the WP7 run (0.90) already was. Whether the fast side of that band counts as a miss, and whether the restated exit criterion changes from 0.54, are the owner's calls.
