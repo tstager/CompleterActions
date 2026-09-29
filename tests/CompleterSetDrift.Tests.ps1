@@ -597,6 +597,39 @@ Describe 'Test-CompleterSet' {
         $invalid[0].Path | Should -Be $script:SetPath
     }
 
+    It 'reports DuplicateTarget next to <Case> as import does' -TestCases @(
+        @{
+            Case     = 'a trusted entry whose script is missing'
+            Entry    = '        @{ Path = ''gone_completer/gone_completer.ps1''; Trusted = $true; Targets = @(@{ CommandName = ''setfixturealpha''; Native = $true }) }'
+            Expected = @('MissingScript', 'DuplicateTarget')
+        }
+        @{
+            Case     = 'a Trusted value that is not a bool'
+            Entry    = '        @{ Path = ''alpha_completer/alpha_completer.ps1''; Trusted = ''yes'' }'
+            Expected = @('InvalidEntry', 'DuplicateTarget', 'DuplicateTarget')
+        }
+        @{
+            Case     = 'a malformed target'
+            Entry    = '        @{ Path = ''alpha_completer/alpha_completer.ps1''; Trusted = $false; Targets = @(@{ CommandName = ''setfixturealpha''; Native = $true }, @{ CommandName = ''setfixturealpha.exe''; Native = $true }, @{ CommandName = ''q'' }) }'
+            Expected = @('InvalidEntry', 'DuplicateTarget', 'DuplicateTarget')
+        }
+    ) {
+        $lines = Read-TestSetText -Path $script:SetPath
+        $range = @(Get-TestEntryRange -Line $lines)[1]
+        Write-TestSetText -Path $script:SetPath -Line @(
+            $lines[0..($range.Start - 1)]
+            $Entry
+            $lines[($range.End + 1)..($lines.Count - 1)]
+        )
+
+        $errors = @(Test-CompleterSet -LiteralPath $script:SetPath | Where-Object { $_.Severity -eq 'Error' })
+        $import = Invoke-TestSetImport -Path $script:SetPath
+
+        $import.Rejected | Should -BeTrue
+        @($errors.Construct) | Should -Be $Expected -Because 'an Error finding does not take the entry''s other targets out of the duplicate check at import'
+        @($errors.Message) | Should -BeExactly @($import.Problems)
+    }
+
     It 'reports UnreadableTargets for a strict script that <Case>' -TestCases @(
         @{
             Case    = 'does not parse'
@@ -750,6 +783,34 @@ Describe 'Test-CompleterSet' {
 
         @($findings.Construct) | Should -Be @('UnlistedScript')
         $findings[0].Message | Should -BeLike "*'$hiddenPath'*"
+    }
+
+    It 'writes the entry findings and then throws when a folder under the set directory cannot be read' -Skip:(-not $IsWindows) {
+        Clear-TestSetLine -Path $script:SetPath -Anchor 'Hash' -Entry 1
+        $lockedPath = Join-Path -Path $script:Folder -ChildPath 'locked'
+        $null = New-Item -ItemType Directory -Path $lockedPath
+        $written = [System.Collections.Generic.List[object]]::new()
+        $caught = $null
+
+        $null = icacls $lockedPath /deny "$($env:USERNAME):(OI)(CI)(RX)"
+        $LASTEXITCODE | Should -Be 0
+
+        try
+        {
+            Test-CompleterSet -LiteralPath $script:SetPath | ForEach-Object { $written.Add($_) }
+        }
+        catch
+        {
+            $caught = $_
+        }
+        finally
+        {
+            $null = icacls $lockedPath /remove:d $env:USERNAME
+        }
+
+        @($written.Construct) | Should -Be @('MissingHash')
+        $caught | Should -Not -BeNullOrEmpty -Because 'a scan that skipped the folder could miss an unlisted script and let an empty-output gate pass'
+        $caught.Exception.Message | Should -BeLike "Failed to test completer set. *'$([System.Management.Automation.WildcardPattern]::Escape($lockedPath))'*"
     }
 
     It 'binds <Parameter> like Import-CompleterSet' -TestCases @(
