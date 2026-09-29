@@ -101,7 +101,10 @@ BeforeAll {
         @{ CommandName = 'HashFixture.exe'; CompleterType = 'Native' },
         @{ CommandName = 'setfixturealpha'; CompleterType = 'Native' },
         @{ CommandName = 'setfixturealpha.exe'; CompleterType = 'Native' },
-        @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+        @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name'; CompleterType = 'Parameter' },
+        @{ CommandName = 'setfixtureprobe'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixtureextra'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixtureforged'; CompleterType = 'Native' }
     )
 }
 
@@ -1030,6 +1033,486 @@ Describe 'Completer sets' {
 
             $before.Count | Should -BeGreaterThan 0
             $after | Should -Be $before
+        }
+    }
+
+    Context 'Import-CompleterSet fast path' {
+        BeforeAll {
+            function Build-TestHashedSet
+            {
+                $setFolder = Join-Path -Path $script:SetRoot -ChildPath 'NoHash'
+                Copy-Item -LiteralPath $script:NoHashFixtureRoot -Destination $setFolder -Recurse
+                $alphaPath = Join-Path -Path $setFolder -ChildPath 'alpha_completer' -AdditionalChildPath 'alpha_completer.ps1'
+                $betaPath = Join-Path -Path $setFolder -ChildPath 'beta_completer' -AdditionalChildPath 'beta_completer.ps1'
+                $setPath = Join-Path -Path $setFolder -ChildPath 'completers.psd1'
+
+                @(
+                    [pscustomobject] @{ CommandName = 'setfixturealpha'; IsNative = $true; ScriptPath = $alphaPath; Trusted = $false }
+                    [pscustomobject] @{ CommandName = 'setfixturealpha.exe'; IsNative = $true; ScriptPath = $alphaPath; Trusted = $false }
+                    [pscustomobject] @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name'; ScriptPath = $betaPath; Trusted = $false }
+                ) | Export-CompleterSet -Path $setPath
+
+                $data = Import-PowerShellDataFile -LiteralPath $setPath
+
+                [pscustomobject] @{
+                    Folder    = $setFolder
+                    SetPath   = $setPath
+                    AlphaPath = $alphaPath
+                    BetaPath  = $betaPath
+                    AlphaHash = $data.Entries[0].Hash
+                    BetaHash  = $data.Entries[1].Hash
+                }
+            }
+
+            function Get-TestExpectedRecordText
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [psobject] $Set
+                )
+
+                @(
+                    "setfixturealpha|setfixturealpha|Pending|$($Set.AlphaPath)|False"
+                    "setfixturealpha.exe|setfixturealpha.exe|Pending|$($Set.AlphaPath)|False"
+                    "test-setfixturebeta:name|Test-SetFixtureBeta:Name|Pending|$($Set.BetaPath)|False"
+                )
+            }
+
+            function ConvertTo-TestRecordText
+            {
+                param(
+                    [Parameter()]
+                    [object[]] $Record
+                )
+
+                @($Record | ForEach-Object { '{0}|{1}|{2}|{3}|{4}' -f $_.Key, $_.RuntimeKey, $_.State, $_.ScriptPath, $_.Trusted })
+            }
+
+            function Enable-TestParseCounter
+            {
+                & (Get-Module -Name 'CompleterActions') {
+                    $script:TestTargetCalls = [System.Collections.Generic.List[string]]::new()
+                    $script:TestParseCalls = [System.Collections.Generic.List[string]]::new()
+                    $script:TestTargetFunction = ${function:Get-CompleterScriptTarget}
+                    $script:TestParseFunction = ${function:Get-CompleterScriptParseResult}
+
+                    function script:Get-CompleterScriptTarget
+                    {
+                        param($LiteralPath, $ParseResult)
+
+                        $script:TestTargetCalls.Add($LiteralPath)
+                        & $script:TestTargetFunction @PSBoundParameters
+                    }
+
+                    function script:Get-CompleterScriptParseResult
+                    {
+                        param($LiteralPath)
+
+                        $script:TestParseCalls.Add($LiteralPath)
+                        & $script:TestParseFunction @PSBoundParameters
+                    }
+                }
+            }
+
+            function Get-TestParseCall
+            {
+                & (Get-Module -Name 'CompleterActions') {
+                    [pscustomobject] @{
+                        Targets = @($script:TestTargetCalls)
+                        Parses  = @($script:TestParseCalls)
+                    }
+                }
+            }
+
+            function Invoke-TestVerboseImport
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [string[]] $LiteralPath
+                )
+
+                $output = @(Import-CompleterSet -LiteralPath $LiteralPath -Verbose 4>&1)
+
+                [pscustomobject] @{
+                    Records = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                    Verbose = @(
+                        $output |
+                            Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '^(Entry \d+ |Completer set )' } |
+                            ForEach-Object { $_.Message }
+                    )
+                }
+            }
+
+            function Clear-TestSetHashLine
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [string] $LiteralPath
+                )
+
+                $lines = @(Get-Content -LiteralPath $LiteralPath | Where-Object { $_ -notmatch '^\s*Hash\s*=' })
+                Set-Content -LiteralPath $LiteralPath -Value $lines -Encoding utf8
+            }
+        }
+
+        It 'imports the checked-in set without Hash with the records 2.0.0 produced' {
+            $setFolder = Join-Path -Path $script:SetRoot -ChildPath 'NoHash'
+            Copy-Item -LiteralPath $script:NoHashFixtureRoot -Destination $setFolder -Recurse
+            $setPath = Join-Path -Path $setFolder -ChildPath 'completers.psd1'
+            $alphaPath = Join-Path -Path $setFolder -ChildPath 'alpha_completer' -AdditionalChildPath 'alpha_completer.ps1'
+            $betaPath = Join-Path -Path $setFolder -ChildPath 'beta_completer' -AdditionalChildPath 'beta_completer.ps1'
+            Enable-TestParseCounter
+
+            $output = @(Import-CompleterSet -LiteralPath $setPath -Verbose -WarningVariable importWarnings -ErrorVariable importErrors 4>&1)
+            $succeeded = $?
+
+            $succeeded | Should -BeTrue
+            @($importWarnings).Count | Should -Be 0
+            @($importErrors).Count | Should -Be 0
+
+            $records = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+            ConvertTo-TestRecordText -Record $records | Should -BeExactly @(
+                "setfixturealpha|setfixturealpha|Pending|$alphaPath|False"
+                "setfixturealpha.exe|setfixturealpha.exe|Pending|$alphaPath|False"
+                "test-setfixturebeta:name|Test-SetFixtureBeta:Name|Pending|$betaPath|False"
+            )
+
+            $calls = Get-TestParseCall
+            $calls.Targets | Should -Be @($alphaPath, $betaPath)
+            $calls.Parses | Should -Be @($alphaPath, $betaPath)
+
+            $verbose = @($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '^Entry \d+ ' } | ForEach-Object { $_.Message })
+            $verbose | Should -BeExactly @(
+                "Entry 1 ('alpha_completer/alpha_completer.ps1'): no hash; parsed the script."
+                "Entry 2 ('beta_completer/beta_completer.ps1'): no hash; parsed the script."
+            )
+        }
+
+        It 'skips the parse for every strict entry whose Hash matches' {
+            $set = Build-TestHashedSet
+            Enable-TestParseCounter
+
+            $result = Invoke-TestVerboseImport -LiteralPath $set.SetPath
+
+            $calls = Get-TestParseCall
+            $calls.Targets.Count | Should -Be 0
+            $calls.Parses.Count | Should -Be 0
+            $result.Verbose | Should -BeExactly @(
+                "Entry 1 ('alpha_completer/alpha_completer.ps1'): hash matches; targets read from the set."
+                "Entry 2 ('beta_completer/beta_completer.ps1'): hash matches; targets read from the set."
+                "Completer set '$($set.SetPath)': 2 entries from the hash, 0 parsed, 0 trusted."
+            )
+            ConvertTo-TestRecordText -Record $result.Records | Should -BeExactly (Get-TestExpectedRecordText -Set $set)
+        }
+
+        It 'parses only the strict entry whose script changed since export' {
+            $set = Build-TestHashedSet
+            Add-Content -LiteralPath $set.AlphaPath -Value '# Edited after the set was exported.' -Encoding utf8
+            Enable-TestParseCounter
+
+            $result = Invoke-TestVerboseImport -LiteralPath $set.SetPath
+
+            $calls = Get-TestParseCall
+            $calls.Targets | Should -Be @($set.AlphaPath)
+            $calls.Parses | Should -Be @($set.AlphaPath)
+            $result.Verbose[0] | Should -BeExactly "Entry 1 ('alpha_completer/alpha_completer.ps1'): hash differs; parsed the script."
+            $result.Verbose[1] | Should -BeExactly "Entry 2 ('beta_completer/beta_completer.ps1'): hash matches; targets read from the set."
+            ConvertTo-TestRecordText -Record $result.Records | Should -BeExactly (Get-TestExpectedRecordText -Set $set)
+        }
+
+        It 'parses every strict entry of the same set once its Hash lines are removed' {
+            $set = Build-TestHashedSet
+            Clear-TestSetHashLine -LiteralPath $set.SetPath
+            Enable-TestParseCounter
+
+            $result = Invoke-TestVerboseImport -LiteralPath $set.SetPath
+
+            $calls = Get-TestParseCall
+            $calls.Targets | Should -Be @($set.AlphaPath, $set.BetaPath)
+            $calls.Parses | Should -Be @($set.AlphaPath, $set.BetaPath)
+            $result.Verbose | Should -BeExactly @(
+                "Entry 1 ('alpha_completer/alpha_completer.ps1'): no hash; parsed the script."
+                "Entry 2 ('beta_completer/beta_completer.ps1'): no hash; parsed the script."
+                "Completer set '$($set.SetPath)': 0 entries from the hash, 2 parsed, 0 trusted."
+            )
+        }
+
+        It 'returns the same records from the hashed, edited, and unhashed runs' {
+            $set = Build-TestHashedSet
+
+            $hashed = ConvertTo-TestRecordText -Record @(Import-CompleterSet -LiteralPath $set.SetPath)
+            Get-Completer -State Active, Pending, Failed, Stale | Unregister-Completer -Confirm:$false
+
+            Add-Content -LiteralPath $set.AlphaPath -Value '# Edited after the set was exported.' -Encoding utf8
+            $edited = ConvertTo-TestRecordText -Record @(Import-CompleterSet -LiteralPath $set.SetPath)
+            Get-Completer -State Active, Pending, Failed, Stale | Unregister-Completer -Confirm:$false
+
+            Clear-TestSetHashLine -LiteralPath $set.SetPath
+            $unhashed = ConvertTo-TestRecordText -Record @(Import-CompleterSet -LiteralPath $set.SetPath)
+
+            $hashed | Should -BeExactly (Get-TestExpectedRecordText -Set $set)
+            $edited | Should -BeExactly $hashed
+            $unhashed | Should -BeExactly $hashed
+        }
+
+        It 'follows declared order and first casing for a hand-edited entry whose Hash still matches' {
+            $set = Build-TestHashedSet
+            Write-TestCompleterSet -Path $set.SetPath -Entry (
+                "@{ Path = 'alpha_completer/alpha_completer.ps1'; Trusted = `$false; Hash = '$($set.AlphaHash)'; " +
+                "Targets = @( @{ CommandName = 'SetFixtureAlpha.EXE'; Native = `$true }, @{ CommandName = 'setfixturealpha'; Native = `$true }, @{ CommandName = 'setfixturealpha.exe'; Native = `$true } ) }"
+            )
+            Enable-TestParseCounter
+
+            $result = Invoke-TestVerboseImport -LiteralPath $set.SetPath
+
+            $calls = Get-TestParseCall
+            $calls.Targets.Count | Should -Be 0
+            $calls.Parses.Count | Should -Be 0
+            $result.Verbose[0] | Should -BeExactly "Entry 1 ('alpha_completer/alpha_completer.ps1'): hash matches; targets read from the set."
+            ConvertTo-TestRecordText -Record $result.Records | Should -BeExactly @(
+                "setfixturealpha.exe|SetFixtureAlpha.EXE|Pending|$($set.AlphaPath)|False"
+                "setfixturealpha|setfixturealpha|Pending|$($set.AlphaPath)|False"
+            )
+        }
+
+        It 'treats a <Case> Hash as absent and parses the script without a problem' -TestCases @(
+            @{ Case = 'SHA512:abc'; HashText = "'SHA512:abc'" }
+            @{ Case = 'SHA256: plus 63 digits'; HashText = "'SHA256:$('A' * 63)'" }
+            @{ Case = 'non-string 42'; HashText = '42' }
+        ) {
+            $set = Build-TestHashedSet
+            Write-TestCompleterSet -Path $set.SetPath -Entry (
+                "@{ Path = 'alpha_completer/alpha_completer.ps1'; Hash = $HashText; " +
+                "Targets = @( @{ CommandName = 'setfixturealpha'; Native = `$true }, @{ CommandName = 'setfixturealpha.exe'; Native = `$true } ) }"
+            )
+            Enable-TestParseCounter
+
+            $output = @(Import-CompleterSet -LiteralPath $set.SetPath -Verbose -WarningVariable importWarnings -ErrorVariable importErrors 4>&1)
+            $succeeded = $?
+
+            $succeeded | Should -BeTrue
+            @($importWarnings).Count | Should -Be 0
+            @($importErrors).Count | Should -Be 0
+
+            $calls = Get-TestParseCall
+            $calls.Targets | Should -Be @($set.AlphaPath)
+            $calls.Parses | Should -Be @($set.AlphaPath)
+
+            $verbose = @($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '^Entry \d+ ' } | ForEach-Object { $_.Message })
+            $verbose | Should -BeExactly "Entry 1 ('alpha_completer/alpha_completer.ps1'): hash not recognised; parsed the script."
+
+            $records = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+            @($records.Key) | Should -BeExactly @('setfixturealpha', 'setfixturealpha.exe')
+        }
+
+        It 'still reports <Case> on the fast path' -TestCases @(
+            @{
+                Case       = 'a missing file'
+                Mutation   = 'MissingFile'
+                Pattern    = 'Entry 2 \(''beta_completer/beta_completer\.ps1''\): The file ''.*beta_completer\.ps1'' does not exist\.'
+                Parses     = 0
+                Registered = 0
+            }
+            @{
+                Case       = 'a malformed target'
+                Mutation   = 'MalformedTarget'
+                Pattern    = 'Entry 2 \(''beta_completer/beta_completer\.ps1''\): Target ''Test-SetFixtureBeta'' must declare Native = \$true or a ParameterName\.'
+                Parses     = 1
+                Registered = 0
+            }
+            @{
+                Case       = 'a target listed by two entries'
+                Mutation   = 'DuplicateTarget'
+                Pattern    = 'Entry 3 \(''alpha_completer/alpha_completer\.ps1''\): Target ''setfixturealpha'' is also listed by entry 1\.'
+                Parses     = 0
+                Registered = 0
+            }
+            @{
+                Case       = 'an existing registration without -Force'
+                Mutation   = 'Conflict'
+                Pattern    = 'Entry 1 \(''alpha_completer/alpha_completer\.ps1''\): A module-managed completer registration already exists for ''setfixturealpha''\. Use -Force to replace it\.'
+                Parses     = 0
+                Registered = 1
+            }
+        ) {
+            $set = Build-TestHashedSet
+
+            switch ($Mutation)
+            {
+                'MissingFile'
+                {
+                    Remove-Item -LiteralPath $set.BetaPath
+                }
+                'MalformedTarget'
+                {
+                    $lines = @(Get-Content -LiteralPath $set.SetPath) -replace "; ParameterName = 'Name'", ''
+                    Set-Content -LiteralPath $set.SetPath -Value $lines -Encoding utf8
+                }
+                'DuplicateTarget'
+                {
+                    $alphaEntry = "@{ Path = 'alpha_completer/alpha_completer.ps1'; Hash = '$($set.AlphaHash)'; Targets = @( @{ CommandName = 'setfixturealpha'; Native = `$true }, @{ CommandName = 'setfixturealpha.exe'; Native = `$true } ) }"
+                    Write-TestCompleterSet -Path $set.SetPath -Entry @(
+                        $alphaEntry
+                        "@{ Path = 'beta_completer/beta_completer.ps1'; Hash = '$($set.BetaHash)'; Targets = @( @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name' } ) }"
+                        $alphaEntry
+                    )
+                }
+                'Conflict'
+                {
+                    $null = Register-Completer -LiteralPath $set.AlphaPath -Lazy -Trusted -CommandName 'setfixturealpha' -Native
+                }
+            }
+
+            Enable-TestParseCounter
+
+            $thrown = { Import-CompleterSet -LiteralPath $set.SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Match 'has 1 invalid entry and nothing was registered'
+            $thrown.Exception.Message | Should -Match $Pattern
+
+            $calls = Get-TestParseCall
+            $calls.Targets.Count | Should -Be $Parses
+            $calls.Parses.Count | Should -Be $Parses
+            @(Get-Completer -State Active, Pending, Failed, Stale).Count | Should -Be $Registered
+        }
+
+        It 'falls through to the parse path when the script cannot be read for the hash' {
+            $set = Build-TestHashedSet
+            Enable-TestParseCounter
+            Mock -CommandName 'Get-CompleterScriptHash' -ModuleName 'CompleterActions' -MockWith { throw 'hash read sentinel' }
+
+            $result = Invoke-TestVerboseImport -LiteralPath $set.SetPath
+
+            Should -Invoke -CommandName 'Get-CompleterScriptHash' -ModuleName 'CompleterActions' -Times 2 -Exactly
+            $calls = Get-TestParseCall
+            $calls.Targets | Should -Be @($set.AlphaPath, $set.BetaPath)
+            $calls.Parses | Should -Be @($set.AlphaPath, $set.BetaPath)
+            $result.Verbose | Should -BeExactly @(
+                "Entry 1 ('alpha_completer/alpha_completer.ps1'): hash differs; parsed the script."
+                "Entry 2 ('beta_completer/beta_completer.ps1'): hash differs; parsed the script."
+                "Completer set '$($set.SetPath)': 0 entries from the hash, 2 parsed, 0 trusted."
+            )
+            ConvertTo-TestRecordText -Record $result.Records | Should -BeExactly (Get-TestExpectedRecordText -Set $set)
+        }
+
+        It 'writes one verbose line per entry and one summary line per set' {
+            $set = Build-TestHashedSet
+            $zeroHash = 'SHA256:' + ('0' * 64)
+            Write-TestCompleterSet -Path $set.SetPath -Entry @(
+                "@{ Path = 'alpha_completer/alpha_completer.ps1'; Hash = '$($set.AlphaHash)'; Targets = @( @{ CommandName = 'setfixturealpha'; Native = `$true }, @{ CommandName = 'setfixturealpha.exe'; Native = `$true } ) }"
+                "@{ Path = 'beta_completer/beta_completer.ps1'; Hash = '$zeroHash'; Targets = @( @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name' } ) }"
+                "@{ Path = '$script:ParameterFixturePath'; Hash = '$zeroHash' }"
+                "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Hash = '$zeroHash'; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+                "@{ Path = 'missing_completer.ps1'; Hash = '$zeroHash'; Targets = @( @{ CommandName = 'setfixtureprobe'; Native = `$true } ) }"
+            )
+            $secondPath = Join-Path -Path $script:SetRoot -ChildPath 'second.psd1'
+            Write-TestCompleterSet -Path $secondPath -Entry "@{ Path = '$script:HashFixturePath'; Targets = @( @{ CommandName = 'HashFixture.exe'; Native = `$true }, @{ CommandName = 'hashfixture'; Native = `$true } ) }"
+
+            $output = @(Import-CompleterSet -LiteralPath $set.SetPath, $secondPath -SkipInvalid -Verbose -WarningAction SilentlyContinue 4>&1)
+
+            $records = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+            $records.Count | Should -Be 7
+
+            $verbose = @($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '^(Entry \d+ |Completer set )' } | ForEach-Object { $_.Message })
+            $verbose | Should -BeExactly @(
+                "Entry 1 ('alpha_completer/alpha_completer.ps1'): hash matches; targets read from the set."
+                "Entry 2 ('beta_completer/beta_completer.ps1'): hash differs; parsed the script."
+                "Entry 3 ('$script:ParameterFixturePath'): no Targets; parsed the script."
+                "Entry 4 ('$script:TrustedFixturePath'): trusted; targets read from the set."
+                "Completer set '$($set.SetPath)': 1 entries from the hash, 2 parsed, 1 trusted."
+                "Entry 1 ('$script:HashFixturePath'): no hash; parsed the script."
+                "Completer set '$secondPath': 0 entries from the hash, 1 parsed, 0 trusted."
+            ) -Because 'an entry with a problem gets no line and is not counted'
+        }
+
+        It 'ignores Hash on a trusted entry and never reads its script' {
+            $trustedHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $script:TrustedFixturePath
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Hash = '$trustedHash'; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+            Enable-TestParseCounter
+            Mock -CommandName 'Get-CompleterScriptHash' -ModuleName 'CompleterActions' -MockWith { throw 'hash read sentinel' }
+
+            $result = Invoke-TestVerboseImport -LiteralPath $script:SetPath
+
+            Should -Invoke -CommandName 'Get-CompleterScriptHash' -ModuleName 'CompleterActions' -Times 0 -Exactly
+            $calls = Get-TestParseCall
+            $calls.Targets.Count | Should -Be 0
+            $calls.Parses.Count | Should -Be 0
+            $result.Verbose | Should -BeExactly @(
+                "Entry 1 ('$script:TrustedFixturePath'): trusted; targets read from the set."
+                "Completer set '$script:SetPath': 0 entries from the hash, 0 parsed, 1 trusted."
+            )
+            ConvertTo-TestRecordText -Record $result.Records | Should -BeExactly "test-trustedfixturetool:name|Test-TrustedFixtureTool:Name|Pending|$script:TrustedFixturePath|True"
+        }
+
+        It 'never executes a non-conforming script whose entry took the fast path' {
+            $probeFolder = Join-Path -Path $script:SetRoot -ChildPath 'probe'
+            New-Item -Path $probeFolder -ItemType Directory | Out-Null
+            $probeScript = Join-Path -Path $probeFolder -ChildPath 'probe_completer.ps1'
+            $probeFile = Join-Path -Path $script:SetRoot -ChildPath 'probe-executed.txt'
+            Set-Content -LiteralPath $probeScript -Encoding utf8 -Value @(
+                "New-Item -ItemType File -Path '$probeFile' | Out-Null"
+                ''
+                "Register-ArgumentCompleter -Native -CommandName 'setfixtureprobe' -ScriptBlock {"
+                '    param($wordToComplete, $commandAst, $cursorPosition)'
+                ''
+                '    $null = $wordToComplete, $commandAst, $cursorPosition'
+                ''
+                "    [System.Management.Automation.CompletionResult]::new('probe', 'probe', 'ParameterValue', 'probe')"
+                '}'
+            )
+
+            [pscustomobject] @{ CommandName = 'setfixtureprobe'; IsNative = $true; ScriptPath = $probeScript; Trusted = $false } | Export-CompleterSet -Path $script:SetPath
+            (Import-PowerShellDataFile -LiteralPath $script:SetPath).Entries[0].Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$' -Because 'the export derives targets without running the grammar walk'
+            Enable-TestParseCounter
+
+            $result = Invoke-TestVerboseImport -LiteralPath $script:SetPath
+
+            $result.Verbose[0] | Should -BeExactly "Entry 1 ('probe/probe_completer.ps1'): hash matches; targets read from the set."
+            $calls = Get-TestParseCall
+            $calls.Parses.Count | Should -Be 0
+            $result.Records[0].State | Should -Be 'Pending'
+            Test-Path -LiteralPath $probeFile | Should -BeFalse
+
+            $inputScript = 'setfixtureprobe p'
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'probe'
+
+            $failed = Get-Completer -CommandName 'setfixtureprobe' -Native
+            $failed.State | Should -Be 'Failed'
+            $failed.LoadError | Should -Match 'does not conform to the strict import grammar'
+            $failed.LoadError | Should -Match 'New-Item'
+            Test-Path -LiteralPath $probeFile | Should -BeFalse
+        }
+
+        It 'fails a target the script does not register on its first press when a hand-written Hash matches' {
+            $extraScript = Join-Path -Path $script:SetRoot -ChildPath 'extra_completer.ps1'
+            Set-Content -LiteralPath $extraScript -Encoding utf8 -Value @(
+                "Register-ArgumentCompleter -Native -CommandName 'setfixtureextra' -ScriptBlock {"
+                '    param($wordToComplete, $commandAst, $cursorPosition)'
+                ''
+                '    $null = $wordToComplete, $commandAst, $cursorPosition'
+                ''
+                "    [System.Management.Automation.CompletionResult]::new('extra', 'extra', 'ParameterValue', 'extra')"
+                '}'
+            )
+            $extraHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $extraScript
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'extra_completer.ps1'; Hash = '$extraHash'; Targets = @( @{ CommandName = 'setfixtureextra'; Native = `$true }, @{ CommandName = 'setfixtureforged'; Native = `$true } ) }"
+            Enable-TestParseCounter
+
+            $result = Invoke-TestVerboseImport -LiteralPath $script:SetPath
+
+            $result.Verbose[0] | Should -BeExactly "Entry 1 ('extra_completer.ps1'): hash matches; targets read from the set."
+            $calls = Get-TestParseCall
+            $calls.Parses.Count | Should -Be 0
+            @($result.Records.Key) | Should -BeExactly @('setfixtureextra', 'setfixtureforged')
+            @($result.Records.State | Select-Object -Unique) | Should -Be @('Pending')
+
+            $inputScript = 'setfixtureforged '
+            $null = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+
+            $failed = Get-Completer -CommandName 'setfixtureforged' -Native
+            $failed.State | Should -Be 'Failed'
+            $failed.LoadError | Should -Match ([regex]::Escape("The script '$extraScript' did not register a completer for 'setfixtureforged'."))
         }
     }
 
