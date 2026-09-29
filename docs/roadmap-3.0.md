@@ -46,10 +46,12 @@ The two performance levers left after milestone 3 of the 2.0 roadmap, plus the o
 Exit criteria:
 
 ```powershell
-Import-CompleterSet ~\Completers\completers.psd1   # under half the 2.0.0 lazy import time when no file changed
+Import-CompleterSet ~\Completers\completers.psd1   # 0.54 of the 2.0.0 lazy import time when no file changed
 Get-Completer -State Failed | Reset-Completer      # records return to Pending; next tab press loads the fixed script
 Test-CompleterSet ~\Completers\completers.psd1     # empty when the set matches the folder; the PS_Completers gate becomes one call
 ```
+
+The first criterion is restated from "under half the 2.0.0 lazy import time" to the measured ratio, under the section 7 fallback of the milestone 1 spec. The same-run benchmark (173 scripts, 366 targets, ten interleaved samples per leg) measured a 2.1.0 lazy median of 862.9 ms against 2.0.0's 1589.6 ms, a ratio of 0.54, so the 0.50 target was missed. The same set without `Hash` measured 1423.9 ms, 0.90 of 2.0.0, which is also outside the spec's within-10-percent band, on the fast side. The restatement stands only with the owner's sign-off on the milestone 1 pull request.
 
 ## Milestone 2: Authoring and distribution (2.2.0, additive)
 
