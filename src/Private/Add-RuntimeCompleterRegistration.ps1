@@ -16,9 +16,11 @@ The completer script block to register.
 .PARAMETER Runtime
 The CompleterActions.CompleterRuntime object to write through, as a
 registration snapshot carries it in RuntimeContext. When it is omitted the
-runtime is looked up for this call. A dictionary the helper creates is also
-stored on this object, so every later write of the same batch reuses it
-instead of creating another.
+runtime is looked up for this call. When the object's dictionary is null the
+helper re-reads it from the execution context first, so a dictionary another
+registration created after the snapshot is kept rather than replaced, and
+creates one only when the context still has none. Either way the dictionary is
+stored on this object, so every later write of the same batch reuses it.
 #>
 function Add-RuntimeCompleterRegistration
 {
@@ -62,8 +64,13 @@ function Add-RuntimeCompleterRegistration
             throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
         }
 
-        $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $runtimeProperty.SetValue($Runtime.ExecutionContext, $dictionary)
+        $dictionary = $runtimeProperty.GetValue($Runtime.ExecutionContext)
+        if ($null -eq $dictionary)
+        {
+            $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $runtimeProperty.SetValue($Runtime.ExecutionContext, $dictionary)
+        }
+
         $Runtime.$propertyName = $dictionary
     }
 
