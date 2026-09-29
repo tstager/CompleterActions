@@ -66,7 +66,7 @@ function Resolve-CompleterRegistrationState
 
     foreach ($keyItem in $Key)
     {
-        $normalizedKey = Get-CompleterRegistrationKey -RuntimeKey $keyItem
+        $normalizedKey = $keyItem.ToLowerInvariant()
         $managedRegistration = if ($Snapshot.Managed.Contains($normalizedKey)) { $Snapshot.Managed[$normalizedKey] } else { $null }
         $runtimeRegistration = $null
 

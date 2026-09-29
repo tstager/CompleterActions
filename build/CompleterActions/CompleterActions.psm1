@@ -1056,7 +1056,7 @@ function Import-CompleterSet
                 )
                 $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
 
-                $invalidEntries = @($entries | Where-Object { -not $_.IsValid })
+                $invalidEntries = @($entries.Where({ -not $_.IsValid }))
 
                 if ($invalidEntries.Count -gt 0)
                 {
@@ -1084,16 +1084,16 @@ function Import-CompleterSet
                     }
                 }
 
-                $validEntries = @($entries | Where-Object { $_.IsValid })
+                $validEntries = @($entries.Where({ $_.IsValid }))
 
                 foreach ($entry in $validEntries)
                 {
                     Write-Verbose -Message "Entry $($entry.Index) ('$($entry.DeclaredPath)'): $($entry.ResolutionNote)"
                 }
 
-                $hashCount = @($validEntries | Where-Object { $_.TargetSource -eq 'Hash' }).Count
-                $parsedCount = @($validEntries | Where-Object { $_.TargetSource -eq 'Parsed' }).Count
-                $trustedCount = @($validEntries | Where-Object { $_.TargetSource -eq 'Trusted' }).Count
+                $hashCount = @($validEntries.Where({ $_.TargetSource -eq 'Hash' })).Count
+                $parsedCount = @($validEntries.Where({ $_.TargetSource -eq 'Parsed' })).Count
+                $trustedCount = @($validEntries.Where({ $_.TargetSource -eq 'Trusted' })).Count
                 Write-Verbose -Message "Completer set '$setPath': $hashCount entries from the hash, $parsedCount parsed, $trustedCount trusted."
 
                 $confirmedEntries = @(
@@ -2808,9 +2808,7 @@ function Add-RuntimeCompleterRegistration
         $Runtime.$propertyName = $dictionary
     }
 
-    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
-
-    return Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey)
+    return Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
 }
 <#
 .SYNOPSIS
@@ -4694,26 +4692,25 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [CompleterRegistration] @{
-        Key                 = [string] $Target.Key
-        RegistrationKey     = [string] $Target.Key
-        RuntimeKey          = [string] $Target.RuntimeKey
-        CommandName         = [string] $Target.CommandName
-        ParameterName       = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
-        IsNative            = [bool] $Target.IsNative
-        CompleterType       = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
-        TargetType          = [string] $Target.TargetType
-        Source              = $Source
-        State               = $State
-        IsManaged           = $Source -eq 'Managed'
-        IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
-        ScriptPath          = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
-        Trusted             = [bool] $Trusted
-        LoadError           = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
-        ImportModule        = $ImportModule
-        ScriptBlock         = $ScriptBlock
-        ScriptText          = $ScriptBlock.ToString()
-    }
+    $registration = [CompleterRegistration]::new()
+    $registration.Key = [string] $Target.Key
+    $registration.RegistrationKey = [string] $Target.Key
+    $registration.RuntimeKey = [string] $Target.RuntimeKey
+    $registration.CommandName = [string] $Target.CommandName
+    $registration.ParameterName = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+    $registration.IsNative = [bool] $Target.IsNative
+    $registration.CompleterType = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
+    $registration.TargetType = [string] $Target.TargetType
+    $registration.Source = $Source
+    $registration.State = $State
+    $registration.IsManaged = $Source -eq 'Managed'
+    $registration.IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
+    $registration.ScriptPath = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
+    $registration.Trusted = [bool] $Trusted
+    $registration.LoadError = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
+    $registration.ImportModule = $ImportModule
+    $registration.ScriptBlock = $ScriptBlock
+    $registration.ScriptText = $ScriptBlock.ToString()
 
     return $registration
 }
@@ -5644,7 +5641,7 @@ function Resolve-CompleterRegistrationState
 
     foreach ($keyItem in $Key)
     {
-        $normalizedKey = Get-CompleterRegistrationKey -RuntimeKey $keyItem
+        $normalizedKey = $keyItem.ToLowerInvariant()
         $managedRegistration = if ($Snapshot.Managed.Contains($normalizedKey)) { $Snapshot.Managed[$normalizedKey] } else { $null }
         $runtimeRegistration = $null
 
@@ -6430,7 +6427,7 @@ function Resolve-CompleterTarget
         throw 'Command-parameter completer targets require a non-empty parameter name.'
     }
 
-    $resolvedKey = Get-CompleterRegistrationKey -RuntimeKey $RuntimeKey
+    $resolvedKey = $RuntimeKey.ToLowerInvariant()
 
     $target = [pscustomobject] [ordered] @{
         PSTypeName    = 'CompleterActions.CompleterTarget'

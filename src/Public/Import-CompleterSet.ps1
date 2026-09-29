@@ -146,7 +146,7 @@ function Import-CompleterSet
                 )
                 $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
 
-                $invalidEntries = @($entries | Where-Object { -not $_.IsValid })
+                $invalidEntries = @($entries.Where({ -not $_.IsValid }))
 
                 if ($invalidEntries.Count -gt 0)
                 {
@@ -174,16 +174,16 @@ function Import-CompleterSet
                     }
                 }
 
-                $validEntries = @($entries | Where-Object { $_.IsValid })
+                $validEntries = @($entries.Where({ $_.IsValid }))
 
                 foreach ($entry in $validEntries)
                 {
                     Write-Verbose -Message "Entry $($entry.Index) ('$($entry.DeclaredPath)'): $($entry.ResolutionNote)"
                 }
 
-                $hashCount = @($validEntries | Where-Object { $_.TargetSource -eq 'Hash' }).Count
-                $parsedCount = @($validEntries | Where-Object { $_.TargetSource -eq 'Parsed' }).Count
-                $trustedCount = @($validEntries | Where-Object { $_.TargetSource -eq 'Trusted' }).Count
+                $hashCount = @($validEntries.Where({ $_.TargetSource -eq 'Hash' })).Count
+                $parsedCount = @($validEntries.Where({ $_.TargetSource -eq 'Parsed' })).Count
+                $trustedCount = @($validEntries.Where({ $_.TargetSource -eq 'Trusted' })).Count
                 Write-Verbose -Message "Completer set '$setPath': $hashCount entries from the hash, $parsedCount parsed, $trustedCount trusted."
 
                 $confirmedEntries = @(
