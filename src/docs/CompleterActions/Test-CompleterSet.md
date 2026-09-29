@@ -75,7 +75,9 @@ Every `-Path` or `-LiteralPath` value is resolved before any set is tested.
 The sets are then tested in the order given, and each set's findings are
 written before the next set is read. A set that cannot be read, such as one
 without `Version = 1`, stops the call with a terminating error after the
-findings of the earlier sets.
+findings of the earlier sets. A folder under a set's directory that cannot be
+read also stops the call with a terminating error, after that set's entry
+findings, because the scan for unlisted scripts would be incomplete.
 
 ## EXAMPLES
 

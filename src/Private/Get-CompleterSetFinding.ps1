@@ -99,6 +99,8 @@ function Get-CompleterSetFinding
             }
         }
 
+        # $entry.Targets is the list import checks, so an entry with an Error
+        # finding, such as a malformed target, can still report a duplicate.
         foreach ($target in @($entry.Targets))
         {
             if ($claimedTargets.Contains([string] $target.Key))
