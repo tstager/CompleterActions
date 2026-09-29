@@ -1127,8 +1127,9 @@ completions, the runtime entry is removed so the completion engine's default
 completion applies exactly as with no completer registered, and the managed
 record moves to State 'Failed' with the error message in LoadError. Nothing is
 written to the host. Registering the same target again with -Force retries the
-load, or use Reset-Completer. Lazy loading runs entirely inside the ordinary completer call; it never
-hooks key handlers, replaces TabExpansion2, or changes PSReadLine options.
+load, or use Reset-Completer. Lazy loading runs entirely inside the ordinary
+completer call; it never hooks key handlers, replaces TabExpansion2, or changes
+PSReadLine options.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
