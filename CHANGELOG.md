@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.1.0-preview1] - 2026-09-29
+
 ### Added
 
 - **`Reset-Completer`.** Returns a `Failed` or `Active` script-backed
@@ -558,7 +560,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.1.0-preview1...HEAD
+[2.1.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0-preview1
 [2.0.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0-rc1...v2.0.0
 [2.0.0-rc1]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview3...v2.0.0-rc1
 [2.0.0-preview3]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview2...v2.0.0-preview3
