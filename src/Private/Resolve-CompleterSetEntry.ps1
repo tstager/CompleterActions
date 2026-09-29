@@ -4,25 +4,24 @@ Validates one completer set entry and resolves its script path and targets.
 
 .DESCRIPTION
 Normalizes a raw entry hashtable from a completer set into a record that
-Import-CompleterSet can register, collecting every problem instead of stopping
-at the first so the caller can report all of them at once. A Path that is not
-fully qualified, a drive-relative form such as C:scripts\x.ps1 included,
-resolves against the set file's directory rather than the current location.
-Trusted defaults to false. Trusted
-entries must declare Targets because the script is not parsed. Strict entries
-must register their targets with literal arguments so the targets can be
-derived from the parsed script and, when the entry also declares Targets, the
-two lists must match; the strict import grammar itself runs when the script
-loads. The entry's Pending records, one lazy stub per target, are then held to
-the rules Register-Completer applies through
-Resolve-CompleterRegistrationConflict against the snapshot the whole set
-shares, so a target that already carries a different registration is a
-problem unless -Force is given, and a target that an earlier valid entry of
-the same set already claimed is always a problem. A valid entry claims its
-targets in ClaimedTargets for the entries after it, and its Registrations and
-Conflicts are what Import-CompleterSet writes, so a strict script is parsed
-once per import and the session's registrations are read once per set. The
-script is never executed.
+Resolve-CompleterSetRegistration can reconcile with the session, collecting
+every problem instead of stopping at the first so the caller can report all
+of them at once. This is the static phase of a set import: it reads only the
+entry and the file system, never the session's registrations, so its result
+does not depend on what is registered. A Path that is not fully qualified, a
+drive-relative form such as C:scripts\x.ps1 included, resolves against the
+set file's directory rather than the current location. Trusted defaults to
+false. Trusted entries must declare Targets because the script is not parsed.
+Strict entries must register their targets with literal arguments so the
+targets can be derived from the parsed script and, when the entry also
+declares Targets, the two lists must match; the strict import grammar itself
+runs when the script loads. A strict script is parsed once here and the
+targets it yields are the ones the import registers. The script is never
+executed.
+
+Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
+MissingScript, UnreadableTargets, or TargetMismatch; Message is the text
+Import-CompleterSet reports.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -33,23 +32,13 @@ The one-based position of the entry in the set file, used in messages.
 .PARAMETER SetDirectory
 The directory that relative entry paths resolve against.
 
-.PARAMETER ClaimedTargets
-The dictionary, shared by every entry of one set, that maps a claimed target
-key to the index of the valid entry that claimed it.
-
-.PARAMETER Snapshot
-The CompleterActions.CompleterRegistrationSnapshot, shared by every entry of
-one set, that the entry's targets are reconciled against.
-
-.PARAMETER Force
-Indicates that the set is imported with -Force, so existing registrations for
-its targets are replaced rather than reported.
-
 .OUTPUTS
 CompleterActions.CompleterSetEntry
-Returns a record with Index, DeclaredPath, Path, Trusted, Targets, the Pending
-Registrations built for those targets, the Conflicts resolved for them in the
-same order, Problems, and IsValid.
+Returns a record with Index, DeclaredPath, Path, Trusted, Targets,
+DeclaredHash (the entry's raw Hash value, or null), TargetSource (Trusted for
+a trusted entry, Parsed for a strict entry whose script was parsed, or null
+when neither applies), Problems, and IsValid. Registrations and Conflicts are
+empty until Resolve-CompleterSetRegistration fills them.
 #>
 function Resolve-CompleterSetEntry
 {
@@ -66,23 +55,14 @@ function Resolve-CompleterSetEntry
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $SetDirectory,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        [System.Collections.IDictionary] $ClaimedTargets,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        [psobject] $Snapshot,
-
-        [Parameter()]
-        [switch] $Force
+        [string] $SetDirectory
     )
 
-    $problems = [System.Collections.Generic.List[string]]::new()
+    $problems = [System.Collections.Generic.List[hashtable]]::new()
     $declaredPath = $null
     $resolvedPath = $null
+    $declaredHash = $null
+    $targetSource = $null
     $scriptIsUsable = $false
     $trusted = $false
     $declaredTargets = $null
@@ -90,13 +70,18 @@ function Resolve-CompleterSetEntry
 
     if ($Entry -isnot [System.Collections.IDictionary])
     {
-        $problems.Add('The entry is not a hashtable with Path, Trusted, and Targets keys.')
+        $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'The entry is not a hashtable with Path, Trusted, and Targets keys.' })
     }
     else
     {
+        if ($Entry.Contains('Hash'))
+        {
+            $declaredHash = $Entry['Hash']
+        }
+
         if (-not $Entry.Contains('Path') -or [string]::IsNullOrWhiteSpace([string] $Entry['Path']))
         {
-            $problems.Add('The entry has no Path.')
+            $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'The entry has no Path.' })
         }
         else
         {
@@ -105,11 +90,11 @@ function Resolve-CompleterSetEntry
 
             if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
             {
-                $problems.Add("The file '$resolvedPath' does not exist.")
+                $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }
             elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
             {
-                $problems.Add("The file '$resolvedPath' is not a .ps1 script.")
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The file '$resolvedPath' is not a .ps1 script." })
             }
             else
             {
@@ -121,7 +106,7 @@ function Resolve-CompleterSetEntry
         {
             if ($Entry['Trusted'] -isnot [bool])
             {
-                $problems.Add('Trusted must be $true or $false.')
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'Trusted must be $true or $false.' })
             }
             else
             {
@@ -136,7 +121,7 @@ function Resolve-CompleterSetEntry
                 {
                     if ($targetEntry -isnot [System.Collections.IDictionary])
                     {
-                        $problems.Add('Each target must be a hashtable with CommandName and either Native = $true or ParameterName.')
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'Each target must be a hashtable with CommandName and either Native = $true or ParameterName.' })
                         continue
                     }
 
@@ -144,7 +129,7 @@ function Resolve-CompleterSetEntry
 
                     if ([string]::IsNullOrWhiteSpace($commandName))
                     {
-                        $problems.Add('A target has no CommandName.')
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'A target has no CommandName.' })
                         continue
                     }
 
@@ -160,12 +145,12 @@ function Resolve-CompleterSetEntry
                         }
                         else
                         {
-                            $problems.Add("Target '$commandName' must declare Native = `$true or a ParameterName.")
+                            $problems.Add(@{ Kind = 'InvalidEntry'; Message = "Target '$commandName' must declare Native = `$true or a ParameterName." })
                         }
                     }
                     catch
                     {
-                        $problems.Add($_.Exception.Message)
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = $_.Exception.Message })
                     }
                 }
             )
@@ -173,9 +158,11 @@ function Resolve-CompleterSetEntry
 
         if ($trusted)
         {
+            $targetSource = 'Trusted'
+
             if ($null -eq $declaredTargets)
             {
-                $problems.Add('Trusted entries must declare Targets, because a trusted script is not parsed for them.')
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'Trusted entries must declare Targets, because a trusted script is not parsed for them.' })
             }
             else
             {
@@ -184,6 +171,7 @@ function Resolve-CompleterSetEntry
         }
         elseif ($scriptIsUsable)
         {
+            $targetSource = 'Parsed'
             $derivedTargets = @()
 
             try
@@ -192,7 +180,7 @@ function Resolve-CompleterSetEntry
             }
             catch
             {
-                $problems.Add($_.Exception.Message)
+                $problems.Add(@{ Kind = 'UnreadableTargets'; Message = $_.Exception.Message })
             }
 
             if ($derivedTargets.Count -gt 0)
@@ -211,7 +199,7 @@ function Resolve-CompleterSetEntry
                     {
                         $declaredList = @($declaredTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                         $derivedList = @($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
-                        $problems.Add("The declared Targets do not match the script. Declared: $declaredList. Script registers: $derivedList.")
+                        $problems.Add(@{ Kind = 'TargetMismatch'; Message = "The declared Targets do not match the script. Declared: $declaredList. Script registers: $derivedList." })
                     }
                     else
                     {
@@ -222,46 +210,17 @@ function Resolve-CompleterSetEntry
         }
     }
 
-    $registrations = @(
-        foreach ($target in $targets)
-        {
-            New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $resolvedPath -Trusted:$trusted
-        }
-    )
-    $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Snapshot $Snapshot -Force:$Force)
-
-    for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
-    {
-        $target = $targets[$targetIndex]
-
-        if ($null -ne $conflicts[$targetIndex].Problem)
-        {
-            $problems.Add($conflicts[$targetIndex].Problem)
-        }
-
-        if ($ClaimedTargets.Contains([string] $target.Key))
-        {
-            $problems.Add("Target '$($target.RuntimeKey)' is also listed by entry $($ClaimedTargets[[string] $target.Key]).")
-        }
-    }
-
-    if ($problems.Count -eq 0)
-    {
-        foreach ($target in $targets)
-        {
-            $ClaimedTargets[[string] $target.Key] = $Index
-        }
-    }
-
     [pscustomobject] [ordered] @{
         PSTypeName    = 'CompleterActions.CompleterSetEntry'
         Index         = $Index
         DeclaredPath  = $declaredPath
         Path          = $resolvedPath
         Trusted       = $trusted
+        DeclaredHash  = $declaredHash
+        TargetSource  = $targetSource
         Targets       = @($targets)
-        Registrations = $registrations
-        Conflicts     = $conflicts
+        Registrations = @()
+        Conflicts     = @()
         Problems      = @($problems)
         IsValid       = $problems.Count -eq 0
     }

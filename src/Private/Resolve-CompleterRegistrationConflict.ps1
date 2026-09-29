@@ -19,7 +19,7 @@ one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
 Register-Completer resolves one record at a time, after the
 earlier targets of its call have been written, and throws the reported
-problem; Resolve-CompleterSetEntry resolves an entry's records together and
+problem; Resolve-CompleterSetRegistration resolves an entry's records together and
 collects the problems, so a completer set is validated against the same rules
 its registrations are held to.
 

@@ -120,15 +120,15 @@ function Import-CompleterSet
             {
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
                 $snapshot = Get-CompleterRegistrationSnapshot
-                $claimedTargets = @{}
                 $entryIndex = 0
-                $entries = @(
+                $staticEntries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Snapshot $snapshot -Force:$Force
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
                     }
                 )
+                $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
 
                 $invalidEntries = @($entries | Where-Object { -not $_.IsValid })
 
@@ -141,7 +141,7 @@ function Import-CompleterSet
 
                             foreach ($problem in $entry.Problems)
                             {
-                                '{0}: {1}' -f $entryLabel, $problem
+                                '{0}: {1}' -f $entryLabel, $problem.Message
                             }
                         }
                     )
