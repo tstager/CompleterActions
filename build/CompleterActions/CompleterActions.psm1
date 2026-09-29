@@ -1209,7 +1209,7 @@ loads.
 Replaces an existing managed or runtime registration for the same target with
 the new completer, including a stale managed record whose live runtime value was
 changed outside this module and a Failed lazy record whose load should be
-retried.
+retried; Reset-Completer retries that load without registering it again.
 
 .PARAMETER PassThru
 Returns the managed registration records that were created or reused.
