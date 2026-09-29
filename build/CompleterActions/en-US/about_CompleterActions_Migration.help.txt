@@ -62,8 +62,8 @@ COMMAND NAMES
     pipeline input, -WhatIf, and -Confirm to the new command. The wrappers
     are exported because an exported alias whose target is not exported
     fails at the call site, so `Get-Command -Module CompleterActions` lists
-    eleven functions and three aliases. `Get-Help` on an old name shows the
-    new command's help.
+    thirteen functions (eleven in 2.0.0) and three aliases. `Get-Help` on an
+    old name shows the new command's help.
 
     The first call to each old name in a process writes one warning:
 

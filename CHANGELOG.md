@@ -7,8 +7,86 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- **`Reset-Completer`.** Returns a `Failed` or `Active` script-backed
+  completer to `Pending`, so its script loads again on the next tab press,
+  without re-importing the set. A script-backed completer is any managed
+  record with a `ScriptPath`: a lazy one from `Import-CompleterSet` or
+  `Register-Completer -Lazy`, or an eager one from
+  `Import-CompleterScript | Register-Completer`. Targets are named exactly as
+  for `Unregister-Completer`: `-CommandName` with `-Native` or
+  `-ParameterName`, or records piped from `Get-Completer`,
+  `Register-Completer -PassThru`, or `Import-CompleterSet`, under the 2.0
+  target contract. There is no `-AllowUnmanaged`, because a reset never
+  touches a registration the module does not manage. A `Pending` target is
+  left as it is and `-PassThru` still returns it. A target with no managed
+  record, a `Stale` one, a `Failed` one whose live value was created outside
+  the module, one registered from a script block, or one whose script no
+  longer exists is written as a non-terminating error, `Failed to reset the
+  completer '<RuntimeKey>'. <reason>`, and the call goes on with the next
+  target, so `Get-Completer -State Failed | Reset-Completer` resets every
+  record it can. That is the difference from `Unregister-Completer`, which
+  removes the registration and stops at the first record it cannot remove;
+  `-ErrorAction Stop` restores stop-on-first-error. Each target is its own
+  transaction, and a failed write restores the previous runtime value and
+  managed record. Only the named targets are reset; the script is not
+  parsed. Supports `-WhatIf`, `-Confirm`, and `-PassThru`.
+- **`Test-CompleterSet`.** Reports drift between a completer set file and
+  the scripts on disk as `CompleterActions.CompleterScriptFinding` records,
+  each positioned at a line and column of the set file. The `Error` kinds,
+  `MissingScript`, `InvalidEntry`, `UnreadableTargets`, `TargetMismatch`,
+  and `DuplicateTarget`, are the problems that would make
+  `Import-CompleterSet` reject the set, with its text; the `Warning` kinds,
+  `HashMismatch`, `MissingHash`, `InvalidHash`, and `UnlistedScript`, mark a
+  set that still imports but is stale or slower. Every strict entry is
+  parsed, trusted entries never are, no script runs, and the session's
+  registrations are neither read nor changed. A set that matches its folder
+  returns nothing, with no warning or error and `$?` true, so a CI gate can
+  assert an empty result. `-Filter` sets the pattern of the recursive scan
+  for unlisted scripts, `*_completer.ps1` by default. With the two new
+  commands the module exports thirteen functions and the same three
+  aliases.
+- **Per-entry `Hash` in the completer set schema.** An optional key,
+  `SHA256:` followed by 64 hexadecimal digits, computed over the script's
+  decoded text with its line endings normalised to LF, so a Windows and a
+  Linux checkout of the same script hash alike. `Export-CompleterSet`
+  writes it on every entry, strict and trusted, between `Trusted` and
+  `Targets`. It is a cache key for a strict entry's targets, not a
+  signature, and it does not change the trust tier. The set `Version`
+  stays `1`, and 2.0.0 ignores the key, so a set written by this version
+  still imports on 2.0.0. A `Hash` in any other form is treated as absent
+  at import and reported by `Test-CompleterSet` as `InvalidHash`.
+
 ### Changed
 
+- **`Import-CompleterSet` skips the parse for a matching `Hash`.** A strict
+  entry that declares `Targets` and whose `Hash` matches its script is
+  registered from those `Targets` without parsing the script; every check
+  that needs only the set still runs. Every other entry takes the 2.0.0
+  path, so a set without `Hash` imports exactly as before, with the same
+  validation, records, errors, and warnings. A stale `Hash` is not a
+  warning: `-Verbose` writes one line per entry saying how its targets were
+  read and one summary line per set, and `Test-CompleterSet` reports it.
+  The strict grammar still runs on the first tab press, so a wrong `Hash`
+  can at worst leave a `Failed` record, never run an unchecked script.
+- **A completer set is written as one batch.** `Import-CompleterSet`
+  reads the state of every target in the set in one pass and writes all
+  runtime values, then all managed records, against the set's one snapshot
+  of the session. The rollback is unchanged: if any write fails,
+  every change the set made is undone, including the runtime values of
+  entries after the one that failed, and the error text is 2.0.0's.
+  `Register-Completer` keeps its per-target transaction.
+- **`Export-CompleterSet` writes script order and hashes trusted scripts.**
+  A strict entry's `Targets` are written in the order its script registers
+  them, with the script's casing, instead of in record order; the keys are
+  the same. Trusted entries keep record order. A trusted script is now read
+  once, for its `Hash` only; when it is missing or cannot be read, the
+  entry is written without `Hash`, the export still succeeds, and one
+  warning names it: `The script '<path>' could not be read, so its entry
+  was written without a Hash. <reason>`.
+- **`Register-Completer` help.** The example that retries failed lazy
+  loads now uses `Get-Completer -State Failed | Reset-Completer`.
 - **Performance.** Startup benchmark over the 173-script set, ten samples
   each: 2.0.0 lazy median 1589.6 ms, 2.1.0 lazy median 862.9 ms, ratio 0.54
   against the 0.50 target; an unhashed set 1423.9 ms. The target is missed:
