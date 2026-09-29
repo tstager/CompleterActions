@@ -15,9 +15,19 @@ false. Trusted entries must declare Targets because the script is not parsed.
 Strict entries must register their targets with literal arguments so the
 targets can be derived from the parsed script and, when the entry also
 declares Targets, the two lists must match; the strict import grammar itself
-runs when the script loads. A strict script is parsed once here and the
-targets it yields are the ones the import registers. The script is never
+runs when the script loads. A strict script is parsed at most once here and
+the targets it yields are the ones the import registers. The script is never
 executed.
+
+The fast path skips that parse. When a strict entry has no problem so far,
+declares Targets, and carries a Hash whose form Test-CompleterSetHashFormat
+recognises, the script's text is hashed and compared with it. On a match the
+declared Targets are used as they are, in declared order and de-duplicated by
+Key with the first occurrence kept, because the export that wrote the Hash
+derived those targets from the same text. An absent, unrecognised, or
+different Hash, or a script that cannot be read for its hash, falls through
+to the parse, so such an entry gets exactly the problems it would get with
+no Hash at all. A trusted entry's Hash is ignored and its script is not read.
 
 Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
 MissingScript, UnreadableTargets, or TargetMismatch; Message is the text
@@ -32,13 +42,25 @@ The one-based position of the entry in the set file, used in messages.
 .PARAMETER SetDirectory
 The directory that relative entry paths resolve against.
 
+.PARAMETER Verify
+Disables the fast path, so every strict entry whose script is usable is
+parsed once, and records the script's actual hash and parse-derived targets
+for drift checks. A trusted entry's script is read for its hash but still not
+parsed.
+
 .OUTPUTS
 CompleterActions.CompleterSetEntry
 Returns a record with Index, DeclaredPath, Path, Trusted, Targets,
 DeclaredHash (the entry's raw Hash value, or null), TargetSource (Trusted for
-a trusted entry, Parsed for a strict entry whose script was parsed, or null
-when neither applies), Problems, and IsValid. Registrations and Conflicts are
-empty until Resolve-CompleterSetRegistration fills them.
+a trusted entry, Hash for a strict entry that took the fast path, Parsed for
+a strict entry whose script was parsed, or null when neither applies),
+ResolutionNote (the text Import-CompleterSet writes as the entry's verbose
+line, or null for an entry with a problem or under -Verify), Problems, and
+IsValid. Registrations and Conflicts are empty until
+Resolve-CompleterSetRegistration fills them. With -Verify the record also
+carries ActualHash, the Hash of the script as it is now or null when it is
+missing or cannot be read, and DerivedTargets, the targets the parse derived,
+empty for a trusted entry or a failed parse.
 #>
 function Resolve-CompleterSetEntry
 {
@@ -55,14 +77,21 @@ function Resolve-CompleterSetEntry
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $SetDirectory
+        [string] $SetDirectory,
+
+        [Parameter()]
+        [switch] $Verify
     )
 
     $problems = [System.Collections.Generic.List[hashtable]]::new()
     $declaredPath = $null
     $resolvedPath = $null
+    $hasHash = $false
     $declaredHash = $null
+    $actualHash = $null
+    $derivedTargets = @()
     $targetSource = $null
+    $resolutionNote = $null
     $scriptIsUsable = $false
     $trusted = $false
     $declaredTargets = $null
@@ -76,6 +105,7 @@ function Resolve-CompleterSetEntry
     {
         if ($Entry.Contains('Hash'))
         {
+            $hasHash = $true
             $declaredHash = $Entry['Hash']
         }
 
@@ -168,19 +198,85 @@ function Resolve-CompleterSetEntry
             {
                 $targets = $declaredTargets
             }
+
+            $resolutionNote = 'trusted; targets read from the set.'
+
+            if ($Verify -and $scriptIsUsable)
+            {
+                try
+                {
+                    $actualHash = Get-CompleterScriptHash -LiteralPath $resolvedPath
+                }
+                catch
+                {
+                    $actualHash = $null
+                }
+            }
         }
         elseif ($scriptIsUsable)
         {
-            $targetSource = 'Parsed'
-            $derivedTargets = @()
+            $hashMatches = $false
 
-            try
+            if ($null -eq $declaredTargets)
             {
-                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath)
+                $resolutionNote = 'no Targets; parsed the script.'
             }
-            catch
+            elseif (-not $hasHash)
             {
-                $problems.Add(@{ Kind = 'UnreadableTargets'; Message = $_.Exception.Message })
+                $resolutionNote = 'no hash; parsed the script.'
+            }
+            elseif (-not (Test-CompleterSetHashFormat -Value $declaredHash))
+            {
+                $resolutionNote = 'hash not recognised; parsed the script.'
+            }
+            elseif ($problems.Count -eq 0 -and -not $Verify)
+            {
+                $resolutionNote = 'hash differs; parsed the script.'
+
+                try
+                {
+                    $hashMatches = (Get-CompleterScriptHash -LiteralPath $resolvedPath) -ieq [string] $declaredHash
+                }
+                catch
+                {
+                    $hashMatches = $false
+                }
+            }
+
+            if ($hashMatches)
+            {
+                $targetSource = 'Hash'
+                $resolutionNote = 'hash matches; targets read from the set.'
+                $seenKeys = [System.Collections.Generic.HashSet[string]]::new()
+                $targets = @(
+                    foreach ($declaredTarget in $declaredTargets)
+                    {
+                        if ($seenKeys.Add([string] $declaredTarget.Key))
+                        {
+                            $declaredTarget
+                        }
+                    }
+                )
+            }
+            else
+            {
+                $targetSource = 'Parsed'
+
+                try
+                {
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath
+
+                    if ($Verify)
+                    {
+                        $actualHash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
+                    }
+
+                    $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath -ParseResult $parseResult)
+                }
+                catch
+                {
+                    $problems.Add(@{ Kind = 'UnreadableTargets'; Message = $_.Exception.Message })
+                }
             }
 
             if ($derivedTargets.Count -gt 0)
@@ -210,18 +306,27 @@ function Resolve-CompleterSetEntry
         }
     }
 
-    [pscustomobject] [ordered] @{
-        PSTypeName    = 'CompleterActions.CompleterSetEntry'
-        Index         = $Index
-        DeclaredPath  = $declaredPath
-        Path          = $resolvedPath
-        Trusted       = $trusted
-        DeclaredHash  = $declaredHash
-        TargetSource  = $targetSource
-        Targets       = @($targets)
-        Registrations = @()
-        Conflicts     = @()
-        Problems      = @($problems)
-        IsValid       = $problems.Count -eq 0
+    $record = [pscustomobject] [ordered] @{
+        PSTypeName     = 'CompleterActions.CompleterSetEntry'
+        Index          = $Index
+        DeclaredPath   = $declaredPath
+        Path           = $resolvedPath
+        Trusted        = $trusted
+        DeclaredHash   = $declaredHash
+        TargetSource   = $targetSource
+        ResolutionNote = if ($problems.Count -eq 0 -and -not $Verify) { $resolutionNote } else { $null }
+        Targets        = @($targets)
+        Registrations  = @()
+        Conflicts      = @()
+        Problems       = @($problems)
+        IsValid        = $problems.Count -eq 0
     }
+
+    if ($Verify)
+    {
+        $record | Add-Member -NotePropertyName 'ActualHash' -NotePropertyValue $actualHash
+        $record | Add-Member -NotePropertyName 'DerivedTargets' -NotePropertyValue @($derivedTargets)
+    }
+
+    $record
 }

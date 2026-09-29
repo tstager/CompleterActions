@@ -50,11 +50,25 @@ entry that repeats a registration the session already has is reused. The
 strict import grammar does not run here; it runs when a script loads.
 Validating a strict entry parses its script once and registration reuses the
 targets that validation derived, so a set import parses each strict script
-once and walks none of them; run `Test-CompleterScript` over the repository to
-find grammar findings ahead of time. When one or more entries are invalid the
-command throws a single error that lists every problem and registers nothing.
-With `-SkipInvalid` each problem is written as a warning instead and the valid
-entries register.
+once, unless its `Hash` matches, and walks none of them; run
+`Test-CompleterScript` over the repository to find grammar findings ahead of
+time. When one or more entries are invalid the command throws a single error
+that lists every problem and registers nothing. With `-SkipInvalid` each
+problem is written as a warning instead and the valid entries register.
+
+A strict entry that declares `Targets` and carries a `Hash`, as
+`Export-CompleterSet` writes it, is not parsed when the `Hash` matches the
+script's text: its declared `Targets` are registered as they are, and the
+parse errors, the literal-argument check, and the comparison with the
+script's targets are skipped because the export ran them against the same
+text. Every other check still runs. An absent, unrecognised, or different
+`Hash`, or a script that cannot be read for it, falls back to the parse, and a
+stale `Hash` is not a warning. A hand-edited entry whose `Hash` still matches
+registers its targets in the order and with the casing it declares, keeping
+the first occurrence of a repeated key, where the parse would use the
+script's order and casing. A trusted entry's `Hash` is ignored. With
+`-Verbose` the command writes one line per valid entry saying how its targets
+were read, and one summary line per set.
 
 Relative `Path` values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
@@ -70,7 +84,8 @@ The first tab press for a target loads the script and moves the record to
 `Active`; a script that fails to load moves to `Failed` with the message in
 `LoadError`, and the completion engine's default completion applies as if no
 completer were registered. `-Force` replaces existing registrations for the
-set's targets and retries `Failed` ones.
+set's targets and retries `Failed` ones; `Reset-Completer` retries them without
+re-importing the set.
 
 ## EXAMPLES
 
@@ -128,7 +143,8 @@ HelpMessage: ''
 ### -Force
 
 Replaces existing managed or runtime registrations for the targets in the set,
-including `Failed` lazy records whose load should be retried.
+including `Failed` lazy records whose load should be retried; `Reset-Completer`
+retries them without re-importing the set.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
