@@ -203,6 +203,29 @@ Describe 'Module state bootstrap' {
 }
 
 Describe 'Private completer registration helpers' {
+    BeforeAll {
+        if (-not ('CompleterActionsTests.RuntimeContextProbe' -as [type]))
+        {
+            Add-Type -TypeDefinition @'
+namespace CompleterActionsTests
+{
+    public class RuntimeContextProbe
+    {
+        private object nativeArgumentCompleters;
+
+        public int NativeSetCount { get; private set; }
+
+        public object NativeArgumentCompleters
+        {
+            get { return nativeArgumentCompleters; }
+            set { nativeArgumentCompleters = value; NativeSetCount++; }
+        }
+    }
+}
+'@
+        }
+    }
+
     BeforeEach {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -457,27 +480,6 @@ Describe 'Private completer registration helpers' {
     }
 
     It 'creates a missing runtime dictionary once and reuses it for every write of a batch' {
-        if (-not ('CompleterActionsTests.RuntimeContextProbe' -as [type]))
-        {
-            Add-Type -TypeDefinition @'
-namespace CompleterActionsTests
-{
-    public class RuntimeContextProbe
-    {
-        private object nativeArgumentCompleters;
-
-        public int NativeSetCount { get; private set; }
-
-        public object NativeArgumentCompleters
-        {
-            get { return nativeArgumentCompleters; }
-            set { nativeArgumentCompleters = value; NativeSetCount++; }
-        }
-    }
-}
-'@
-        }
-
         $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
         $module = Import-Module -Name $moduleManifestPath -Force -PassThru
 
@@ -524,6 +526,48 @@ namespace CompleterActionsTests
         $result.Keys | Should -Be @('batchfirst', 'batchsecond')
         $result.FirstStored | Should -BeTrue -Because 'the second write must not replace the dictionary that holds the first'
         $result.SecondStored | Should -BeTrue
+    }
+
+    It 'keeps a runtime dictionary created after the snapshot instead of replacing it' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $context = [CompleterActionsTests.RuntimeContextProbe]::new()
+            $runtime = [pscustomobject] [ordered] @{
+                PSTypeName               = 'CompleterActions.CompleterRuntime'
+                ExecutionContext         = $context
+                CustomProperty           = $null
+                CustomArgumentCompleters = $null
+                NativeProperty           = $context.GetType().GetProperty('NativeArgumentCompleters')
+                NativeArgumentCompleters = $null
+            }
+
+            # Another registration creates the dictionary after the snapshot saw it as null.
+            $otherScriptBlock = { 'other' }
+            $existingDictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $existingDictionary['othercmd'] = $otherScriptBlock
+            $context.NativeArgumentCompleters = $existingDictionary
+
+            $batchScriptBlock = { 'batch' }
+            $null = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'batchcmd' -Native) -ScriptBlock $batchScriptBlock -Runtime $runtime
+
+            [pscustomobject] @{
+                SetCount      = $context.NativeSetCount
+                SameOnContext = [object]::ReferenceEquals($context.NativeArgumentCompleters, $existingDictionary)
+                SameOnRuntime = [object]::ReferenceEquals($runtime.NativeArgumentCompleters, $existingDictionary)
+                Keys          = @($context.NativeArgumentCompleters.Keys | Sort-Object)
+                OtherStored   = [object]::ReferenceEquals($context.NativeArgumentCompleters['othercmd'], $otherScriptBlock)
+                BatchStored   = [object]::ReferenceEquals($context.NativeArgumentCompleters['batchcmd'], $batchScriptBlock)
+            }
+        }
+
+        $result.SetCount | Should -Be 1 -Because 'only the other registration sets the dictionary on the execution context'
+        $result.SameOnContext | Should -BeTrue
+        $result.SameOnRuntime | Should -BeTrue -Because 'the re-read dictionary is written back onto the runtime object for the rest of the batch'
+        $result.Keys | Should -Be @('batchcmd', 'othercmd')
+        $result.OtherStored | Should -BeTrue -Because 'the registration made after the snapshot must survive the batch write'
+        $result.BatchStored | Should -BeTrue
     }
 
     It 'throws a clear error when runtime execution context internals are unavailable' {
