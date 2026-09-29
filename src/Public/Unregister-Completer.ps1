@@ -20,7 +20,9 @@ decided once per call, so the Conflicted twin of a Stale record is skipped
 rather than confirmed again or reported as missing, and a declined
 confirmation stands. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
-the target with -CommandName plus -Native or -ParameterName instead.
+the target with -CommandName plus -Native or -ParameterName instead. To reload
+a Failed or Active script-backed registration instead of removing it, use
+Reset-Completer.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input

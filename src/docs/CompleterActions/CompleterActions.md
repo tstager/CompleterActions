@@ -36,6 +36,10 @@ Validates a completer set file and registers every script it lists.
 
 Registers a managed PowerShell argument completer.
 
+### [Reset-Completer](Reset-Completer.md)
+
+Returns a Failed or Active script-backed completer to Pending, so its script loads again on the next tab press.
+
 ### [Test-CompleterRegistration](Test-CompleterRegistration.md)
 
 Runs tab completion for an input against a registered completer target.

@@ -73,7 +73,7 @@ FormatsToProcess = 'CompleterActions.Format.ps1xml'
 FunctionsToExport = 'Export-CompleterSet', 'Get-Completer', 
                'Get-CompleterRegistrationLegacy', 'Import-CompleterScript', 
                'Import-CompleterSet', 'Register-Completer', 
-               'Register-CompleterRegistrationLegacy', 
+               'Register-CompleterRegistrationLegacy', 'Reset-Completer', 
                'Test-CompleterRegistration', 'Test-CompleterScript', 
                'Unregister-Completer', 'Unregister-CompleterRegistrationLegacy'
 
