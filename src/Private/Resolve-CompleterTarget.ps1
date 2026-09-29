@@ -126,7 +126,7 @@ function Resolve-CompleterTarget
         throw 'Command-parameter completer targets require a non-empty parameter name.'
     }
 
-    $resolvedKey = Get-CompleterRegistrationKey -RuntimeKey $RuntimeKey
+    $resolvedKey = $RuntimeKey.ToLowerInvariant()
 
     $target = [pscustomobject] [ordered] @{
         PSTypeName    = 'CompleterActions.CompleterTarget'

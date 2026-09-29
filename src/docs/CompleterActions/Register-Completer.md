@@ -91,9 +91,9 @@ completions, the runtime entry is removed so the completion engine's default
 completion applies exactly as with no completer registered, and the managed
 record moves to `State` `Failed` with the error message in `LoadError`. Nothing
 is written to the host. Registering the same target again with `-Force`
-retries the load. Lazy loading runs entirely inside the ordinary completer
-call; it never hooks key handlers, replaces `TabExpansion2`, or changes
-PSReadLine options.
+retries the load, or use `Reset-Completer`. Lazy loading runs entirely inside
+the ordinary completer call; it never hooks key handlers, replaces
+`TabExpansion2`, or changes PSReadLine options.
 
 ## EXAMPLES
 
@@ -128,11 +128,7 @@ explicitly because a trusted script is not parsed.
 ### EXAMPLE 4
 
 ```PowerShell
-Get-Completer -State Failed |
-    ForEach-Object {
-        Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted `
-            -CommandName $_.CommandName -Native:$_.IsNative -Force
-    }
+Get-Completer -State Failed | Reset-Completer
 ```
 
 Retries every lazy registration whose script failed to load, after the scripts
@@ -209,7 +205,7 @@ HelpMessage: ''
 Replaces an existing managed or runtime registration for the same target with
 the new completer, including a stale managed record whose live runtime value
 was changed outside this module and a `Failed` lazy record whose load should be
-retried.
+retried; `Reset-Completer` retries that load without registering it again.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter

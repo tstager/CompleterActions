@@ -12,6 +12,15 @@ The completer target or registration object. It must expose RuntimeKey and IsNat
 
 .PARAMETER ScriptBlock
 The completer script block to register.
+
+.PARAMETER Runtime
+The CompleterActions.CompleterRuntime object to write through, as a
+registration snapshot carries it in RuntimeContext. When it is omitted the
+runtime is looked up for this call. When the object's dictionary is null the
+helper re-reads it from the execution context first, so a dictionary another
+registration created after the snapshot is kept rather than replaced, and
+creates one only when the context still has none. Either way the dictionary is
+stored on this object, so every later write of the same batch reuses it.
 #>
 function Add-RuntimeCompleterRegistration
 {
@@ -25,34 +34,45 @@ function Add-RuntimeCompleterRegistration
 
         [Parameter(Mandatory)]
         [ValidateNotNull()]
-        [scriptblock] $ScriptBlock
+        [scriptblock] $ScriptBlock,
+
+        [Parameter()]
+        [psobject] $Runtime
     )
 
     foreach ($requiredProperty in 'RuntimeKey', 'IsNative')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }
     }
 
-    $runtime = Get-CompleterRuntime
+    if ($null -eq $Runtime)
+    {
+        $Runtime = Get-CompleterRuntime
+    }
+
     $propertyName = if ($Target.IsNative) { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
-    $dictionary = $runtime.$propertyName
+    $dictionary = $Runtime.$propertyName
 
     if ($null -eq $dictionary)
     {
-        $runtimeProperty = if ($Target.IsNative) { $runtime.NativeProperty } else { $runtime.CustomProperty }
+        $runtimeProperty = if ($Target.IsNative) { $Runtime.NativeProperty } else { $Runtime.CustomProperty }
         if ($null -eq $runtimeProperty)
         {
             throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
         }
 
-        $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $runtimeProperty.SetValue($runtime.ExecutionContext, $dictionary)
+        $dictionary = $runtimeProperty.GetValue($Runtime.ExecutionContext)
+        if ($null -eq $dictionary)
+        {
+            $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $runtimeProperty.SetValue($Runtime.ExecutionContext, $dictionary)
+        }
+
+        $Runtime.$propertyName = $dictionary
     }
 
-    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
-
-    return Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey)
+    return Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
 }

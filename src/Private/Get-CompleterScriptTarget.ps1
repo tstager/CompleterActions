@@ -17,7 +17,12 @@ costs one parse rather than a full conformance walk. Duplicate targets
 collapse to one record.
 
 .PARAMETER LiteralPath
-The literal path to the completer script file.
+The literal path to the completer script file. Error messages name it.
+
+.PARAMETER ParseResult
+A parse result of the script from Get-CompleterScriptParseResult. When it is
+supplied the script is not read again, so a caller that also needs the
+script's text, such as Export-CompleterSet for its Hash, reads the file once.
 
 .OUTPUTS
 CompleterActions.CompleterTarget
@@ -29,18 +34,25 @@ function Get-CompleterScriptTarget
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [psobject] $ParseResult
     )
 
-    $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
-
-    if ($parseResult.ParseErrors.Count -gt 0)
+    if (-not $PSBoundParameters.ContainsKey('ParseResult'))
     {
-        $parseError = $parseResult.ParseErrors[0]
+        $ParseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+    }
+
+    if ($ParseResult.ParseErrors.Count -gt 0)
+    {
+        $parseError = $ParseResult.ParseErrors[0]
         throw "The script '$LiteralPath' does not parse, so its targets cannot be derived. Line $($parseError.Extent.StartLineNumber), column $($parseError.Extent.StartColumnNumber): $($parseError.Message)"
     }
 
-    $registerCommands = @($parseResult.Ast.FindAll(
+    $registerCommands = @($ParseResult.Ast.FindAll(
             {
                 param($node)
 

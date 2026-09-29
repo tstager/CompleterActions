@@ -16,16 +16,18 @@ LONG DESCRIPTION
 
         Import-CompleterSet -Path ~\Completers\completers.psd1
 
-    Two commands work with sets:
+    Three commands work with sets:
 
     - `Export-CompleterSet` writes a set from registration records, either
       the managed registrations that came from scripts or records piped in
       from `Get-Completer` or `Import-CompleterScript`.
     - `Import-CompleterSet` reads a set, validates every entry up front, and
       registers each valid entry's targets.
+    - `Test-CompleterSet` reports drift between a set and the scripts on
+      disk, and returns nothing when the set is current.
 
     A set never contains code. It is a PowerShell data file (`.psd1`) that
-    both commands read with `Import-PowerShellDataFile`, which evaluates data
+    the commands read with `Import-PowerShellDataFile`, which evaluates data
     only and refuses expressions, so a set file cannot execute a completer
     script or anything else when it is read.
 
@@ -40,6 +42,7 @@ THE SET FILE SCHEMA
                 @{
                     Path    = 'git_completer.ps1'
                     Trusted = $false
+                    Hash    = 'SHA256:9F86D081884C7D659A2FEAA0C55AD015A3BF4F1B2B0B822CD15D6C15B0F00A08'
                     Targets = @(
                         @{ CommandName = 'git'; Native = $true }
                     )
@@ -47,6 +50,7 @@ THE SET FILE SCHEMA
                 @{
                     Path    = 'tools\Invoke-DemoTool.Completer.ps1'
                     Trusted = $true
+                    Hash    = 'SHA256:E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855'
                     Targets = @(
                         @{ CommandName = 'Invoke-DemoTool'; ParameterName = 'Name' }
                     )
@@ -73,6 +77,15 @@ THE SET FILE SCHEMA
       Optional, default `$false`. Selects the import tier for the entry. See
       THE TRUST TIER PER ENTRY.
 
+    - `Hash`
+      Optional. `SHA256:` followed by 64 hexadecimal digits: the hash of the
+      script's text with its line endings normalised to LF, so a Windows and
+      a Linux checkout of the same script hash alike. It is a cache key for a
+      strict entry's targets, not a signature, and it does not change the
+      trust tier. A value in any other form is treated as absent, and a
+      reader that predates the key, such as 2.0.0, ignores it, so the set
+      stays version 1. See VALIDATION BEFORE REGISTRATION.
+
     - `Targets`
       The completer targets the script registers. Each target is a hashtable
       with `CommandName` and either `Native = $true` for a native command
@@ -82,10 +95,12 @@ THE SET FILE SCHEMA
 
     `Export-CompleterSet` always writes `Targets`, and writes `Path` relative
     to the set file whenever the script shares a root with it, using forward
-    slashes so the file is portable. For a strict entry it writes every
-    target the script registers and refuses, naming the missing targets and
-    writing nothing, when the records it was given cover only some of them,
-    as they do after `Register-Completer -Lazy -CommandName`
+    slashes so the file is portable. It writes a `Hash` on every entry; a
+    trusted entry whose script cannot be read is written without one, with a
+    warning. For a strict entry it writes every target the script registers,
+    in the order and casing the script uses, and refuses, naming the missing
+    targets and writing nothing, when the records it was given cover only
+    some of them, as they do after `Register-Completer -Lazy -CommandName`
     selected a subset; such an entry would fail the target check on import.
     A trusted entry is written with the targets the records carry, so a
     subset of a trusted script's targets exports and imports as given.
@@ -108,10 +123,10 @@ THE TRUST TIER PER ENTRY
       of the offending argument.
     - The script must pass the strict import grammar when it loads, exactly as
       `Import-CompleterScript` requires. `Import-CompleterSet` does not run the
-      grammar itself: it parses each strict script once, to validate the
-      entry, registers the targets that parse derived, and walks none of
-      them; a script that fails the grammar moves to `Failed` on its first
-      tab press with the findings in `LoadError`. Run
+      grammar itself: it parses each strict script once, unless the entry's
+      `Hash` matches, to validate the entry, registers the targets that parse
+      derived, and walks none of them; a script that fails the grammar moves
+      to `Failed` on its first tab press with the findings in `LoadError`. Run
       `Test-CompleterScript` over the repository to catch that ahead of time.
     - `Targets` may be omitted. When present, it must match what the script
       declares, or the entry is reported as a mismatch. Declaring targets is
@@ -160,6 +175,21 @@ VALIDATION BEFORE REGISTRATION
     The command supports `-WhatIf`, and validation never executes a completer
     script.
 
+    A strict entry that declares `Targets` and carries a `Hash` that matches
+    its script is not parsed: its declared `Targets` are registered as they
+    are, and the parse errors, the literal-argument check, and the comparison
+    with the script's targets are skipped, because the export that wrote the
+    `Hash` ran them against the same text. Every other check above still
+    runs. An absent, unrecognised, or different `Hash`, or a script that
+    cannot be read for it, falls back to the parse, and a stale `Hash` is not
+    a warning; `-Verbose` writes one line per entry saying how its targets
+    were read and one summary line per set. A hand-edited entry that lists a
+    key twice keeps the first occurrence's casing on this fast path and the
+    last occurrence's casing on the parse path. A trusted entry's `Hash` is
+    ignored at import. The strict grammar still runs on the first tab press,
+    so a wrong `Hash` can at worst leave a `Failed` record, never run a
+    script that was not checked.
+
     The set registers as one transaction against one snapshot of the
     session's registrations: the managed table and the runtime completer
     dictionaries are read once for validation and registration together, and
@@ -199,8 +229,10 @@ LAZY LOADING, PENDING, AND FAILED
     shows the `Failed` record and its `LoadError`; `-State Pending, Failed`
     selects both. Only the target whose press failed
     moves to `Failed`; the script's other targets stay `Pending` and fail the
-    same way on their own first press. Registering the script again with
-    `-Force`, or importing the set again with `-Force`, retries the load.
+    same way on their own first press. `Reset-Completer` retries the load
+    without registering anything again: it returns the record to `Pending`,
+    and the next tab press loads the script. Registering the script again
+    with `-Force`, or importing the set again with `-Force`, also retries it.
 
     The full state list is therefore:
 
@@ -248,6 +280,20 @@ WORKFLOW
     `LoadError`, on its first tab press. A strict script whose targets change
     is caught at import when its entry declares `Targets`.
 
+    Check the set against its folder with `Test-CompleterSet`, for example in
+    the repository's CI. It returns one finding per drift, positioned at the
+    line and column of the set file it concerns: an entry whose script is
+    missing, whose declared `Targets` no longer match its strict script, or
+    whose `Hash` is missing, stale, or malformed, and any completer script
+    that no entry lists. `Error` findings are the ones that would make
+    `Import-CompleterSet` reject the set, and `Warning` findings mark a set
+    that still imports but parses more than it needs to or misses a script.
+    Each finding's `Hint` names the fix, usually regenerating the set with
+    `Export-CompleterSet`, and a current set returns nothing. The command
+    never registers or runs anything:
+
+        Test-CompleterSet -Path ~\Completers\completers.psd1
+
 EXAMPLE 1
 
     Import a set and inspect what it registered:
@@ -279,11 +325,23 @@ EXAMPLE 4
         Get-Completer -State Failed |
             Format-List CommandName, ScriptPath, LoadError
 
+EXAMPLE 5
+
+    Retry every record that failed to load, after fixing the scripts:
+
+        Get-Completer -State Failed | Reset-Completer
+
+    Each record returns to `Pending` and loads again on its next tab press.
+    A record that cannot be reset, such as one whose script was deleted, is
+    reported as an error, and the others are still reset.
+
 SEE ALSO
 
     Get-Help Import-CompleterSet -Full
     Get-Help Export-CompleterSet -Full
+    Get-Help Test-CompleterSet -Full
     Get-Help Register-Completer -Full
+    Get-Help Reset-Completer -Full
     Get-Help Get-Completer -Full
     Get-Help Test-CompleterScript -Full
     about_Import_Completers

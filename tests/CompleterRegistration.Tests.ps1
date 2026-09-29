@@ -203,6 +203,29 @@ Describe 'Module state bootstrap' {
 }
 
 Describe 'Private completer registration helpers' {
+    BeforeAll {
+        if (-not ('CompleterActionsTests.RuntimeContextProbe' -as [type]))
+        {
+            Add-Type -TypeDefinition @'
+namespace CompleterActionsTests
+{
+    public class RuntimeContextProbe
+    {
+        private object nativeArgumentCompleters;
+
+        public int NativeSetCount { get; private set; }
+
+        public object NativeArgumentCompleters
+        {
+            get { return nativeArgumentCompleters; }
+            set { nativeArgumentCompleters = value; NativeSetCount++; }
+        }
+    }
+}
+'@
+        }
+    }
+
     BeforeEach {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
@@ -454,6 +477,203 @@ Describe 'Private completer registration helpers' {
         $result.RemovedScriptText | Should -Match 'param'
         $result.ContainsAfterRemove | Should -BeFalse
         $result.RemainingCount | Should -Be 0
+    }
+
+    It 'creates a missing runtime dictionary once and reuses it for every write of a batch' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $script:TestRuntimeLookupCount = 0
+
+            function script:Get-CompleterRuntime
+            {
+                $script:TestRuntimeLookupCount++
+                throw 'the batch must write through the runtime object it was given'
+            }
+
+            $context = [CompleterActionsTests.RuntimeContextProbe]::new()
+            $runtime = [pscustomobject] [ordered] @{
+                PSTypeName               = 'CompleterActions.CompleterRuntime'
+                ExecutionContext         = $context
+                CustomProperty           = $null
+                CustomArgumentCompleters = $null
+                NativeProperty           = $context.GetType().GetProperty('NativeArgumentCompleters')
+                NativeArgumentCompleters = $null
+            }
+            $firstScriptBlock = { 'first' }
+            $secondScriptBlock = { 'second' }
+
+            $null = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'batchfirst' -Native) -ScriptBlock $firstScriptBlock -Runtime $runtime
+            $dictionaryAfterFirstWrite = $runtime.NativeArgumentCompleters
+            $null = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'batchsecond' -Native) -ScriptBlock $secondScriptBlock -Runtime $runtime
+
+            [pscustomobject] @{
+                SetCount      = $context.NativeSetCount
+                LookupCount   = $script:TestRuntimeLookupCount
+                SameOnRuntime = [object]::ReferenceEquals($dictionaryAfterFirstWrite, $runtime.NativeArgumentCompleters)
+                SameOnContext = [object]::ReferenceEquals($context.NativeArgumentCompleters, $runtime.NativeArgumentCompleters)
+                Keys          = @($runtime.NativeArgumentCompleters.Keys | Sort-Object)
+                FirstStored   = [object]::ReferenceEquals($runtime.NativeArgumentCompleters['batchfirst'], $firstScriptBlock)
+                SecondStored  = [object]::ReferenceEquals($runtime.NativeArgumentCompleters['batchsecond'], $secondScriptBlock)
+            }
+        }
+
+        $result.SetCount | Should -Be 1 -Because 'the dictionary is created and set on the execution context once'
+        $result.LookupCount | Should -Be 0
+        $result.SameOnRuntime | Should -BeTrue -Because 'the created dictionary is written back onto the runtime object'
+        $result.SameOnContext | Should -BeTrue
+        $result.Keys | Should -Be @('batchfirst', 'batchsecond')
+        $result.FirstStored | Should -BeTrue -Because 'the second write must not replace the dictionary that holds the first'
+        $result.SecondStored | Should -BeTrue
+    }
+
+    It 'keeps a runtime dictionary created after the snapshot instead of replacing it' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $context = [CompleterActionsTests.RuntimeContextProbe]::new()
+            $runtime = [pscustomobject] [ordered] @{
+                PSTypeName               = 'CompleterActions.CompleterRuntime'
+                ExecutionContext         = $context
+                CustomProperty           = $null
+                CustomArgumentCompleters = $null
+                NativeProperty           = $context.GetType().GetProperty('NativeArgumentCompleters')
+                NativeArgumentCompleters = $null
+            }
+
+            # Another registration creates the dictionary after the snapshot saw it as null.
+            $otherScriptBlock = { 'other' }
+            $existingDictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $existingDictionary['othercmd'] = $otherScriptBlock
+            $context.NativeArgumentCompleters = $existingDictionary
+
+            $batchScriptBlock = { 'batch' }
+            $null = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'batchcmd' -Native) -ScriptBlock $batchScriptBlock -Runtime $runtime
+
+            [pscustomobject] @{
+                SetCount      = $context.NativeSetCount
+                SameOnContext = [object]::ReferenceEquals($context.NativeArgumentCompleters, $existingDictionary)
+                SameOnRuntime = [object]::ReferenceEquals($runtime.NativeArgumentCompleters, $existingDictionary)
+                Keys          = @($context.NativeArgumentCompleters.Keys | Sort-Object)
+                OtherStored   = [object]::ReferenceEquals($context.NativeArgumentCompleters['othercmd'], $otherScriptBlock)
+                BatchStored   = [object]::ReferenceEquals($context.NativeArgumentCompleters['batchcmd'], $batchScriptBlock)
+            }
+        }
+
+        $result.SetCount | Should -Be 1 -Because 'only the other registration sets the dictionary on the execution context'
+        $result.SameOnContext | Should -BeTrue
+        $result.SameOnRuntime | Should -BeTrue -Because 'the re-read dictionary is written back onto the runtime object for the rest of the batch'
+        $result.Keys | Should -Be @('batchcmd', 'othercmd')
+        $result.OtherStored | Should -BeTrue -Because 'the registration made after the snapshot must survive the batch write'
+        $result.BatchStored | Should -BeTrue
+    }
+
+    It 'builds a registration record that carries every field of its target and arguments' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $scriptBlock = { 'pending' }
+            $native = New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -CommandName 'Git' -Native) -ScriptBlock $scriptBlock -Source 'Managed' -State 'Pending' -ScriptPath 'C:\completers\git_completer.ps1' -Trusted
+            $parameter = New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -CommandName 'Get-Thing' -ParameterName 'Name') -ScriptBlock $scriptBlock -Source 'Discovered' -State 'Failed' -ScriptPath ' ' -LoadError 'boom'
+
+            [pscustomobject] @{
+                Native         = $native
+                Parameter      = $parameter
+                NativeTypeName = $native.PSObject.TypeNames[0]
+                SameBlock      = [object]::ReferenceEquals($native.ScriptBlock, $scriptBlock)
+            }
+        }
+
+        $result.NativeTypeName | Should -Be 'CompleterActions.CompleterRegistration'
+        $result.SameBlock | Should -BeTrue
+        $result.Native.Key | Should -Be 'git'
+        $result.Native.RegistrationKey | Should -Be 'git'
+        $result.Native.RuntimeKey | Should -Be 'Git'
+        $result.Native.CommandName | Should -Be 'Git'
+        $result.Native.ParameterName | Should -BeNullOrEmpty
+        $result.Native.IsNative | Should -BeTrue
+        $result.Native.CompleterType.ToString() | Should -Be 'Native'
+        $result.Native.TargetType | Should -Be 'Native'
+        $result.Native.Source | Should -Be 'Managed'
+        $result.Native.State.ToString() | Should -Be 'Pending'
+        $result.Native.IsManaged | Should -BeTrue
+        $result.Native.IsRuntimeRegistered | Should -BeTrue
+        $result.Native.ScriptPath | Should -Be 'C:\completers\git_completer.ps1'
+        $result.Native.Trusted | Should -BeTrue
+        $result.Native.LoadError | Should -BeNullOrEmpty
+        $result.Native.ImportModule | Should -BeNullOrEmpty
+        $result.Native.ScriptText | Should -Be " 'pending' "
+        $result.Parameter.Key | Should -Be 'get-thing:name'
+        $result.Parameter.RuntimeKey | Should -Be 'Get-Thing:Name'
+        $result.Parameter.ParameterName | Should -Be 'Name'
+        $result.Parameter.IsNative | Should -BeFalse
+        $result.Parameter.CompleterType.ToString() | Should -Be 'Parameter'
+        $result.Parameter.TargetType | Should -Be 'CommandParameter'
+        $result.Parameter.Source | Should -Be 'Discovered'
+        $result.Parameter.State.ToString() | Should -Be 'Failed'
+        $result.Parameter.IsManaged | Should -BeFalse
+        $result.Parameter.IsRuntimeRegistered | Should -BeFalse
+        $result.Parameter.ScriptPath | Should -BeNullOrEmpty -Because 'a blank script path is stored as null'
+        $result.Parameter.Trusted | Should -BeFalse
+        $result.Parameter.LoadError | Should -Be 'boom'
+    }
+
+    It 'returns the script block a runtime write stored' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $context = [CompleterActionsTests.RuntimeContextProbe]::new()
+            $context.NativeArgumentCompleters = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $runtime = [pscustomobject] [ordered] @{
+                PSTypeName               = 'CompleterActions.CompleterRuntime'
+                ExecutionContext         = $context
+                CustomProperty           = $null
+                CustomArgumentCompleters = $null
+                NativeProperty           = $context.GetType().GetProperty('NativeArgumentCompleters')
+                NativeArgumentCompleters = $context.NativeArgumentCompleters
+            }
+            $scriptBlock = { 'stored' }
+            $returned = Add-RuntimeCompleterRegistration -Target (Resolve-CompleterTarget -CommandName 'StoredCmd' -Native) -ScriptBlock $scriptBlock -Runtime $runtime
+
+            [pscustomobject] @{
+                Count          = @($returned).Count
+                SameAsArgument = [object]::ReferenceEquals($returned, $scriptBlock)
+                SameAsStored   = [object]::ReferenceEquals($returned, $context.NativeArgumentCompleters['storedcmd'])
+            }
+        }
+
+        $result.Count | Should -Be 1
+        $result.SameAsArgument | Should -BeTrue
+        $result.SameAsStored | Should -BeTrue
+    }
+
+    It 'resolves registration state for a key in any casing against the snapshot' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $result = & $module {
+            $registration = New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -CommandName 'CaseCmd' -Native) -ScriptBlock { 'case' } -State 'Pending' -ScriptPath 'C:\completers\case_completer.ps1'
+            $snapshot = [pscustomobject] @{
+                Managed = @{ 'casecmd' = $registration }
+                Runtime = @()
+            }
+
+            $states = @(Resolve-CompleterRegistrationState -Key 'CASECMD', 'casecmd', 'OtherCmd' -Snapshot $snapshot)
+
+            [pscustomobject] @{
+                Keys     = @($states.Key)
+                Managed  = @($states | ForEach-Object { [object]::ReferenceEquals($_.ManagedRegistration, $registration) })
+                States   = @($states.ManagedState)
+            }
+        }
+
+        $result.Keys | Should -Be @('CASECMD', 'casecmd', 'OtherCmd') -Because 'each state keeps the key it was asked for'
+        $result.Managed | Should -Be @($true, $true, $false)
+        $result.States | Should -Be @('Stale', 'Stale', 'None') -Because 'a managed record with no runtime value is stale'
     }
 
     It 'throws a clear error when runtime execution context internals are unavailable' {

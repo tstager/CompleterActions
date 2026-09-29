@@ -23,9 +23,19 @@ from the parsed script and rejects a mismatch. The command derives those
 targets the same way before writing and refuses, naming the missing targets
 and leaving the output untouched, when the records for a strict script cover
 only some of them, as they do after Register-Completer -Lazy
--CommandName selected a subset. Trusted entries are written with the targets
-the records carry, so a subset of a trusted script's targets exports and
-imports as given.
+-CommandName selected a subset. A strict entry's targets are written in the
+order the script registers them, with the script's casing. Trusted entries are
+written with the targets the records carry, in record order, so a subset of a
+trusted script's targets exports and imports as given.
+
+Every entry also records a Hash of its script: 'SHA256:' followed by the
+SHA-256 of the script's text with CR LF and lone CR line endings normalised to
+LF, so the same script hashes to the same value on a Windows and a Linux
+checkout. The hash is a cache key for the entry's targets, not a signature, and
+readers that do not know the key ignore it. A strict script is read once for
+both its targets and its hash. When a trusted script cannot be read, its entry
+is written without a Hash, a warning names the script, and the export still
+succeeds.
 
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
@@ -140,6 +150,7 @@ function Export-CompleterSet
                     $entriesByPath[$scriptPath] = [pscustomobject] [ordered] @{
                         Path    = $scriptPath
                         Trusted = $trusted
+                        Hash    = $null
                         Targets = [ordered] @{}
                     }
                 }
@@ -170,12 +181,28 @@ function Export-CompleterSet
                     continue
                 }
 
-                $derivedKeys = @(Get-CompleterScriptTarget -LiteralPath $entry.Path | ForEach-Object { [string] $_.Key })
+                # One read serves both the target check and the Hash, so an edit
+                # between two reads cannot give a Hash that does not describe the
+                # checked targets.
+                $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
+                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
                 $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
                 $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
+                    # The keys match, so only order and casing can differ. Writing the
+                    # derived targets puts them in script order and script casing,
+                    # which is what the import fast path reproduces.
+                    $entry.Targets = [ordered] @{}
+
+                    foreach ($derivedTarget in $derivedTargets)
+                    {
+                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
+                    }
+
+                    $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
 
@@ -201,12 +228,33 @@ function Export-CompleterSet
 
             foreach ($entry in $entriesByPath.Values)
             {
+                # A trusted script is never parsed here, and 2.0.0 exported a trusted
+                # entry whose file is missing, so an unreadable trusted script is
+                # written without a Hash rather than failing the export.
+                if ($entry.Trusted)
+                {
+                    try
+                    {
+                        $entry.Hash = Get-CompleterScriptHash -LiteralPath $entry.Path
+                    }
+                    catch
+                    {
+                        Write-Warning -Message "The script '$($entry.Path)' could not be read, so its entry was written without a Hash. $($_.Exception.GetBaseException().Message)"
+                    }
+                }
+
                 $relativePath = [System.IO.Path]::GetRelativePath($outputDirectory, $entry.Path)
                 $writtenPath = if ([System.IO.Path]::IsPathRooted($relativePath)) { $entry.Path } else { $relativePath.Replace('\', '/') }
 
                 $lines.Add('        @{')
                 $lines.Add("            Path    = '$($writtenPath.Replace("'", "''"))'")
                 $lines.Add("            Trusted = `$$($entry.Trusted.ToString().ToLowerInvariant())")
+
+                if ($null -ne $entry.Hash)
+                {
+                    $lines.Add("            Hash    = '$($entry.Hash)'")
+                }
+
                 $lines.Add('            Targets = @(')
 
                 foreach ($target in $entry.Targets.Values)

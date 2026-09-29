@@ -20,11 +20,25 @@ entry that repeats a registration the session already has is reused. The
 strict import grammar does not run here; it runs when a script loads.
 Validating a strict entry parses its script once and registration reuses the
 targets that validation derived, so a set import parses each strict script
-once and walks none of them; run Test-CompleterScript over the repository to
-find grammar findings ahead of time. When one or more entries are invalid the
-command throws a single error that lists every problem and registers nothing.
-With -SkipInvalid each problem is written as a warning instead and the valid
-entries register.
+once, unless its Hash matches, and walks none of them; run
+Test-CompleterScript over the repository to find grammar findings ahead of
+time. When one or more entries are invalid the command throws a single error
+that lists every problem and registers nothing. With -SkipInvalid each
+problem is written as a warning instead and the valid entries register.
+
+A strict entry that declares Targets and carries a Hash, as
+Export-CompleterSet writes it, is not parsed when the Hash matches the
+script's text: its declared Targets are registered as they are, and the
+parse errors, the literal-argument check, and the comparison with the
+script's targets are skipped because the export ran them against the same
+text. Every other check still runs. An absent, unrecognised, or different
+Hash, or a script that cannot be read for it, falls back to the parse, and a
+stale Hash is not a warning. A hand-edited entry whose Hash still matches
+registers its targets in the order and with the casing it declares, keeping
+the first occurrence of a repeated key, where the parse would use the
+script's order and casing. A trusted entry's Hash is ignored. With -Verbose
+the command writes one line per valid entry saying how its targets were
+read, and one summary line per set.
 
 Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
@@ -40,7 +54,8 @@ The first tab press for a target loads the script and moves the record to
 Active; a script that fails to load moves to Failed with the message in
 LoadError, and the completion engine's default completion applies as if no
 completer were registered. -Force replaces existing registrations for the
-set's targets and retries Failed ones.
+set's targets and retries Failed ones; Reset-Completer retries them without
+re-importing the set.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
@@ -54,7 +69,8 @@ of failing the whole set.
 
 .PARAMETER Force
 Replaces existing managed or runtime registrations for the targets in the set,
-including Failed lazy records whose load should be retried.
+including Failed lazy records whose load should be retried; Reset-Completer
+retries them without re-importing the set.
 
 .OUTPUTS
 CompleterActions.CompleterRegistration
@@ -120,17 +136,17 @@ function Import-CompleterSet
             {
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
                 $snapshot = Get-CompleterRegistrationSnapshot
-                $claimedTargets = @{}
                 $entryIndex = 0
-                $entries = @(
+                $staticEntries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Snapshot $snapshot -Force:$Force
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
                     }
                 )
+                $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
 
-                $invalidEntries = @($entries | Where-Object { -not $_.IsValid })
+                $invalidEntries = @($entries.Where({ -not $_.IsValid }))
 
                 if ($invalidEntries.Count -gt 0)
                 {
@@ -141,7 +157,7 @@ function Import-CompleterSet
 
                             foreach ($problem in $entry.Problems)
                             {
-                                '{0}: {1}' -f $entryLabel, $problem
+                                '{0}: {1}' -f $entryLabel, $problem.Message
                             }
                         }
                     )
@@ -158,8 +174,20 @@ function Import-CompleterSet
                     }
                 }
 
+                $validEntries = @($entries.Where({ $_.IsValid }))
+
+                foreach ($entry in $validEntries)
+                {
+                    Write-Verbose -Message "Entry $($entry.Index) ('$($entry.DeclaredPath)'): $($entry.ResolutionNote)"
+                }
+
+                $hashCount = @($validEntries.Where({ $_.TargetSource -eq 'Hash' })).Count
+                $parsedCount = @($validEntries.Where({ $_.TargetSource -eq 'Parsed' })).Count
+                $trustedCount = @($validEntries.Where({ $_.TargetSource -eq 'Trusted' })).Count
+                Write-Verbose -Message "Completer set '$setPath': $hashCount entries from the hash, $parsedCount parsed, $trustedCount trusted."
+
                 $confirmedEntries = @(
-                    foreach ($entry in @($entries | Where-Object { $_.IsValid }))
+                    foreach ($entry in $validEntries)
                     {
                         if ($PSCmdlet.ShouldProcess($entry.Path, 'Import completer set entry'))
                         {
@@ -171,7 +199,7 @@ function Import-CompleterSet
                 $registrations = @(foreach ($entry in $confirmedEntries) { $entry.Registrations })
                 $conflicts = @(foreach ($entry in $confirmedEntries) { $entry.Conflicts })
 
-                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts
+                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts -Snapshot $snapshot
             }
         }
         catch

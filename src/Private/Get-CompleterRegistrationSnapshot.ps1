@@ -11,18 +11,22 @@ Resolve-CompleterRegistrationState resolves keys against a snapshot, taking
 its own when the caller passes none, and Import-CompleterSet takes one
 snapshot per set so validating and registering hundreds of targets costs one
 runtime read. The snapshot holds references to the live table and
-dictionaries: it describes the session at the moment it was taken and is meant
-to be consumed before the same batch writes. Parameter-only entries of the
+dictionaries: its views describe the session at the moment it was taken and
+are meant to be consumed before the same batch writes, and the batch then
+writes through its RuntimeContext and Managed table instead of looking them
+up again for every target. Parameter-only entries of the
 custom dictionary, registered with Register-ArgumentCompleter -ParameterName
 alone, are left out of the index because the module does not manage them and
 a native-shaped key must never resolve against one.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
-Returns an object with Managed, the managed registration table, and Runtime,
-one view per runtime dictionary in the order Find-RuntimeCompleterRegistration
-searches them, native first. Each view carries IsNative, the Dictionary, and
-Keys, a case-insensitive map from a key to the casing the dictionary stores.
+Returns an object with Managed, the managed registration table; Runtime, one
+view per runtime dictionary in the order Find-RuntimeCompleterRegistration
+searches them, native first; and RuntimeContext, the
+CompleterActions.CompleterRuntime object the views were read from. Each view
+carries IsNative, the Dictionary, and Keys, a case-insensitive map from a key
+to the casing the dictionary stores.
 
 .EXAMPLE
 PS> $snapshot = Get-CompleterRegistrationSnapshot
@@ -67,8 +71,9 @@ function Get-CompleterRegistrationSnapshot
     )
 
     return [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterRegistrationSnapshot'
-        Managed    = Get-ManagedCompleterRegistrationTable
-        Runtime    = $views
+        PSTypeName     = 'CompleterActions.CompleterRegistrationSnapshot'
+        Managed        = Get-ManagedCompleterRegistrationTable
+        Runtime        = $views
+        RuntimeContext = $runtime
     }
 }

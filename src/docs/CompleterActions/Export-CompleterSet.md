@@ -46,9 +46,20 @@ derived from the parsed script and rejects a mismatch. The command derives
 those targets the same way before writing and refuses, naming the missing
 targets and leaving the output untouched, when the records for a strict script
 cover only some of them, as they do after
-`Register-Completer -Lazy -CommandName` selected a subset. Trusted
-entries are written with the targets the records carry, so a subset of a
-trusted script's targets exports and imports as given.
+`Register-Completer -Lazy -CommandName` selected a subset. A strict
+entry's targets are written in the order the script registers them, with the
+script's casing. Trusted entries are written with the targets the records
+carry, in record order, so a subset of a trusted script's targets exports and
+imports as given.
+
+Every entry also records a `Hash` of its script: `SHA256:` followed by the
+SHA-256 of the script's text with CR LF and lone CR line endings normalised to
+LF, so the same script hashes to the same value on a Windows and a Linux
+checkout. The hash is a cache key for the entry's targets, not a signature,
+and readers that do not know the key ignore it. A strict script is read once
+for both its targets and its hash. When a trusted script cannot be read, its
+entry is written without a `Hash`, a warning names the script, and the export
+still succeeds.
 
 ## EXAMPLES
 

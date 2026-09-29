@@ -3,7 +3,7 @@
 Drafted: 2026-09-28
 Base: main at `7bcdc01` (2.0.0 stable, release commit `b2de0be`, tag v2.0.0)
 Spec: `docs/roadmap-3.0/milestone-1-spec.md` (final, accepted 2026-09-28). Section numbers below (§n) point into it.
-Roadmap: `docs/roadmap-3.0.md`, milestone 1, locked decisions 1 and 2. Ships as `v2.1.0` stable. It is additive, so no rc is needed; the rc-first rule (decision 6) covers 3.0.0 only.
+Roadmap: `docs/roadmap-3.0.md`, milestone 1, locked decisions 1 and 2. Ships first as `v2.1.0-preview1` (PSGallery prerelease label `preview1`), then as `v2.1.0` stable from the same code once the preview has soaked (roadmap decision 7, 2026-09-29).
 Branch: `feat/milestone-1-faster-imports` from main.
 
 The spec says what the module does. This plan says how the work is split, in what order, which files each package touches, and how each package is accepted. Where the spec leaves an internal choice open, the plan picks one and says so under "Internal design choices".
@@ -516,6 +516,8 @@ Before the pull request:
 After the pull request: all eight CI legs are green (Windows and Ubuntu × 7.4, 7.5, 7.6, preview), and the owner has reviewed it. If the WP7 ratio missed 0.50, the owner has also signed off on the miss.
 
 ## Release recipe for 2.1.0
+
+**Decided 2026-09-29: the milestone ships twice.** First as `2.1.0-preview1`, using the prerelease recipe from the 2.0 previews: on `main` after the merge set `ModuleVersion = '2.1.0'` and `Prerelease = 'preview1'` in the source psd1, cut the changelog heading `## [2.1.0-preview1] - <date>` with its compare link (`v2.0.0...v2.1.0-preview1`), build and test in separate `pwsh -NoProfile` processes, commit `chore(release): bump module version to 2.1.0-preview1`, tag `v2.1.0-preview1`, run `release_check` on the tagged HEAD, push `main` and the tag, watch `release.yml`, then `Install-PSResource CompleterActions -Prerelease` locally and switch the PS_Completers gate to it. The stable steps below run only after the preview has soaked without a defect; a defect means `preview2`. Step 2's heading then becomes `## [2.1.0] - <date>` above the preview section, as 2.0.0 did above rc1, and step 7 tags `v2.1.0`.
 
 The version is bumped only at release time. The branch keeps `ModuleVersion = '2.0.0'`, so "declares a module version that satisfies the release policy" holds throughout. That is why WP9 runs the 2.1.0-floored PS_Completers gate against a stamped scratch copy, and why step 3 repeats it against the real build before tagging. Join every step with `&&`, and check the changelog heading before tagging (the preview3 lesson).
 

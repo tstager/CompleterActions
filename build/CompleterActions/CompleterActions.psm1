@@ -127,9 +127,19 @@ from the parsed script and rejects a mismatch. The command derives those
 targets the same way before writing and refuses, naming the missing targets
 and leaving the output untouched, when the records for a strict script cover
 only some of them, as they do after Register-Completer -Lazy
--CommandName selected a subset. Trusted entries are written with the targets
-the records carry, so a subset of a trusted script's targets exports and
-imports as given.
+-CommandName selected a subset. A strict entry's targets are written in the
+order the script registers them, with the script's casing. Trusted entries are
+written with the targets the records carry, in record order, so a subset of a
+trusted script's targets exports and imports as given.
+
+Every entry also records a Hash of its script: 'SHA256:' followed by the
+SHA-256 of the script's text with CR LF and lone CR line endings normalised to
+LF, so the same script hashes to the same value on a Windows and a Linux
+checkout. The hash is a cache key for the entry's targets, not a signature, and
+readers that do not know the key ignore it. A strict script is read once for
+both its targets and its hash. When a trusted script cannot be read, its entry
+is written without a Hash, a warning names the script, and the export still
+succeeds.
 
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
@@ -247,6 +257,7 @@ function Export-CompleterSet
                     $entriesByPath[$scriptPath] = [pscustomobject] [ordered] @{
                         Path    = $scriptPath
                         Trusted = $trusted
+                        Hash    = $null
                         Targets = [ordered] @{}
                     }
                 }
@@ -277,12 +288,28 @@ function Export-CompleterSet
                     continue
                 }
 
-                $derivedKeys = @(Get-CompleterScriptTarget -LiteralPath $entry.Path | ForEach-Object { [string] $_.Key })
+                # One read serves both the target check and the Hash, so an edit
+                # between two reads cannot give a Hash that does not describe the
+                # checked targets.
+                $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
+                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
                 $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
                 $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
+                    # The keys match, so only order and casing can differ. Writing the
+                    # derived targets puts them in script order and script casing,
+                    # which is what the import fast path reproduces.
+                    $entry.Targets = [ordered] @{}
+
+                    foreach ($derivedTarget in $derivedTargets)
+                    {
+                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
+                    }
+
+                    $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
 
@@ -308,12 +335,33 @@ function Export-CompleterSet
 
             foreach ($entry in $entriesByPath.Values)
             {
+                # A trusted script is never parsed here, and 2.0.0 exported a trusted
+                # entry whose file is missing, so an unreadable trusted script is
+                # written without a Hash rather than failing the export.
+                if ($entry.Trusted)
+                {
+                    try
+                    {
+                        $entry.Hash = Get-CompleterScriptHash -LiteralPath $entry.Path
+                    }
+                    catch
+                    {
+                        Write-Warning -Message "The script '$($entry.Path)' could not be read, so its entry was written without a Hash. $($_.Exception.GetBaseException().Message)"
+                    }
+                }
+
                 $relativePath = [System.IO.Path]::GetRelativePath($outputDirectory, $entry.Path)
                 $writtenPath = if ([System.IO.Path]::IsPathRooted($relativePath)) { $entry.Path } else { $relativePath.Replace('\', '/') }
 
                 $lines.Add('        @{')
                 $lines.Add("            Path    = '$($writtenPath.Replace("'", "''"))'")
                 $lines.Add("            Trusted = `$$($entry.Trusted.ToString().ToLowerInvariant())")
+
+                if ($null -ne $entry.Hash)
+                {
+                    $lines.Add("            Hash    = '$($entry.Hash)'")
+                }
+
                 $lines.Add('            Targets = @(')
 
                 foreach ($target in $entry.Targets.Values)
@@ -879,11 +927,25 @@ entry that repeats a registration the session already has is reused. The
 strict import grammar does not run here; it runs when a script loads.
 Validating a strict entry parses its script once and registration reuses the
 targets that validation derived, so a set import parses each strict script
-once and walks none of them; run Test-CompleterScript over the repository to
-find grammar findings ahead of time. When one or more entries are invalid the
-command throws a single error that lists every problem and registers nothing.
-With -SkipInvalid each problem is written as a warning instead and the valid
-entries register.
+once, unless its Hash matches, and walks none of them; run
+Test-CompleterScript over the repository to find grammar findings ahead of
+time. When one or more entries are invalid the command throws a single error
+that lists every problem and registers nothing. With -SkipInvalid each
+problem is written as a warning instead and the valid entries register.
+
+A strict entry that declares Targets and carries a Hash, as
+Export-CompleterSet writes it, is not parsed when the Hash matches the
+script's text: its declared Targets are registered as they are, and the
+parse errors, the literal-argument check, and the comparison with the
+script's targets are skipped because the export ran them against the same
+text. Every other check still runs. An absent, unrecognised, or different
+Hash, or a script that cannot be read for it, falls back to the parse, and a
+stale Hash is not a warning. A hand-edited entry whose Hash still matches
+registers its targets in the order and with the casing it declares, keeping
+the first occurrence of a repeated key, where the parse would use the
+script's order and casing. A trusted entry's Hash is ignored. With -Verbose
+the command writes one line per valid entry saying how its targets were
+read, and one summary line per set.
 
 Relative Path values resolve against the directory of the set file, so a
 completer repository can carry its set file next to its scripts.
@@ -899,7 +961,8 @@ The first tab press for a target loads the script and moves the record to
 Active; a script that fails to load moves to Failed with the message in
 LoadError, and the completion engine's default completion applies as if no
 completer were registered. -Force replaces existing registrations for the
-set's targets and retries Failed ones.
+set's targets and retries Failed ones; Reset-Completer retries them without
+re-importing the set.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
@@ -913,7 +976,8 @@ of failing the whole set.
 
 .PARAMETER Force
 Replaces existing managed or runtime registrations for the targets in the set,
-including Failed lazy records whose load should be retried.
+including Failed lazy records whose load should be retried; Reset-Completer
+retries them without re-importing the set.
 
 .OUTPUTS
 CompleterActions.CompleterRegistration
@@ -982,17 +1046,17 @@ function Import-CompleterSet
             {
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
                 $snapshot = Get-CompleterRegistrationSnapshot
-                $claimedTargets = @{}
                 $entryIndex = 0
-                $entries = @(
+                $staticEntries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory -ClaimedTargets $claimedTargets -Snapshot $snapshot -Force:$Force
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
                     }
                 )
+                $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
 
-                $invalidEntries = @($entries | Where-Object { -not $_.IsValid })
+                $invalidEntries = @($entries.Where({ -not $_.IsValid }))
 
                 if ($invalidEntries.Count -gt 0)
                 {
@@ -1003,7 +1067,7 @@ function Import-CompleterSet
 
                             foreach ($problem in $entry.Problems)
                             {
-                                '{0}: {1}' -f $entryLabel, $problem
+                                '{0}: {1}' -f $entryLabel, $problem.Message
                             }
                         }
                     )
@@ -1020,8 +1084,20 @@ function Import-CompleterSet
                     }
                 }
 
+                $validEntries = @($entries.Where({ $_.IsValid }))
+
+                foreach ($entry in $validEntries)
+                {
+                    Write-Verbose -Message "Entry $($entry.Index) ('$($entry.DeclaredPath)'): $($entry.ResolutionNote)"
+                }
+
+                $hashCount = @($validEntries.Where({ $_.TargetSource -eq 'Hash' })).Count
+                $parsedCount = @($validEntries.Where({ $_.TargetSource -eq 'Parsed' })).Count
+                $trustedCount = @($validEntries.Where({ $_.TargetSource -eq 'Trusted' })).Count
+                Write-Verbose -Message "Completer set '$setPath': $hashCount entries from the hash, $parsedCount parsed, $trustedCount trusted."
+
                 $confirmedEntries = @(
-                    foreach ($entry in @($entries | Where-Object { $_.IsValid }))
+                    foreach ($entry in $validEntries)
                     {
                         if ($PSCmdlet.ShouldProcess($entry.Path, 'Import completer set entry'))
                         {
@@ -1033,7 +1109,7 @@ function Import-CompleterSet
                 $registrations = @(foreach ($entry in $confirmedEntries) { $entry.Registrations })
                 $conflicts = @(foreach ($entry in $confirmedEntries) { $entry.Conflicts })
 
-                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts
+                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts -Snapshot $snapshot
             }
         }
         catch
@@ -1079,8 +1155,9 @@ completions, the runtime entry is removed so the completion engine's default
 completion applies exactly as with no completer registered, and the managed
 record moves to State 'Failed' with the error message in LoadError. Nothing is
 written to the host. Registering the same target again with -Force retries the
-load. Lazy loading runs entirely inside the ordinary completer call; it never
-hooks key handlers, replaces TabExpansion2, or changes PSReadLine options.
+load, or use Reset-Completer. Lazy loading runs entirely inside the ordinary
+completer call; it never hooks key handlers, replaces TabExpansion2, or changes
+PSReadLine options.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe completer targets. Input objects must
@@ -1132,7 +1209,7 @@ loads.
 Replaces an existing managed or runtime registration for the same target with
 the new completer, including a stale managed record whose live runtime value was
 changed outside this module and a Failed lazy record whose load should be
-retried.
+retried; Reset-Completer retries that load without registering it again.
 
 .PARAMETER PassThru
 Returns the managed registration records that were created or reused.
@@ -1161,7 +1238,7 @@ Registers a script that needs the trusted tier lazily. The targets are named
 explicitly because a trusted script is not parsed.
 
 .EXAMPLE
-PS> Get-Completer -State Failed | ForEach-Object { Register-Completer -LiteralPath $_.ScriptPath -Lazy -Trusted:$_.Trusted -CommandName $_.CommandName -Native:$_.IsNative -Force }
+PS> Get-Completer -State Failed | Reset-Completer
 
 Retries every lazy registration whose script failed to load, after the scripts
 have been fixed.
@@ -1460,6 +1537,274 @@ function Register-CompleterRegistrationLegacy
 }
 <#
 .SYNOPSIS
+Returns a Failed or Active script-backed completer to Pending, so its script loads again on the next tab press.
+
+.DESCRIPTION
+Re-arms a script-backed managed registration without re-importing the set it
+came from. A script-backed registration is any managed record with a
+ScriptPath: a lazy registration from Import-CompleterSet or Register-Completer
+-Lazy, or an eager one from Import-CompleterScript | Register-Completer. The
+targets are named by native command, command parameter target, or pipeline
+InputObject values, and each target is decided once per call; a key seen
+earlier in the same call is skipped.
+
+A Failed record gets a new lazy stub in the runtime and becomes Pending, with
+LoadError cleared and ScriptPath and Trusted kept. An Active record has its
+live script block replaced by the stub and becomes Pending, with ImportModule
+cleared. A Pending record is left alone without a confirmation prompt, and
+-PassThru returns it unchanged. The next tab press follows the ordinary lazy
+path: it imports the script under the record's tier, swaps in every Pending
+sibling of the same script and tier, and moves them to Active, or moves the
+pressed target to Failed again with the new LoadError. Only the targets named
+are reset, so an Active sibling keeps its loaded script block until it is
+reset itself. The script is not parsed and its targets are not re-derived.
+
+A target that cannot be reset is reported as a non-terminating error, and the
+command goes on with the next target or piped record: a registration the
+module does not manage, a target with nothing registered, a stale record, a
+Failed record whose live runtime value was created outside this module, a
+record registered from a script block rather than a script file, and a record
+whose script file no longer exists. Use -ErrorAction Stop to stop at the first
+error. Each target is its own transaction: if writing the stub or the record
+fails, the previous runtime value and managed record are restored. The command
+writes only the runtime completer dictionaries and the module's managed table;
+it never hooks key handlers, replaces TabExpansion2, or changes PSReadLine
+options. To remove a registration instead of reloading it, use
+Unregister-Completer.
+
+.PARAMETER InputObject
+Supplies one or more objects that describe registrations to reset. Input
+objects expose CommandName with IsNative/Native or ParameterName, or a Key,
+RegistrationKey, or RuntimeKey together with IsNative/Native.
+
+.PARAMETER CommandName
+Specifies one or more command names whose completers should be reset.
+
+.PARAMETER ParameterName
+Specifies one or more parameter names for command-parameter completer reset
+targets.
+
+.PARAMETER Native
+Targets native completer registrations instead of command parameter completers.
+
+.PARAMETER PassThru
+Returns the Pending record of each target that was reset, and the unchanged
+record of each target that was already Pending.
+
+.OUTPUTS
+CompleterActions.CompleterRegistration
+When -PassThru is used, returns CompleterActions.CompleterRegistration records.
+
+.EXAMPLE
+PS> Get-Completer -State Failed | Reset-Completer
+
+Re-arms every failed script-backed registration after the scripts were fixed,
+and reports each record that cannot be reset.
+
+.EXAMPLE
+PS> Reset-Completer -CommandName git, git.exe -Native -PassThru
+
+Reloads the git completer on the next tab press after the script was edited,
+and returns the two Pending records.
+
+.EXAMPLE
+PS> Get-Completer -State Active, Failed | Where-Object ScriptPath -eq $path | Reset-Completer
+
+Resets every target of one script.
+#>
+function Reset-Completer
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [ValidateNotNull()]
+        [object[]] $InputObject,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ParameterName,
+
+        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
+        [Alias('IsNative')]
+        [switch] $Native,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        $decidedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+        # A plain function, not an advanced one, so the error is written by
+        # Reset-Completer itself: it names Reset-Completer and sets $? to false.
+        function Write-CompleterResetError
+        {
+            param(
+                [string] $Message,
+                [System.Exception] $Exception,
+                [object] $TargetObject
+            )
+
+            $PSCmdlet.WriteError(
+                [System.Management.Automation.ErrorRecord]::new(
+                    [System.InvalidOperationException]::new($Message, $Exception),
+                    'CompleterResetFailed',
+                    [System.Management.Automation.ErrorCategory]::InvalidOperation,
+                    $TargetObject
+                )
+            )
+        }
+    }
+
+    process
+    {
+        $resolvedTargets = [System.Collections.Generic.List[psobject]]::new()
+
+        if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+        {
+            foreach ($inputItem in $InputObject)
+            {
+                try
+                {
+                    $resolvedTargets.Add((Resolve-CompleterInputObject -InputObject $inputItem).Target)
+                }
+                catch
+                {
+                    Write-CompleterResetError -Message "Failed to reset the completer. $($_.Exception.Message)" -Exception $_.Exception -TargetObject $inputItem
+                }
+            }
+        }
+        else
+        {
+            $targetParameters = @{ CommandName = $CommandName }
+
+            if ($PSCmdlet.ParameterSetName -eq 'Native')
+            {
+                $targetParameters['Native'] = $true
+            }
+            else
+            {
+                $targetParameters['ParameterName'] = $ParameterName
+            }
+
+            try
+            {
+                foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
+                {
+                    $resolvedTargets.Add($target)
+                }
+            }
+            catch
+            {
+                Write-CompleterResetError -Message "Failed to reset the completer. $($_.Exception.Message)" -Exception $_.Exception
+            }
+        }
+
+        foreach ($target in $resolvedTargets)
+        {
+            if (-not $decidedKeys.Add($target.Key))
+            {
+                continue
+            }
+
+            # Every row that cannot be reset sets a reason instead of throwing,
+            # so -ErrorVariable collects exactly one error per target.
+            $reason = $null
+            $failure = $null
+
+            try
+            {
+                $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                $managedRegistration = $registrationState.ManagedRegistration
+                $runtimeRegistration = $registrationState.RuntimeRegistration
+                $managedState = $registrationState.ManagedState
+                $runtimeKey = if ($null -ne $managedRegistration) { $managedRegistration.RuntimeKey } else { $target.RuntimeKey }
+
+                $reason = if ($null -eq $managedRegistration -and $null -ne $runtimeRegistration)
+                {
+                    "The completer registration '$($runtimeRegistration.RuntimeKey)' is not module-managed, so it cannot be reset."
+                }
+                elseif ($null -eq $managedRegistration)
+                {
+                    'No completer registration was found for the requested target.'
+                }
+                elseif ($managedState -eq 'Pending')
+                {
+                    $null
+                }
+                elseif ($managedState -in 'Stale', 'Failed' -and $null -ne $runtimeRegistration)
+                {
+                    "The module-managed completer registration for '$runtimeKey' is $($managedState.ToLowerInvariant()) and the live runtime registration was created outside this module. Use Register-Completer -Force to replace it, or Unregister-Completer -AllowUnmanaged to remove it."
+                }
+                elseif ($managedState -eq 'Stale')
+                {
+                    "The module-managed completer registration for '$runtimeKey' is stale. Use Register-Completer -Force to register it again."
+                }
+                elseif ([string]::IsNullOrWhiteSpace($managedRegistration.ScriptPath))
+                {
+                    "The completer registration '$runtimeKey' was registered from a script block, not a script file, so there is nothing to reload."
+                }
+                elseif (-not (Test-Path -LiteralPath $managedRegistration.ScriptPath -PathType Leaf))
+                {
+                    "The script '$($managedRegistration.ScriptPath)' for '$runtimeKey' no longer exists. Restore it, or remove the registration with Unregister-Completer."
+                }
+
+                if ($null -eq $reason)
+                {
+                    if ($managedState -eq 'Pending')
+                    {
+                        Write-Verbose -Message "The completer registration '$runtimeKey' is already pending."
+
+                        if ($PassThru -and -not $WhatIfPreference)
+                        {
+                            $PSCmdlet.WriteObject($managedRegistration)
+                        }
+                    }
+                    elseif ($PSCmdlet.ShouldProcess($runtimeKey, 'Reset completer registration'))
+                    {
+                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.Key) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
+                        $conflict = [pscustomobject] [ordered] @{
+                            Key                 = $registration.Key
+                            ManagedRegistration = $managedRegistration
+                            RuntimeRegistration = $runtimeRegistration
+                            IsExisting          = $false
+                            Problem             = $null
+                        }
+
+                        $storedRegistration = Add-CompleterRegistration -Registration $registration -Conflict $conflict
+
+                        if ($PassThru)
+                        {
+                            $PSCmdlet.WriteObject($storedRegistration)
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                $failure = $_.Exception
+                $reason = $_.Exception.Message
+            }
+
+            if ($null -ne $reason)
+            {
+                Write-CompleterResetError -Message "Failed to reset the completer '$($target.RuntimeKey)'. $reason" -Exception $failure -TargetObject $target.RuntimeKey
+            }
+        }
+    }
+}
+<#
+.SYNOPSIS
 Runs tab completion for an input against a registered completer target.
 
 .DESCRIPTION
@@ -1725,6 +2070,141 @@ function Test-CompleterScript
 }
 <#
 .SYNOPSIS
+Reports drift between a completer set file and the scripts on disk.
+
+.DESCRIPTION
+Reads a completer set the way Import-CompleterSet does, checks every entry
+in full against the scripts on disk, and returns one
+CompleterActions.CompleterScriptFinding record per problem. A set that
+matches its folder produces no output, so a gate can assert that the command
+returns nothing, the same shape Test-CompleterScript uses.
+
+The set is read with Import-PowerShellDataFile, which evaluates data only,
+and the set file is also parsed, never evaluated, to point each finding at a
+line and column of the set. Every strict entry is parsed once, whether or not
+its Hash matches, because the command verifies rather than takes the fast
+path. A trusted entry is never parsed, as at import, so it can report only
+MissingScript, InvalidEntry, DuplicateTarget, and the three Hash kinds. No
+script is executed, and the session's registrations are neither read nor
+changed, so a conflict with what the session has registered is not drift.
+
+Construct names the kind of drift, and Severity is Error when
+Import-CompleterSet without -SkipInvalid would reject the set because of it,
+or Warning when the set still imports but is stale or slower:
+
+- MissingScript (Error): Path does not resolve to an existing file.
+- InvalidEntry (Error): any other problem Import-CompleterSet reports for the
+  entry itself, with its text word for word.
+- UnreadableTargets (Error): a strict script does not parse or does not name
+  its targets with literal arguments.
+- TargetMismatch (Error): a strict entry's Targets differ from the targets its
+  script registers.
+- DuplicateTarget (Error): an earlier entry already lists the target, under
+  import's rule that only an entry with no Error claims its targets.
+- HashMismatch (Warning): the script changed since the Hash was written.
+- MissingHash (Warning): the entry has no Hash.
+- InvalidHash (Warning): the Hash is not 'SHA256:' and 64 hexadecimal digits.
+- UnlistedScript (Warning): a file under the set's directory matches -Filter
+  and no entry lists it.
+
+Findings come in set order, each entry's in the order above, and the
+UnlistedScript findings follow, sorted by path. Path is the set file for
+every finding, because the fix is always made in the set, usually by
+regenerating it with Export-CompleterSet.
+
+Every -Path or -LiteralPath value is resolved before any set is tested. The
+sets are then tested in the order given, and each set's findings are written
+before the next set is read. A set that cannot be read, such as one without
+Version = 1, stops the call with a terminating error after the findings of
+the earlier sets. A folder under a set's directory that cannot be read also
+stops the call with a terminating error, after that set's entry findings,
+because the scan for unlisted scripts would be incomplete.
+
+.PARAMETER Path
+The path to a completer set file. Wildcards are supported.
+
+.PARAMETER LiteralPath
+The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Filter
+The file-name pattern of the scan for scripts that no entry lists. The scan
+is recursive under the set file's directory. The default is *_completer.ps1.
+
+.OUTPUTS
+CompleterActions.CompleterScriptFinding
+Returns CompleterActions.CompleterScriptFinding records with Path, Line,
+Column, Severity, Construct, Message, and Hint properties, or nothing when
+the set matches its folder.
+
+.EXAMPLE
+PS> Test-CompleterSet -Path ~\Completers\completers.psd1
+
+Reports every entry that no longer matches its script and every completer
+script the set does not list, or nothing when the set is current.
+
+.EXAMPLE
+PS> Test-CompleterSet -LiteralPath .\completers.psd1 | Where-Object Severity -eq Error
+
+Lists only the drift that would make Import-CompleterSet reject the set.
+#>
+function Test-CompleterSet
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'Path')]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
+    param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath', ValueFromPipelineByPropertyName)]
+        [Alias('PSPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $Filter = '*_completer.ps1'
+    )
+
+    process
+    {
+        try
+        {
+            $resolvedPaths = @(
+                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+                {
+                    foreach ($literalPathItem in $LiteralPath)
+                    {
+                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                    }
+                }
+                else
+                {
+                    foreach ($pathItem in $Path)
+                    {
+                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                    }
+                }
+            )
+
+            foreach ($setPath in $resolvedPaths)
+            {
+                $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+                Get-CompleterSetFinding -SetDefinition $setDefinition -Filter $Filter
+            }
+        }
+        catch
+        {
+            throw "Failed to test completer set. $($_.Exception.Message)"
+        }
+    }
+}
+<#
+.SYNOPSIS
 Removes completer registrations from runtime and, when applicable, module state.
 
 .DESCRIPTION
@@ -1745,7 +2225,9 @@ decided once per call, so the Conflicted twin of a Stale record is skipped
 rather than confirmed again or reported as missing, and a declined
 confirmation stands. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
-the target with -CommandName plus -Native or -ParameterName instead.
+the target with -CommandName plus -Native or -ParameterName instead. To reload
+a Failed or Active script-backed registration instead of removing it, use
+Reset-Completer.
 
 .PARAMETER InputObject
 Supplies one or more objects that describe registrations to remove. Input
@@ -2018,21 +2500,25 @@ Writes a batch of completer registrations to the runtime and the managed state a
 Performs the write half of a registration after the caller has resolved every
 record's conflicts and confirmed the operation. Each record whose conflict
 result reports IsExisting is not written; the managed record it already
-matches is returned in its place. Every other record's script block is added
-to the live completer dictionary and the record is stored in the managed
-registration table, in order, and the stored records are returned in the same
-order as the input.
+matches is returned in its place. The batch is written in two passes: every
+other record's script block is first added to the live completer dictionary,
+in order, and only then is every such record stored in the managed
+registration table, in order. The stored records are returned in the same
+order as the input. With one record the two passes are the runtime write and
+then the managed write of that record.
 
-If any write fails, the batch is rolled back in reverse: for every record that
-was written, the earlier runtime value carried on its conflict result is put
-back or the new one removed, and the earlier managed record is put back or the
-new one removed, so the session ends exactly as it was before the batch. The
-error names the target whose write failed, and a failure during the rollback
-is reported together with the original error so the caller can say the target
-may be inconsistent. Register-Completer writes each target through
-this helper on its own, so every target of a call stays its own transaction,
-and Import-CompleterSet writes a whole set through it, so an eager, a lazy,
-and a completer set registration share one write path.
+If any write fails, the batch is rolled back in reverse from the last record
+whose runtime write was started: for each written record, the earlier runtime
+value carried on its conflict result is put back or the new one removed, and
+the earlier managed record is put back or the new one removed, so the session
+ends exactly as it was before the batch. A managed write that fails therefore
+also undoes the runtime values of the records after it, which the runtime pass
+had already written. The error names the target whose write failed, and a
+failure during the rollback is reported together with the original error so
+the caller can say the target may be inconsistent. Register-Completer writes
+each target through this helper on its own, so every target of a call stays
+its own transaction, and Import-CompleterSet writes a whole set through it,
+so an eager, a lazy, and a completer set registration share one write path.
 
 .PARAMETER Registration
 The CompleterActions.CompleterRegistration records to store, in write order.
@@ -2042,6 +2528,12 @@ Each record's ScriptBlock is the value written to the runtime dictionary.
 The results Resolve-CompleterRegistrationConflict returned for the same
 records, in the same order. Their RuntimeRegistration and ManagedRegistration
 are the state restored when a write fails.
+
+.PARAMETER Snapshot
+The CompleterActions.CompleterRegistrationSnapshot the records were resolved
+against. Its RuntimeContext and Managed table are written through, so a batch
+looks up the runtime dictionaries and the managed table once instead of once
+per record. When it is omitted each write looks them up itself.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
@@ -2065,7 +2557,10 @@ function Add-CompleterRegistration
         [Parameter(Mandatory)]
         [ValidateNotNull()]
         [AllowEmptyCollection()]
-        [psobject[]] $Conflict
+        [psobject[]] $Conflict,
+
+        [Parameter()]
+        [psobject] $Snapshot
     )
 
     if ($Registration.Count -ne $Conflict.Count)
@@ -2073,11 +2568,32 @@ function Add-CompleterRegistration
         throw "Each registration needs the conflict result resolved for it, but $($Registration.Count) registrations came with $($Conflict.Count) conflict results."
     }
 
+    $runtimeParameters = @{}
+    $managedParameters = @{}
+
+    if ($null -ne $Snapshot)
+    {
+        $runtimeParameters['Runtime'] = $Snapshot.RuntimeContext
+        $managedParameters['Table'] = $Snapshot.Managed
+    }
+
     $storedRegistrations = [System.Collections.Generic.List[psobject]]::new()
-    $writeIndex = -1
+    $runtimeIndex = -1
+    $managedIndex = -1
 
     try
     {
+        for ($index = 0; $index -lt $Registration.Count; $index++)
+        {
+            if ($Conflict[$index].IsExisting)
+            {
+                continue
+            }
+
+            $runtimeIndex = $index
+            $null = Add-RuntimeCompleterRegistration -Target $Registration[$index] -ScriptBlock $Registration[$index].ScriptBlock @runtimeParameters
+        }
+
         for ($index = 0; $index -lt $Registration.Count; $index++)
         {
             if ($Conflict[$index].IsExisting)
@@ -2086,9 +2602,8 @@ function Add-CompleterRegistration
                 continue
             }
 
-            $writeIndex = $index
-            $null = Add-RuntimeCompleterRegistration -Target $Registration[$index] -ScriptBlock $Registration[$index].ScriptBlock
-            $storedRegistrations.Add((Add-ManagedCompleterRegistration -Registration $Registration[$index]))
+            $managedIndex = $index
+            $storedRegistrations.Add((Add-ManagedCompleterRegistration -Registration $Registration[$index] @managedParameters))
         }
 
         return $storedRegistrations
@@ -2096,10 +2611,11 @@ function Add-CompleterRegistration
     catch
     {
         $registrationError = $_
-        $failedRegistration = $Registration[$writeIndex]
+        $failedIndex = if ($managedIndex -ge 0) { $managedIndex } else { $runtimeIndex }
+        $failedRegistration = $Registration[$failedIndex]
         $rollbackErrors = [System.Collections.Generic.List[string]]::new()
 
-        for ($index = $writeIndex; $index -ge 0; $index--)
+        for ($index = $runtimeIndex; $index -ge 0; $index--)
         {
             if ($Conflict[$index].IsExisting)
             {
@@ -2110,7 +2626,7 @@ function Add-CompleterRegistration
             {
                 if ($null -ne $Conflict[$index].RuntimeRegistration)
                 {
-                    $null = Add-RuntimeCompleterRegistration -Target $Conflict[$index].RuntimeRegistration -ScriptBlock $Conflict[$index].RuntimeRegistration.ScriptBlock
+                    $null = Add-RuntimeCompleterRegistration -Target $Conflict[$index].RuntimeRegistration -ScriptBlock $Conflict[$index].RuntimeRegistration.ScriptBlock @runtimeParameters
                 }
                 else
                 {
@@ -2119,7 +2635,7 @@ function Add-CompleterRegistration
 
                 if ($null -ne $Conflict[$index].ManagedRegistration)
                 {
-                    $null = Add-ManagedCompleterRegistration -Registration $Conflict[$index].ManagedRegistration
+                    $null = Add-ManagedCompleterRegistration -Registration $Conflict[$index].ManagedRegistration @managedParameters
                 }
                 else
                 {
@@ -2156,6 +2672,11 @@ after re-registering a completer.
 The registration record to store. The object must expose a non-empty Key
 property.
 
+.PARAMETER Table
+The managed registration table to write to, as a registration snapshot
+carries it in Managed. When it is omitted the module's table is looked up for
+this call.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns the record that is stored in the managed registration table.
@@ -2176,19 +2697,28 @@ function Add-ManagedCompleterRegistration
     param(
         [Parameter(Mandatory, ValueFromPipeline)]
         [ValidateNotNull()]
-        [psobject] $Registration
+        [psobject] $Registration,
+
+        [Parameter()]
+        [System.Collections.IDictionary] $Table
     )
 
     process
     {
-        if ($Registration.PSObject.Properties.Match('Key').Count -eq 0 -or [string]::IsNullOrWhiteSpace([string] $Registration.Key))
+        if ($null -eq $Registration.PSObject.Properties['Key'] -or [string]::IsNullOrWhiteSpace([string] $Registration.Key))
         {
             throw 'Registration records must expose a non-empty Key property.'
         }
 
         try
         {
-            $registrations = Get-ManagedCompleterRegistrationTable
+            $registrations = $Table
+
+            if ($null -eq $registrations)
+            {
+                $registrations = Get-ManagedCompleterRegistrationTable
+            }
+
             $registrations[[string] $Registration.Key] = $Registration
 
             return $registrations[[string] $Registration.Key]
@@ -2213,6 +2743,15 @@ The completer target or registration object. It must expose RuntimeKey and IsNat
 
 .PARAMETER ScriptBlock
 The completer script block to register.
+
+.PARAMETER Runtime
+The CompleterActions.CompleterRuntime object to write through, as a
+registration snapshot carries it in RuntimeContext. When it is omitted the
+runtime is looked up for this call. When the object's dictionary is null the
+helper re-reads it from the execution context first, so a dictionary another
+registration created after the snapshot is kept rather than replaced, and
+creates one only when the context still has none. Either way the dictionary is
+stored on this object, so every later write of the same batch reuses it.
 #>
 function Add-RuntimeCompleterRegistration
 <#
@@ -2229,36 +2768,47 @@ function Add-RuntimeCompleterRegistration
 
         [Parameter(Mandatory)]
         [ValidateNotNull()]
-        [scriptblock] $ScriptBlock
+        [scriptblock] $ScriptBlock,
+
+        [Parameter()]
+        [psobject] $Runtime
     )
 
     foreach ($requiredProperty in 'RuntimeKey', 'IsNative')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }
     }
 
-    $runtime = Get-CompleterRuntime
+    if ($null -eq $Runtime)
+    {
+        $Runtime = Get-CompleterRuntime
+    }
+
     $propertyName = if ($Target.IsNative) { 'NativeArgumentCompleters' } else { 'CustomArgumentCompleters' }
-    $dictionary = $runtime.$propertyName
+    $dictionary = $Runtime.$propertyName
 
     if ($null -eq $dictionary)
     {
-        $runtimeProperty = if ($Target.IsNative) { $runtime.NativeProperty } else { $runtime.CustomProperty }
+        $runtimeProperty = if ($Target.IsNative) { $Runtime.NativeProperty } else { $Runtime.CustomProperty }
         if ($null -eq $runtimeProperty)
         {
             throw "The current PowerShell runtime does not expose the '$propertyName' completer dictionary."
         }
 
-        $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        $runtimeProperty.SetValue($runtime.ExecutionContext, $dictionary)
+        $dictionary = $runtimeProperty.GetValue($Runtime.ExecutionContext)
+        if ($null -eq $dictionary)
+        {
+            $dictionary = [System.Collections.Generic.Dictionary[string, scriptblock]]::new([System.StringComparer]::OrdinalIgnoreCase)
+            $runtimeProperty.SetValue($Runtime.ExecutionContext, $dictionary)
+        }
+
+        $Runtime.$propertyName = $dictionary
     }
 
-    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
-
-    return Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey)
+    return Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $Target.RuntimeKey) -Value $ScriptBlock
 }
 <#
 .SYNOPSIS
@@ -2851,18 +3401,22 @@ Resolve-CompleterRegistrationState resolves keys against a snapshot, taking
 its own when the caller passes none, and Import-CompleterSet takes one
 snapshot per set so validating and registering hundreds of targets costs one
 runtime read. The snapshot holds references to the live table and
-dictionaries: it describes the session at the moment it was taken and is meant
-to be consumed before the same batch writes. Parameter-only entries of the
+dictionaries: its views describe the session at the moment it was taken and
+are meant to be consumed before the same batch writes, and the batch then
+writes through its RuntimeContext and Managed table instead of looking them
+up again for every target. Parameter-only entries of the
 custom dictionary, registered with Register-ArgumentCompleter -ParameterName
 alone, are left out of the index because the module does not manage them and
 a native-shaped key must never resolve against one.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
-Returns an object with Managed, the managed registration table, and Runtime,
-one view per runtime dictionary in the order Find-RuntimeCompleterRegistration
-searches them, native first. Each view carries IsNative, the Dictionary, and
-Keys, a case-insensitive map from a key to the casing the dictionary stores.
+Returns an object with Managed, the managed registration table; Runtime, one
+view per runtime dictionary in the order Find-RuntimeCompleterRegistration
+searches them, native first; and RuntimeContext, the
+CompleterActions.CompleterRuntime object the views were read from. Each view
+carries IsNative, the Dictionary, and Keys, a case-insensitive map from a key
+to the casing the dictionary stores.
 
 .EXAMPLE
 PS> $snapshot = Get-CompleterRegistrationSnapshot
@@ -2910,9 +3464,10 @@ function Get-CompleterRegistrationSnapshot
     )
 
     return [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterRegistrationSnapshot'
-        Managed    = Get-ManagedCompleterRegistrationTable
-        Runtime    = $views
+        PSTypeName     = 'CompleterActions.CompleterRegistrationSnapshot'
+        Managed        = Get-ManagedCompleterRegistrationTable
+        Runtime        = $views
+        RuntimeContext = $runtime
     }
 }
 <#
@@ -3052,6 +3607,70 @@ function Get-CompleterScriptFinding
 }
 <#
 .SYNOPSIS
+Computes the set file Hash of a completer script's text.
+
+.DESCRIPTION
+Returns 'SHA256:' followed by 64 uppercase hexadecimal digits: the SHA-256 of
+the script's decoded text after every CR LF pair, and then every remaining lone
+CR, is replaced with LF, encoded as UTF-8 without a byte-order mark. The same
+script therefore hashes to one value whether it is checked out with CRLF on
+Windows or LF on Linux, and whether or not it carries a byte-order mark.
+
+-Text hashes text that is already decoded, such as a parse result's
+Ast.Extent.Text, so a caller that has parsed the script does not read it a
+second time. -LiteralPath reads the file with File.ReadAllText, which decodes
+UTF-8 unless a byte-order mark names another encoding, as PowerShell's parser
+does. ReadAllText resolves a relative path against the process directory, so
+callers pass a full path.
+
+.PARAMETER Text
+The decoded script text to hash.
+
+.PARAMETER LiteralPath
+The full path of the script file to read and hash.
+
+.OUTPUTS
+System.String
+#>
+function Get-CompleterScriptHash
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'LiteralPath')]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Text')]
+        [AllowEmptyString()]
+        [string] $Text,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+    {
+        $Text = [System.IO.File]::ReadAllText($LiteralPath)
+    }
+
+    $normalizedText = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($normalizedText)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+
+    try
+    {
+        $digest = $sha256.ComputeHash($bytes)
+    }
+    finally
+    {
+        $sha256.Dispose()
+    }
+
+    'SHA256:' + ([System.BitConverter]::ToString($digest) -replace '-', '')
+}
+<#
+.SYNOPSIS
 Parses a completer script file into a reusable AST result.
 
 .DESCRIPTION
@@ -3115,7 +3734,12 @@ costs one parse rather than a full conformance walk. Duplicate targets
 collapse to one record.
 
 .PARAMETER LiteralPath
-The literal path to the completer script file.
+The literal path to the completer script file. Error messages name it.
+
+.PARAMETER ParseResult
+A parse result of the script from Get-CompleterScriptParseResult. When it is
+supplied the script is not read again, so a caller that also needs the
+script's text, such as Export-CompleterSet for its Hash, reads the file once.
 
 .OUTPUTS
 CompleterActions.CompleterTarget
@@ -3130,18 +3754,25 @@ function Get-CompleterScriptTarget
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [psobject] $ParseResult
     )
 
-    $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
-
-    if ($parseResult.ParseErrors.Count -gt 0)
+    if (-not $PSBoundParameters.ContainsKey('ParseResult'))
     {
-        $parseError = $parseResult.ParseErrors[0]
+        $ParseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+    }
+
+    if ($ParseResult.ParseErrors.Count -gt 0)
+    {
+        $parseError = $ParseResult.ParseErrors[0]
         throw "The script '$LiteralPath' does not parse, so its targets cannot be derived. Line $($parseError.Extent.StartLineNumber), column $($parseError.Extent.StartColumnNumber): $($parseError.Message)"
     }
 
-    $registerCommands = @($parseResult.Ast.FindAll(
+    $registerCommands = @($ParseResult.Ast.FindAll(
             {
                 param($node)
 
@@ -3237,6 +3868,296 @@ function Get-CompleterScriptTarget
     }
 
     return @($targetsByKey.Values)
+}
+<#
+.SYNOPSIS
+Finds the source positions of a completer set file's entries.
+
+.DESCRIPTION
+Parses the set file with the PowerShell parser, never evaluating it, and
+returns the position of the Entries key and, for each element of the Entries
+array, the element's own extent (the entry's @{ for a hashtable) and the
+extents of its Path value, Hash key and value, and Targets key.
+Test-CompleterSet uses them to point a finding at the part of the set that
+needs fixing.
+
+The elements are walked the way Import-CompleterSetDefinition reads them, so
+the positions line up with its entry numbers: an Entries array written with
+one element per line and one written with commas both work, and a $null
+element is skipped because the definition reader drops it before the entries
+are numbered.
+
+.PARAMETER LiteralPath
+The full path of the completer set file.
+
+.OUTPUTS
+CompleterActions.CompleterSetEntryExtent
+Returns one record with EntriesExtent, the extent of the Entries key or of the
+whole set when the key cannot be found, and Entries, one record per element
+in set order with Extent, PathExtent, HashExtent, and TargetsExtent. An
+extent the element does not have is null.
+#>
+function Get-CompleterSetEntryExtent
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($LiteralPath, [ref] $tokens, [ref] $parseErrors)
+
+    # Output of a statement enumerates arrays, as the data reader's @() and
+    # pipeline do; the elements of a comma array are not enumerated again.
+    $getStatementElement = $null
+    $getOutputElement = {
+        param($Expression)
+
+        if ($Expression -is [System.Management.Automation.Language.ArrayLiteralAst])
+        {
+            foreach ($element in $Expression.Elements)
+            {
+                if (-not ($element -is [System.Management.Automation.Language.VariableExpressionAst] -and $element.VariablePath.UserPath -eq 'null'))
+                {
+                    $element
+                }
+            }
+        }
+        elseif ($Expression -is [System.Management.Automation.Language.ArrayExpressionAst])
+        {
+            foreach ($statement in $Expression.SubExpression.Statements)
+            {
+                & $getStatementElement $statement
+            }
+        }
+        elseif ($Expression -is [System.Management.Automation.Language.ParenExpressionAst])
+        {
+            & $getStatementElement $Expression.Pipeline
+        }
+        elseif (-not ($Expression -is [System.Management.Automation.Language.VariableExpressionAst] -and $Expression.VariablePath.UserPath -eq 'null'))
+        {
+            $Expression
+        }
+    }
+    $getStatementElement = {
+        param($Statement)
+
+        if ($Statement -is [System.Management.Automation.Language.PipelineAst] -and
+            $Statement.PipelineElements.Count -eq 1 -and
+            $Statement.PipelineElements[0] -is [System.Management.Automation.Language.CommandExpressionAst])
+        {
+            & $getOutputElement $Statement.PipelineElements[0].Expression
+        }
+        else
+        {
+            $Statement
+        }
+    }
+
+    $findKeyValue = {
+        param($Hashtable, $Name)
+
+        foreach ($keyValuePair in $Hashtable.KeyValuePairs)
+        {
+            if ($keyValuePair.Item1 -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $keyValuePair.Item1.Value -eq $Name)
+            {
+                return $keyValuePair
+            }
+        }
+    }
+
+    $setHashtable = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false)
+    $entriesPair = if ($null -ne $setHashtable) { & $findKeyValue $setHashtable 'Entries' }
+    $entryExtents = [System.Collections.Generic.List[object]]::new()
+
+    if ($null -ne $entriesPair)
+    {
+        foreach ($element in @(& $getStatementElement $entriesPair.Item2))
+        {
+            $pathPair = $null
+            $hashPair = $null
+            $targetsPair = $null
+
+            if ($element -is [System.Management.Automation.Language.HashtableAst])
+            {
+                $pathPair = & $findKeyValue $element 'Path'
+                $hashPair = & $findKeyValue $element 'Hash'
+                $targetsPair = & $findKeyValue $element 'Targets'
+            }
+
+            $entryExtents.Add([pscustomobject] [ordered] @{
+                    Extent        = $element.Extent
+                    PathExtent    = if ($null -ne $pathPair) { $pathPair.Item2.Extent } else { $null }
+                    HashExtent    = if ($null -ne $hashPair) { $hashPair.Item2.Extent } else { $null }
+                    TargetsExtent = if ($null -ne $targetsPair) { $targetsPair.Item1.Extent } else { $null }
+                })
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName    = 'CompleterActions.CompleterSetEntryExtent'
+        EntriesExtent = if ($null -ne $entriesPair) { $entriesPair.Item1.Extent } else { $ast.Extent }
+        Entries       = $entryExtents.ToArray()
+    }
+}
+<#
+.SYNOPSIS
+Checks one completer set against the scripts on disk and returns its drift findings.
+
+.DESCRIPTION
+Runs the checks shared with Import-CompleterSet for every entry of a set that
+Import-CompleterSetDefinition has read, and adds the checks only a drift
+report needs. Each entry goes through Resolve-CompleterSetEntry -Verify, the
+static phase of an import with the fast path turned off, so a strict script
+is parsed once and its current hash and targets come from that one parse. A
+trusted script is never parsed; its hash is read from the file.
+
+The static phase's problems become MissingScript, InvalidEntry,
+UnreadableTargets, and TargetMismatch findings with import's problem text.
+DuplicateTarget follows import's claiming rule without the session: entries
+are walked in set order, an entry with no Error finding claims its targets,
+and a later entry that lists a claimed target gets import's duplicate text.
+The declared Hash is then compared with the script's current hash
+(HashMismatch), or reported as MissingHash or InvalidHash. Last, every file
+under the set's directory that matches -Filter and that no entry lists, hidden
+files included, is an UnlistedScript finding, compared case-insensitively on Windows and
+case-sensitively elsewhere.
+
+Nothing here reads or writes the session's registrations or runs a script.
+
+.PARAMETER SetDefinition
+The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
+returned for the set.
+
+.PARAMETER Filter
+The file-name pattern of the unlisted-script scan.
+
+.OUTPUTS
+CompleterActions.CompleterScriptFinding
+Returns the findings in set order, each entry's in the order MissingScript,
+InvalidEntry, UnreadableTargets, TargetMismatch, DuplicateTarget,
+HashMismatch, MissingHash, InvalidHash, followed by the UnlistedScript
+findings sorted by path. Path is the set file for every finding.
+#>
+function Get-CompleterSetFinding
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $SetDefinition,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Filter
+    )
+
+    $regenerateHint = 'Regenerate the set with Export-CompleterSet.'
+    $hints = @{
+        MissingScript     = 'Restore the script or remove the entry, then regenerate the set.'
+        InvalidEntry      = 'Fix the entry in the set, or regenerate the set with Export-CompleterSet.'
+        UnreadableTargets = 'Run Test-CompleterScript on the script, or mark the entry Trusted and list its targets.'
+        TargetMismatch    = 'Regenerate the set with Export-CompleterSet; a strict entry must list every target its script registers.'
+    }
+    $hints['DuplicateTarget'] = $hints['TargetMismatch']
+
+    $setPath = $SetDefinition.Path
+    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+    $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $claimedTargets = @{}
+    $entryIndex = 0
+
+    foreach ($rawEntry in $SetDefinition.Entries)
+    {
+        $entryIndex++
+        $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
+        $entryExtent = $extents.Entries[$entryIndex - 1]
+        $findings = [System.Collections.Generic.List[object]]::new()
+
+        if ($null -ne $entry.Path)
+        {
+            $null = $listedPaths.Add($entry.Path)
+        }
+
+        $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $entryIndex" } else { "Entry $entryIndex ('$($entry.DeclaredPath)')" }
+        $entryStart = $entryExtent.Extent
+        $pathStart = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryStart }
+        $hashStart = if ($null -ne $entryExtent.HashExtent) { $entryExtent.HashExtent } else { $entryStart }
+        $targetsStart = if ($null -ne $entryExtent.TargetsExtent) { $entryExtent.TargetsExtent } else { $entryStart }
+        $problemExtents = @{
+            MissingScript     = $pathStart
+            InvalidEntry      = $entryStart
+            UnreadableTargets = $pathStart
+            TargetMismatch    = $targetsStart
+        }
+
+        foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
+        {
+            foreach ($problem in @($entry.Problems | Where-Object { $_.Kind -eq $kind }))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $problemExtents[$kind] -Construct $kind -Message "${entryLabel}: $($problem.Message)" -Hint $hints[$kind]))
+            }
+        }
+
+        # $entry.Targets is the list import checks, so an entry with an Error
+        # finding, such as a malformed target, can still report a duplicate.
+        foreach ($target in @($entry.Targets))
+        {
+            if ($claimedTargets.Contains([string] $target.Key))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." -Hint $hints['DuplicateTarget']))
+            }
+        }
+
+        if ($findings.Count -eq 0)
+        {
+            foreach ($target in @($entry.Targets))
+            {
+                $claimedTargets[[string] $target.Key] = $entryIndex
+            }
+        }
+
+        if ($rawEntry -is [System.Collections.IDictionary])
+        {
+            if (-not $rawEntry.Contains('Hash'))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $entryStart -Construct 'MissingHash' -Severity Warning -Message "${entryLabel}: The entry has no Hash, so a change to its script cannot be detected." -Hint $regenerateHint))
+            }
+            elseif (-not (Test-CompleterSetHashFormat -Value $entry.DeclaredHash))
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'InvalidHash' -Severity Warning -Message "${entryLabel}: The Hash '$($entry.DeclaredHash)' is not 'SHA256:' followed by 64 hexadecimal digits, so it is ignored." -Hint $regenerateHint))
+            }
+            elseif ($null -ne $entry.ActualHash -and $entry.ActualHash -ne [string] $entry.DeclaredHash)
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'HashMismatch' -Severity Warning -Message "${entryLabel}: The script has changed since the set was written. Declared: $($entry.DeclaredHash). Script: $($entry.ActualHash)." -Hint $regenerateHint))
+            }
+        }
+
+        $findings
+    }
+
+    $unlistedScripts = @(
+        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
+            Where-Object { -not $listedPaths.Contains($_.FullName) } |
+            Sort-Object -Property FullName
+    )
+
+    foreach ($unlistedScript in $unlistedScripts)
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extents.EntriesExtent -Construct 'UnlistedScript' -Severity Warning -Message "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it." -Hint $regenerateHint
+    }
 }
 <#
 .SYNOPSIS
@@ -3765,32 +4686,31 @@ function New-CompleterRegistrationRecord
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }
     }
 
-    $registration = [CompleterRegistration] @{
-        Key                 = [string] $Target.Key
-        RegistrationKey     = [string] $Target.Key
-        RuntimeKey          = [string] $Target.RuntimeKey
-        CommandName         = [string] $Target.CommandName
-        ParameterName       = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
-        IsNative            = [bool] $Target.IsNative
-        CompleterType       = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
-        TargetType          = [string] $Target.TargetType
-        Source              = $Source
-        State               = $State
-        IsManaged           = $Source -eq 'Managed'
-        IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
-        ScriptPath          = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
-        Trusted             = [bool] $Trusted
-        LoadError           = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
-        ImportModule        = $ImportModule
-        ScriptBlock         = $ScriptBlock
-        ScriptText          = $ScriptBlock.ToString()
-    }
+    $registration = [CompleterRegistration]::new()
+    $registration.Key = [string] $Target.Key
+    $registration.RegistrationKey = [string] $Target.Key
+    $registration.RuntimeKey = [string] $Target.RuntimeKey
+    $registration.CommandName = [string] $Target.CommandName
+    $registration.ParameterName = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+    $registration.IsNative = [bool] $Target.IsNative
+    $registration.CompleterType = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
+    $registration.TargetType = [string] $Target.TargetType
+    $registration.Source = $Source
+    $registration.State = $State
+    $registration.IsManaged = $Source -eq 'Managed'
+    $registration.IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
+    $registration.ScriptPath = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
+    $registration.Trusted = [bool] $Trusted
+    $registration.LoadError = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
+    $registration.ImportModule = $ImportModule
+    $registration.ScriptBlock = $ScriptBlock
+    $registration.ScriptText = $ScriptBlock.ToString()
 
     return $registration
 }
@@ -4496,11 +5416,12 @@ function Resolve-CompleterInputObject
 Decides whether each of a batch of completer registrations can be written over the current managed and runtime state.
 
 .DESCRIPTION
-Reconciles the records through one Resolve-CompleterRegistrationState pass and
-applies the module's replacement rules in one place. Without -Force an
-existing managed record blocks a registration when it is stale, when its lazy
-load failed, or when it describes a different completer, and an unmanaged
-runtime registration blocks it as well. A managed record that already
+Reconciles the records through one Resolve-CompleterRegistrationState pass,
+or through the states the caller already resolved for them, and applies the
+module's replacement rules in one place. Without -Force an existing managed
+record blocks a registration when it is stale, when its lazy load failed, or
+when it describes a different completer, and an unmanaged runtime
+registration blocks it as well. A managed record that already
 describes the same completer, the same script block text for an eager
 registration or the same script and tier for a lazy one, is reported as
 existing so the caller can reuse it. A record is lazy when its State is
@@ -4512,7 +5433,7 @@ one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
 Register-Completer resolves one record at a time, after the
 earlier targets of its call have been written, and throws the reported
-problem; Resolve-CompleterSetEntry resolves an entry's records together and
+problem; Resolve-CompleterSetRegistration resolves an entry's records together and
 collects the problems, so a completer set is validated against the same rules
 its registrations are held to.
 
@@ -4523,6 +5444,12 @@ written, in the order they will be written.
 .PARAMETER Snapshot
 A CompleterActions.CompleterRegistrationSnapshot to resolve against. When it is
 omitted, one is taken for this call.
+
+.PARAMETER RegistrationState
+The rows Resolve-CompleterRegistrationState already returned for these records,
+one per record in the same order. When it is supplied no state pass is made
+here, so a caller that resolves many batches against one snapshot can resolve
+every key in one pass and hand each batch its slice.
 
 .PARAMETER Force
 Indicates that existing registrations are replaced, so nothing is reported as
@@ -4551,6 +5478,10 @@ function Resolve-CompleterRegistrationConflict
         [psobject] $Snapshot,
 
         [Parameter()]
+        [AllowEmptyCollection()]
+        [psobject[]] $RegistrationState,
+
+        [Parameter()]
         [switch] $Force
     )
 
@@ -4559,7 +5490,13 @@ function Resolve-CompleterRegistrationConflict
         return
     }
 
-    $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    $registrationStates = $RegistrationState
+
+    if (-not $PSBoundParameters.ContainsKey('RegistrationState'))
+    {
+        $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+    }
+
     $plannedRegistrations = @{}
 
     for ($index = 0; $index -lt $Registration.Count; $index++)
@@ -4704,7 +5641,7 @@ function Resolve-CompleterRegistrationState
 
     foreach ($keyItem in $Key)
     {
-        $normalizedKey = Get-CompleterRegistrationKey -RuntimeKey $keyItem
+        $normalizedKey = $keyItem.ToLowerInvariant()
         $managedRegistration = if ($Snapshot.Managed.Contains($normalizedKey)) { $Snapshot.Managed[$normalizedKey] } else { $null }
         $runtimeRegistration = $null
 
@@ -4884,25 +5821,34 @@ Validates one completer set entry and resolves its script path and targets.
 
 .DESCRIPTION
 Normalizes a raw entry hashtable from a completer set into a record that
-Import-CompleterSet can register, collecting every problem instead of stopping
-at the first so the caller can report all of them at once. A Path that is not
-fully qualified, a drive-relative form such as C:scripts\x.ps1 included,
-resolves against the set file's directory rather than the current location.
-Trusted defaults to false. Trusted
-entries must declare Targets because the script is not parsed. Strict entries
-must register their targets with literal arguments so the targets can be
-derived from the parsed script and, when the entry also declares Targets, the
-two lists must match; the strict import grammar itself runs when the script
-loads. The entry's Pending records, one lazy stub per target, are then held to
-the rules Register-Completer applies through
-Resolve-CompleterRegistrationConflict against the snapshot the whole set
-shares, so a target that already carries a different registration is a
-problem unless -Force is given, and a target that an earlier valid entry of
-the same set already claimed is always a problem. A valid entry claims its
-targets in ClaimedTargets for the entries after it, and its Registrations and
-Conflicts are what Import-CompleterSet writes, so a strict script is parsed
-once per import and the session's registrations are read once per set. The
-script is never executed.
+Resolve-CompleterSetRegistration can reconcile with the session, collecting
+every problem instead of stopping at the first so the caller can report all
+of them at once. This is the static phase of a set import: it reads only the
+entry and the file system, never the session's registrations, so its result
+does not depend on what is registered. A Path that is not fully qualified, a
+drive-relative form such as C:scripts\x.ps1 included, resolves against the
+set file's directory rather than the current location. Trusted defaults to
+false. Trusted entries must declare Targets because the script is not parsed.
+Strict entries must register their targets with literal arguments so the
+targets can be derived from the parsed script and, when the entry also
+declares Targets, the two lists must match; the strict import grammar itself
+runs when the script loads. A strict script is parsed at most once here and
+the targets it yields are the ones the import registers. The script is never
+executed.
+
+The fast path skips that parse. When a strict entry has no problem so far,
+declares Targets, and carries a Hash whose form Test-CompleterSetHashFormat
+recognises, the script's text is hashed and compared with it. On a match the
+declared Targets are used as they are, in declared order and de-duplicated by
+Key with the first occurrence kept, because the export that wrote the Hash
+derived those targets from the same text. An absent, unrecognised, or
+different Hash, or a script that cannot be read for its hash, falls through
+to the parse, so such an entry gets exactly the problems it would get with
+no Hash at all. A trusted entry's Hash is ignored and its script is not read.
+
+Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
+MissingScript, UnreadableTargets, or TargetMismatch; Message is the text
+Import-CompleterSet reports.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -4913,23 +5859,26 @@ The one-based position of the entry in the set file, used in messages.
 .PARAMETER SetDirectory
 The directory that relative entry paths resolve against.
 
-.PARAMETER ClaimedTargets
-The dictionary, shared by every entry of one set, that maps a claimed target
-key to the index of the valid entry that claimed it.
-
-.PARAMETER Snapshot
-The CompleterActions.CompleterRegistrationSnapshot, shared by every entry of
-one set, that the entry's targets are reconciled against.
-
-.PARAMETER Force
-Indicates that the set is imported with -Force, so existing registrations for
-its targets are replaced rather than reported.
+.PARAMETER Verify
+Disables the fast path, so every strict entry whose script is usable is
+parsed once, and records the script's actual hash and parse-derived targets
+for drift checks. A trusted entry's script is read for its hash but still not
+parsed.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
-Returns a record with Index, DeclaredPath, Path, Trusted, Targets, the Pending
-Registrations built for those targets, the Conflicts resolved for them in the
-same order, Problems, and IsValid.
+Returns a record with Index, DeclaredPath, Path, Trusted, Targets,
+DeclaredHash (the entry's raw Hash value, or null), TargetSource (Trusted for
+a trusted entry, Hash for a strict entry that took the fast path, Parsed for
+a strict entry whose script was parsed, or null when neither applies),
+ResolutionNote (the text Import-CompleterSet writes as the entry's verbose
+line, or null for an entry with a problem or under -Verify), Problems, and
+IsValid. Registrations and Conflicts are empty until
+Resolve-CompleterSetRegistration fills them. With -Verify the record also
+carries ActualHash, the Hash of the script as it is now or null when it is
+missing or cannot be read (the parser's FileReadError included, whose empty
+text would otherwise hash as a change), and DerivedTargets, the targets the parse derived,
+empty for a trusted entry or a failed parse.
 #>
 function Resolve-CompleterSetEntry
 <#
@@ -4951,21 +5900,19 @@ function Resolve-CompleterSetEntry
         [ValidateNotNullOrEmpty()]
         [string] $SetDirectory,
 
-        [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        [System.Collections.IDictionary] $ClaimedTargets,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNull()]
-        [psobject] $Snapshot,
-
         [Parameter()]
-        [switch] $Force
+        [switch] $Verify
     )
 
-    $problems = [System.Collections.Generic.List[string]]::new()
+    $problems = [System.Collections.Generic.List[hashtable]]::new()
     $declaredPath = $null
     $resolvedPath = $null
+    $hasHash = $false
+    $declaredHash = $null
+    $actualHash = $null
+    $derivedTargets = @()
+    $targetSource = $null
+    $resolutionNote = $null
     $scriptIsUsable = $false
     $trusted = $false
     $declaredTargets = $null
@@ -4973,26 +5920,32 @@ function Resolve-CompleterSetEntry
 
     if ($Entry -isnot [System.Collections.IDictionary])
     {
-        $problems.Add('The entry is not a hashtable with Path, Trusted, and Targets keys.')
+        $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'The entry is not a hashtable with Path, Trusted, and Targets keys.' })
     }
     else
     {
+        if ($Entry.Contains('Hash'))
+        {
+            $hasHash = $true
+            $declaredHash = $Entry['Hash']
+        }
+
         if (-not $Entry.Contains('Path') -or [string]::IsNullOrWhiteSpace([string] $Entry['Path']))
         {
-            $problems.Add('The entry has no Path.')
+            $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'The entry has no Path.' })
         }
         else
         {
             $declaredPath = [string] $Entry['Path']
             $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if (-not (Test-Path -LiteralPath $resolvedPath -PathType Leaf))
+            if (-not [System.IO.File]::Exists($resolvedPath))
             {
-                $problems.Add("The file '$resolvedPath' does not exist.")
+                $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }
             elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
             {
-                $problems.Add("The file '$resolvedPath' is not a .ps1 script.")
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The file '$resolvedPath' is not a .ps1 script." })
             }
             else
             {
@@ -5004,7 +5957,7 @@ function Resolve-CompleterSetEntry
         {
             if ($Entry['Trusted'] -isnot [bool])
             {
-                $problems.Add('Trusted must be $true or $false.')
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'Trusted must be $true or $false.' })
             }
             else
             {
@@ -5019,7 +5972,7 @@ function Resolve-CompleterSetEntry
                 {
                     if ($targetEntry -isnot [System.Collections.IDictionary])
                     {
-                        $problems.Add('Each target must be a hashtable with CommandName and either Native = $true or ParameterName.')
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'Each target must be a hashtable with CommandName and either Native = $true or ParameterName.' })
                         continue
                     }
 
@@ -5027,7 +5980,7 @@ function Resolve-CompleterSetEntry
 
                     if ([string]::IsNullOrWhiteSpace($commandName))
                     {
-                        $problems.Add('A target has no CommandName.')
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'A target has no CommandName.' })
                         continue
                     }
 
@@ -5043,12 +5996,12 @@ function Resolve-CompleterSetEntry
                         }
                         else
                         {
-                            $problems.Add("Target '$commandName' must declare Native = `$true or a ParameterName.")
+                            $problems.Add(@{ Kind = 'InvalidEntry'; Message = "Target '$commandName' must declare Native = `$true or a ParameterName." })
                         }
                     }
                     catch
                     {
-                        $problems.Add($_.Exception.Message)
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = $_.Exception.Message })
                     }
                 }
             )
@@ -5056,26 +6009,95 @@ function Resolve-CompleterSetEntry
 
         if ($trusted)
         {
+            $targetSource = 'Trusted'
+
             if ($null -eq $declaredTargets)
             {
-                $problems.Add('Trusted entries must declare Targets, because a trusted script is not parsed for them.')
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'Trusted entries must declare Targets, because a trusted script is not parsed for them.' })
             }
             else
             {
                 $targets = $declaredTargets
             }
+
+            $resolutionNote = 'trusted; targets read from the set.'
+
+            if ($Verify -and $scriptIsUsable)
+            {
+                try
+                {
+                    $actualHash = Get-CompleterScriptHash -LiteralPath $resolvedPath
+                }
+                catch
+                {
+                    $actualHash = $null
+                }
+            }
         }
         elseif ($scriptIsUsable)
         {
-            $derivedTargets = @()
+            $hashMatches = $false
 
-            try
+            if ($null -eq $declaredTargets)
             {
-                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath)
+                $resolutionNote = 'no Targets; parsed the script.'
             }
-            catch
+            elseif (-not $hasHash)
             {
-                $problems.Add($_.Exception.Message)
+                $resolutionNote = 'no hash; parsed the script.'
+            }
+            elseif (-not (Test-CompleterSetHashFormat -Value $declaredHash))
+            {
+                $resolutionNote = 'hash not recognised; parsed the script.'
+            }
+            elseif ($problems.Count -eq 0 -and -not $Verify)
+            {
+                $resolutionNote = 'hash differs; parsed the script.'
+
+                try
+                {
+                    $hashMatches = (Get-CompleterScriptHash -LiteralPath $resolvedPath) -ieq [string] $declaredHash
+                }
+                catch
+                {
+                    $hashMatches = $false
+                }
+            }
+
+            if ($hashMatches)
+            {
+                $targetSource = 'Hash'
+                $resolutionNote = 'hash matches; targets read from the set.'
+                $seenKeys = [System.Collections.Generic.HashSet[string]]::new()
+                $targets = @(
+                    foreach ($declaredTarget in $declaredTargets)
+                    {
+                        if ($seenKeys.Add([string] $declaredTarget.Key))
+                        {
+                            $declaredTarget
+                        }
+                    }
+                )
+            }
+            else
+            {
+                $targetSource = 'Parsed'
+
+                try
+                {
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath
+
+                    if ($Verify -and -not @($parseResult.ParseErrors | Where-Object { $_.ErrorId -eq 'FileReadError' }))
+                    {
+                        $actualHash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
+                    }
+
+                    $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath -ParseResult $parseResult)
+                }
+                catch
+                {
+                    $problems.Add(@{ Kind = 'UnreadableTargets'; Message = $_.Exception.Message })
+                }
             }
 
             if ($derivedTargets.Count -gt 0)
@@ -5094,7 +6116,7 @@ function Resolve-CompleterSetEntry
                     {
                         $declaredList = @($declaredTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                         $derivedList = @($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
-                        $problems.Add("The declared Targets do not match the script. Declared: $declaredList. Script registers: $derivedList.")
+                        $problems.Add(@{ Kind = 'TargetMismatch'; Message = "The declared Targets do not match the script. Declared: $declaredList. Script registers: $derivedList." })
                     }
                     else
                     {
@@ -5105,48 +6127,173 @@ function Resolve-CompleterSetEntry
         }
     }
 
-    $registrations = @(
-        foreach ($target in $targets)
-        {
-            New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $resolvedPath -Trusted:$trusted
-        }
+    $record = [pscustomobject] [ordered] @{
+        PSTypeName     = 'CompleterActions.CompleterSetEntry'
+        Index          = $Index
+        DeclaredPath   = $declaredPath
+        Path           = $resolvedPath
+        Trusted        = $trusted
+        DeclaredHash   = $declaredHash
+        TargetSource   = $targetSource
+        ResolutionNote = if ($problems.Count -eq 0 -and -not $Verify) { $resolutionNote } else { $null }
+        Targets        = @($targets)
+        Registrations  = @()
+        Conflicts      = @()
+        Problems       = @($problems)
+        IsValid        = $problems.Count -eq 0
+    }
+
+    if ($Verify)
+    {
+        $record | Add-Member -NotePropertyName 'ActualHash' -NotePropertyValue $actualHash
+        $record | Add-Member -NotePropertyName 'DerivedTargets' -NotePropertyValue @($derivedTargets)
+    }
+
+    $record
+}
+<#
+.SYNOPSIS
+Reconciles the statically resolved entries of one completer set with the session's registrations.
+
+.DESCRIPTION
+The session phase of a set import. For each entry that
+Resolve-CompleterSetEntry produced, in set order, it builds the Pending
+records, one lazy stub per target, and holds them to the rules
+Register-Completer applies through Resolve-CompleterRegistrationConflict
+against the snapshot the whole set shares. A target that already carries a
+different registration is a Conflict problem unless -Force is given, and a
+target that an earlier valid entry of the same set already claimed is always
+a DuplicateTarget problem. An entry with no problem claims its targets for
+the entries after it. The entry's Registrations and Conflicts are what
+Import-CompleterSet writes, so the session's registrations are read once per
+set.
+
+Every target of the set is reconciled with the session in one
+Resolve-CompleterRegistrationState pass, in set order. Each entry's conflicts
+are then decided on its own slice of that pass, so an entry is planned
+exactly as if it were resolved alone and a target two entries share stays a
+DuplicateTarget problem, not a conflict with the earlier entry. When no entry
+resolved a target there is nothing to reconcile and no pass is made.
+
+Each entry record is completed in place: Registrations and Conflicts are
+filled, the session problems are appended after the entry's static ones, and
+IsValid is recomputed.
+
+.PARAMETER Entry
+The CompleterActions.CompleterSetEntry records of one set, in set order.
+
+.PARAMETER Snapshot
+The CompleterActions.CompleterRegistrationSnapshot, shared by every entry of
+the set, that the entries' targets are reconciled against.
+
+.PARAMETER Force
+Indicates that the set is imported with -Force, so existing registrations for
+its targets are replaced rather than reported.
+
+.OUTPUTS
+CompleterActions.CompleterSetEntry
+Returns each entry record, in set order, with Registrations, the Conflicts
+resolved for them in the same order, Problems, and IsValid.
+#>
+function Resolve-CompleterSetRegistration
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [psobject[]] $Entry,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Snapshot,
+
+        [Parameter()]
+        [switch] $Force
     )
-    $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -Snapshot $Snapshot -Force:$Force)
 
-    for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
+    $entryRegistrations = [System.Collections.Generic.List[object]]::new()
+    $keys = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($entryItem in $Entry)
     {
-        $target = $targets[$targetIndex]
+        $registrations = @(
+            foreach ($target in @($entryItem.Targets))
+            {
+                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
+            }
+        )
 
-        if ($null -ne $conflicts[$targetIndex].Problem)
-        {
-            $problems.Add($conflicts[$targetIndex].Problem)
-        }
+        $entryRegistrations.Add($registrations)
 
-        if ($ClaimedTargets.Contains([string] $target.Key))
+        foreach ($registration in $registrations)
         {
-            $problems.Add("Target '$($target.RuntimeKey)' is also listed by entry $($ClaimedTargets[[string] $target.Key]).")
+            $keys.Add([string] $registration.Key)
         }
     }
 
-    if ($problems.Count -eq 0)
+    $registrationStates = @()
+
+    if ($keys.Count -gt 0)
     {
-        foreach ($target in $targets)
-        {
-            $ClaimedTargets[[string] $target.Key] = $Index
-        }
+        $registrationStates = @(Resolve-CompleterRegistrationState -Key $keys.ToArray() -Snapshot $Snapshot)
     }
 
-    [pscustomobject] [ordered] @{
-        PSTypeName    = 'CompleterActions.CompleterSetEntry'
-        Index         = $Index
-        DeclaredPath  = $declaredPath
-        Path          = $resolvedPath
-        Trusted       = $trusted
-        Targets       = @($targets)
-        Registrations = $registrations
-        Conflicts     = $conflicts
-        Problems      = @($problems)
-        IsValid       = $problems.Count -eq 0
+    $claimedTargets = @{}
+    $stateIndex = 0
+
+    for ($entryIndex = 0; $entryIndex -lt $Entry.Count; $entryIndex++)
+    {
+        $entryItem = $Entry[$entryIndex]
+        $problems = [System.Collections.Generic.List[hashtable]]::new()
+
+        foreach ($problem in $entryItem.Problems)
+        {
+            $problems.Add($problem)
+        }
+
+        $targets = @($entryItem.Targets)
+        $registrations = $entryRegistrations[$entryIndex]
+        $conflicts = @()
+
+        if ($registrations.Count -gt 0)
+        {
+            $stateSlice = $registrationStates[$stateIndex..($stateIndex + $registrations.Count - 1)]
+            $stateIndex += $registrations.Count
+            $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -RegistrationState $stateSlice -Force:$Force)
+        }
+
+        for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
+        {
+            $target = $targets[$targetIndex]
+
+            if ($null -ne $conflicts[$targetIndex].Problem)
+            {
+                $problems.Add(@{ Kind = 'Conflict'; Message = $conflicts[$targetIndex].Problem })
+            }
+
+            if ($claimedTargets.Contains([string] $target.Key))
+            {
+                $problems.Add(@{ Kind = 'DuplicateTarget'; Message = "Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." })
+            }
+        }
+
+        if ($problems.Count -eq 0)
+        {
+            foreach ($target in $targets)
+            {
+                $claimedTargets[[string] $target.Key] = $entryItem.Index
+            }
+        }
+
+        $entryItem.Registrations = $registrations
+        $entryItem.Conflicts = $conflicts
+        $entryItem.Problems = @($problems)
+        $entryItem.IsValid = $problems.Count -eq 0
+        $entryItem
     }
 }
 <#
@@ -5280,7 +6427,7 @@ function Resolve-CompleterTarget
         throw 'Command-parameter completer targets require a non-empty parameter name.'
     }
 
-    $resolvedKey = Get-CompleterRegistrationKey -RuntimeKey $RuntimeKey
+    $resolvedKey = $RuntimeKey.ToLowerInvariant()
 
     $target = [pscustomobject] [ordered] @{
         PSTypeName    = 'CompleterActions.CompleterTarget'
@@ -6233,6 +7380,39 @@ function Test-CompleterScriptAst
     }
 
     return $findings.ToArray()
+}
+<#
+.SYNOPSIS
+Tests whether a set entry's Hash value has a form this module recognises.
+
+.DESCRIPTION
+Returns $true only for a string made of the prefix 'SHA256:' and 64
+hexadecimal digits, compared case-insensitively. Any other value, including a
+non-string, an empty string, or an unknown prefix such as 'SHA512:', returns
+$false, so a reader treats the Hash as absent and falls back to parsing the
+script instead of failing.
+
+.PARAMETER Value
+The Hash value read from a set entry.
+
+.OUTPUTS
+System.Boolean
+#>
+function Test-CompleterSetHashFormat
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [object] $Value
+    )
+
+    $Value -is [string] -and [regex]::IsMatch($Value, '\ASHA256:[0-9A-F]{64}\z', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 <#
 .SYNOPSIS

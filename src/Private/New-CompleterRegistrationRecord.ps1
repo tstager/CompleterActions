@@ -92,32 +92,31 @@ function New-CompleterRegistrationRecord
 
     foreach ($requiredProperty in 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'TargetType')
     {
-        if ($Target.PSObject.Properties.Match($requiredProperty).Count -eq 0)
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
         {
             throw "Target is missing required property '$requiredProperty'."
         }
     }
 
-    $registration = [CompleterRegistration] @{
-        Key                 = [string] $Target.Key
-        RegistrationKey     = [string] $Target.Key
-        RuntimeKey          = [string] $Target.RuntimeKey
-        CommandName         = [string] $Target.CommandName
-        ParameterName       = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
-        IsNative            = [bool] $Target.IsNative
-        CompleterType       = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
-        TargetType          = [string] $Target.TargetType
-        Source              = $Source
-        State               = $State
-        IsManaged           = $Source -eq 'Managed'
-        IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
-        ScriptPath          = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
-        Trusted             = [bool] $Trusted
-        LoadError           = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
-        ImportModule        = $ImportModule
-        ScriptBlock         = $ScriptBlock
-        ScriptText          = $ScriptBlock.ToString()
-    }
+    $registration = [CompleterRegistration]::new()
+    $registration.Key = [string] $Target.Key
+    $registration.RegistrationKey = [string] $Target.Key
+    $registration.RuntimeKey = [string] $Target.RuntimeKey
+    $registration.CommandName = [string] $Target.CommandName
+    $registration.ParameterName = if ($Target.IsNative) { $null } else { [string] $Target.ParameterName }
+    $registration.IsNative = [bool] $Target.IsNative
+    $registration.CompleterType = if ($Target.IsNative) { 'Native' } else { 'Parameter' }
+    $registration.TargetType = [string] $Target.TargetType
+    $registration.Source = $Source
+    $registration.State = $State
+    $registration.IsManaged = $Source -eq 'Managed'
+    $registration.IsRuntimeRegistered = $State -notin 'Stale', 'Failed'
+    $registration.ScriptPath = if ([string]::IsNullOrWhiteSpace($ScriptPath)) { $null } else { $ScriptPath }
+    $registration.Trusted = [bool] $Trusted
+    $registration.LoadError = if ([string]::IsNullOrWhiteSpace($LoadError)) { $null } else { $LoadError }
+    $registration.ImportModule = $ImportModule
+    $registration.ScriptBlock = $ScriptBlock
+    $registration.ScriptText = $ScriptBlock.ToString()
 
     return $registration
 }

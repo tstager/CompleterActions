@@ -25,7 +25,7 @@ Describe 'Legacy command aliases' {
 
         @($commands | Where-Object CommandType -eq 'Alias' | Select-Object -ExpandProperty Name | Sort-Object) | Should -Be $script:LegacyAliases
         @($manifestData.AliasesToExport | Sort-Object) | Should -Be $script:LegacyAliases
-        @($commands | Where-Object CommandType -eq 'Function').Count | Should -Be 11
+        @($commands | Where-Object CommandType -eq 'Function').Count | Should -Be 13
     }
 
     It 'resolves <Alias> to <Target>' -TestCases $script:LegacyCommands {
