@@ -127,9 +127,19 @@ from the parsed script and rejects a mismatch. The command derives those
 targets the same way before writing and refuses, naming the missing targets
 and leaving the output untouched, when the records for a strict script cover
 only some of them, as they do after Register-Completer -Lazy
--CommandName selected a subset. Trusted entries are written with the targets
-the records carry, so a subset of a trusted script's targets exports and
-imports as given.
+-CommandName selected a subset. A strict entry's targets are written in the
+order the script registers them, with the script's casing. Trusted entries are
+written with the targets the records carry, in record order, so a subset of a
+trusted script's targets exports and imports as given.
+
+Every entry also records a Hash of its script: 'SHA256:' followed by the
+SHA-256 of the script's text with CR LF and lone CR line endings normalised to
+LF, so the same script hashes to the same value on a Windows and a Linux
+checkout. The hash is a cache key for the entry's targets, not a signature, and
+readers that do not know the key ignore it. A strict script is read once for
+both its targets and its hash. When a trusted script cannot be read, its entry
+is written without a Hash, a warning names the script, and the export still
+succeeds.
 
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
@@ -247,6 +257,7 @@ function Export-CompleterSet
                     $entriesByPath[$scriptPath] = [pscustomobject] [ordered] @{
                         Path    = $scriptPath
                         Trusted = $trusted
+                        Hash    = $null
                         Targets = [ordered] @{}
                     }
                 }
@@ -277,12 +288,28 @@ function Export-CompleterSet
                     continue
                 }
 
-                $derivedKeys = @(Get-CompleterScriptTarget -LiteralPath $entry.Path | ForEach-Object { [string] $_.Key })
+                # One read serves both the target check and the Hash, so an edit
+                # between two reads cannot give a Hash that does not describe the
+                # checked targets.
+                $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
+                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
                 $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
                 $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
+                    # The keys match, so only order and casing can differ. Writing the
+                    # derived targets puts them in script order and script casing,
+                    # which is what the import fast path reproduces.
+                    $entry.Targets = [ordered] @{}
+
+                    foreach ($derivedTarget in $derivedTargets)
+                    {
+                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
+                    }
+
+                    $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
 
@@ -308,12 +335,33 @@ function Export-CompleterSet
 
             foreach ($entry in $entriesByPath.Values)
             {
+                # A trusted script is never parsed here, and 2.0.0 exported a trusted
+                # entry whose file is missing, so an unreadable trusted script is
+                # written without a Hash rather than failing the export.
+                if ($entry.Trusted)
+                {
+                    try
+                    {
+                        $entry.Hash = Get-CompleterScriptHash -LiteralPath $entry.Path
+                    }
+                    catch
+                    {
+                        Write-Warning -Message "The script '$($entry.Path)' could not be read, so its entry was written without a Hash. $($_.Exception.GetBaseException().Message)"
+                    }
+                }
+
                 $relativePath = [System.IO.Path]::GetRelativePath($outputDirectory, $entry.Path)
                 $writtenPath = if ([System.IO.Path]::IsPathRooted($relativePath)) { $entry.Path } else { $relativePath.Replace('\', '/') }
 
                 $lines.Add('        @{')
                 $lines.Add("            Path    = '$($writtenPath.Replace("'", "''"))'")
                 $lines.Add("            Trusted = `$$($entry.Trusted.ToString().ToLowerInvariant())")
+
+                if ($null -ne $entry.Hash)
+                {
+                    $lines.Add("            Hash    = '$($entry.Hash)'")
+                }
+
                 $lines.Add('            Targets = @(')
 
                 foreach ($target in $entry.Targets.Values)
@@ -3052,6 +3100,70 @@ function Get-CompleterScriptFinding
 }
 <#
 .SYNOPSIS
+Computes the set file Hash of a completer script's text.
+
+.DESCRIPTION
+Returns 'SHA256:' followed by 64 uppercase hexadecimal digits: the SHA-256 of
+the script's decoded text after every CR LF pair, and then every remaining lone
+CR, is replaced with LF, encoded as UTF-8 without a byte-order mark. The same
+script therefore hashes to one value whether it is checked out with CRLF on
+Windows or LF on Linux, and whether or not it carries a byte-order mark.
+
+-Text hashes text that is already decoded, such as a parse result's
+Ast.Extent.Text, so a caller that has parsed the script does not read it a
+second time. -LiteralPath reads the file with File.ReadAllText, which decodes
+UTF-8 unless a byte-order mark names another encoding, as PowerShell's parser
+does. ReadAllText resolves a relative path against the process directory, so
+callers pass a full path.
+
+.PARAMETER Text
+The decoded script text to hash.
+
+.PARAMETER LiteralPath
+The full path of the script file to read and hash.
+
+.OUTPUTS
+System.String
+#>
+function Get-CompleterScriptHash
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(DefaultParameterSetName = 'LiteralPath')]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory, ParameterSetName = 'Text')]
+        [AllowEmptyString()]
+        [string] $Text,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+    {
+        $Text = [System.IO.File]::ReadAllText($LiteralPath)
+    }
+
+    $normalizedText = $Text.Replace("`r`n", "`n").Replace("`r", "`n")
+    $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes($normalizedText)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+
+    try
+    {
+        $digest = $sha256.ComputeHash($bytes)
+    }
+    finally
+    {
+        $sha256.Dispose()
+    }
+
+    'SHA256:' + ([System.BitConverter]::ToString($digest) -replace '-', '')
+}
+<#
+.SYNOPSIS
 Parses a completer script file into a reusable AST result.
 
 .DESCRIPTION
@@ -3115,7 +3227,12 @@ costs one parse rather than a full conformance walk. Duplicate targets
 collapse to one record.
 
 .PARAMETER LiteralPath
-The literal path to the completer script file.
+The literal path to the completer script file. Error messages name it.
+
+.PARAMETER ParseResult
+A parse result of the script from Get-CompleterScriptParseResult. When it is
+supplied the script is not read again, so a caller that also needs the
+script's text, such as Export-CompleterSet for its Hash, reads the file once.
 
 .OUTPUTS
 CompleterActions.CompleterTarget
@@ -3130,18 +3247,25 @@ function Get-CompleterScriptTarget
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [psobject] $ParseResult
     )
 
-    $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
-
-    if ($parseResult.ParseErrors.Count -gt 0)
+    if (-not $PSBoundParameters.ContainsKey('ParseResult'))
     {
-        $parseError = $parseResult.ParseErrors[0]
+        $ParseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+    }
+
+    if ($ParseResult.ParseErrors.Count -gt 0)
+    {
+        $parseError = $ParseResult.ParseErrors[0]
         throw "The script '$LiteralPath' does not parse, so its targets cannot be derived. Line $($parseError.Extent.StartLineNumber), column $($parseError.Extent.StartColumnNumber): $($parseError.Message)"
     }
 
-    $registerCommands = @($parseResult.Ast.FindAll(
+    $registerCommands = @($ParseResult.Ast.FindAll(
             {
                 param($node)
 
@@ -6233,6 +6357,39 @@ function Test-CompleterScriptAst
     }
 
     return $findings.ToArray()
+}
+<#
+.SYNOPSIS
+Tests whether a set entry's Hash value has a form this module recognises.
+
+.DESCRIPTION
+Returns $true only for a string made of the prefix 'SHA256:' and 64
+hexadecimal digits, compared case-insensitively. Any other value, including a
+non-string, an empty string, or an unknown prefix such as 'SHA512:', returns
+$false, so a reader treats the Hash as absent and falls back to parsing the
+script instead of failing.
+
+.PARAMETER Value
+The Hash value read from a set entry.
+
+.OUTPUTS
+System.Boolean
+#>
+function Test-CompleterSetHashFormat
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [object] $Value
+    )
+
+    $Value -is [string] -and [regex]::IsMatch($Value, '\ASHA256:[0-9A-F]{64}\z', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
 <#
 .SYNOPSIS
