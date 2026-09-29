@@ -7,6 +7,21 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Changed
+
+- **Performance.** Startup benchmark over the 173-script set, ten samples
+  each: 2.0.0 lazy median 1589.6 ms, 2.1.0 lazy median 862.9 ms, ratio 0.54
+  against the 0.50 target; an unhashed set 1423.9 ms. The target is missed:
+  a set whose scripts have not changed imports in 0.54 of the 2.0.0 time, not
+  under half. The run used 366 targets on pwsh 7.6.6 and Windows 10.0.26200.
+  `tools/Measure-CompleterStartup.ps1` took the measurement in its second
+  edition: the `Lazy` leg imports a set exported with `Hash`, a `LazyNoHash`
+  leg imports a copy with every `Hash` line removed, the new
+  `-BaselineModulePath` adds a `Baseline` leg that imports that copy with
+  another package such as 2.0.0, the legs are sampled interleaved,
+  `-Iterations` defaults to 10, every row gains `RatioToBaseline`, and the
+  tool takes no sample unless the exported set carries one `Hash` per entry.
+
 ## [2.0.0] - 2026-09-23
 
 The stable 2.0.0 release. Same code as 2.0.0-rc1, promoted after the candidate
