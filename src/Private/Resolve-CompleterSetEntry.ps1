@@ -59,7 +59,8 @@ line, or null for an entry with a problem or under -Verify), Problems, and
 IsValid. Registrations and Conflicts are empty until
 Resolve-CompleterSetRegistration fills them. With -Verify the record also
 carries ActualHash, the Hash of the script as it is now or null when it is
-missing or cannot be read, and DerivedTargets, the targets the parse derived,
+missing or cannot be read (the parser's FileReadError included, whose empty
+text would otherwise hash as a change), and DerivedTargets, the targets the parse derived,
 empty for a trusted entry or a failed parse.
 #>
 function Resolve-CompleterSetEntry
@@ -266,7 +267,7 @@ function Resolve-CompleterSetEntry
                 {
                     $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath
 
-                    if ($Verify)
+                    if ($Verify -and -not @($parseResult.ParseErrors | Where-Object { $_.ErrorId -eq 'FileReadError' }))
                     {
                         $actualHash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     }

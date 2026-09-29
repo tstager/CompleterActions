@@ -627,6 +627,22 @@ Describe 'Test-CompleterSet' {
         @($import.Problems) | Should -BeExactly @($findings[0].Message)
     }
 
+    It 'reports only UnreadableTargets for a strict script that cannot be read' -Skip:(-not $IsWindows) {
+        $lock = [System.IO.File]::Open($script:AlphaPath, 'Open', 'ReadWrite', 'None')
+
+        try
+        {
+            $findings = @(Test-CompleterSet -LiteralPath $script:SetPath)
+        }
+        finally
+        {
+            $lock.Dispose()
+        }
+
+        @($findings.Construct) | Should -Be @('UnreadableTargets') -Because 'an unreadable script has no current hash to compare'
+        $findings[0].Message | Should -BeLike '*could not be read*'
+    }
+
     It 'never parses a trusted entry' {
         Edit-TestSetValue -Path $script:SetPath -Anchor 'Trusted' -Entry 1 -Value '$true'
         Enable-TestParseCounter
@@ -719,6 +735,21 @@ Describe 'Test-CompleterSet' {
         $defaultFindings[0].Line | Should -Be (Get-TestAnchorLine -Path $script:SetPath -Anchor 'Entries')
         @($toolFindings.Construct) | Should -Be @('UnlistedScript')
         $toolFindings[0].Message | Should -BeLike "*'$toolPath'*"
+    }
+
+    It 'reports a hidden script that matches -Filter as UnlistedScript' {
+        $hiddenPath = Join-Path -Path $script:Folder -ChildPath '.hidden_completer.ps1'
+        Set-Content -LiteralPath $hiddenPath -Value '# not listed' -Encoding utf8
+
+        if ($IsWindows)
+        {
+            (Get-Item -LiteralPath $hiddenPath).Attributes = 'Hidden'
+        }
+
+        $findings = @(Test-CompleterSet -LiteralPath $script:SetPath)
+
+        @($findings.Construct) | Should -Be @('UnlistedScript')
+        $findings[0].Message | Should -BeLike "*'$hiddenPath'*"
     }
 
     It 'binds <Parameter> like Import-CompleterSet' -TestCases @(

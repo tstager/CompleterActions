@@ -17,8 +17,8 @@ are walked in set order, an entry with no Error finding claims its targets,
 and a later entry that lists a claimed target gets import's duplicate text.
 The declared Hash is then compared with the script's current hash
 (HashMismatch), or reported as MissingHash or InvalidHash. Last, every file
-under the set's directory that matches -Filter and that no entry lists is an
-UnlistedScript finding, compared case-insensitively on Windows and
+under the set's directory that matches -Filter and that no entry lists, hidden
+files included, is an UnlistedScript finding, compared case-insensitively on Windows and
 case-sensitively elsewhere.
 
 Nothing here reads or writes the session's registrations or runs a script.
@@ -135,7 +135,7 @@ function Get-CompleterSetFinding
     }
 
     $unlistedScripts = @(
-        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -ErrorAction Stop |
+        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
             Where-Object { -not $listedPaths.Contains($_.FullName) } |
             Sort-Object -Property FullName
     )

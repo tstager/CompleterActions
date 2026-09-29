@@ -4026,8 +4026,8 @@ are walked in set order, an entry with no Error finding claims its targets,
 and a later entry that lists a claimed target gets import's duplicate text.
 The declared Hash is then compared with the script's current hash
 (HashMismatch), or reported as MissingHash or InvalidHash. Last, every file
-under the set's directory that matches -Filter and that no entry lists is an
-UnlistedScript finding, compared case-insensitively on Windows and
+under the set's directory that matches -Filter and that no entry lists, hidden
+files included, is an UnlistedScript finding, compared case-insensitively on Windows and
 case-sensitively elsewhere.
 
 Nothing here reads or writes the session's registrations or runs a script.
@@ -4147,7 +4147,7 @@ function Get-CompleterSetFinding
     }
 
     $unlistedScripts = @(
-        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -ErrorAction Stop |
+        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
             Where-Object { -not $listedPaths.Contains($_.FullName) } |
             Sort-Object -Property FullName
     )
@@ -5875,7 +5875,8 @@ line, or null for an entry with a problem or under -Verify), Problems, and
 IsValid. Registrations and Conflicts are empty until
 Resolve-CompleterSetRegistration fills them. With -Verify the record also
 carries ActualHash, the Hash of the script as it is now or null when it is
-missing or cannot be read, and DerivedTargets, the targets the parse derived,
+missing or cannot be read (the parser's FileReadError included, whose empty
+text would otherwise hash as a change), and DerivedTargets, the targets the parse derived,
 empty for a trusted entry or a failed parse.
 #>
 function Resolve-CompleterSetEntry
@@ -6085,7 +6086,7 @@ function Resolve-CompleterSetEntry
                 {
                     $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath
 
-                    if ($Verify)
+                    if ($Verify -and -not @($parseResult.ParseErrors | Where-Object { $_.ErrorId -eq 'FileReadError' }))
                     {
                         $actualHash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     }
