@@ -432,6 +432,7 @@ Describe 'Import-CompleterSet -Name' {
     It 'fails with the section 3 text for <Case>' -TestCases @(
         @{ Case = 'a missing module'; Kind = 'Missing'; Value = $null }
         @{ Case = 'a manifest without CompleterSet'; Kind = 'NotDeclared'; Value = $null }
+        @{ Case = 'an empty value'; Kind = 'Invalid'; Value = '' }
         @{ Case = 'a value directly in ModuleBase'; Kind = 'Invalid'; Value = 'completers.psd1' }
         @{ Case = 'a value with ..'; Kind = 'Invalid'; Value = '../completers.psd1' }
         @{ Case = 'a rooted value'; Kind = 'Invalid'; Value = '<rooted>' }
@@ -513,6 +514,29 @@ Describe 'Import-CompleterSet -Name' {
         }
 
         $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. The completer set '$([System.IO.Path]::Combine($brokenBase, 'missing', 'completers.psd1'))' declared by the module 'CaFixtureSet' 2.0.0 does not exist."
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'fails on an unreadable manifest in the highest version folder and never falls back' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $brokenBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '2.0.0'
+        $brokenManifestPath = Join-Path -Path $brokenBase -ChildPath 'CaFixtureSet.psd1'
+        Set-Content -LiteralPath $brokenManifestPath -Value '@{ ModuleVersion = ' -Encoding utf8
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $thrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $thrown.Exception.Message.StartsWith('Failed to import completer set. ', [System.StringComparison]::Ordinal) | Should -BeTrue -Because $thrown.Exception.Message
+        $thrown.Exception.Message.Contains($brokenManifestPath) | Should -BeTrue -Because $thrown.Exception.Message
         Get-TestPackageRegistration | Should -BeNullOrEmpty
     }
 
@@ -969,6 +993,7 @@ Describe 'Import-CompleterSet -Name' {
         Set-Content -LiteralPath $publishScriptPath -Encoding utf8 -Value @'
 param($RepositoryName, $RepositoryPath, $PackagePath, $ModulesPath)
 $ErrorActionPreference = 'Stop'
+'repositories before: ' + (@(Get-PSResourceRepository | ForEach-Object Name | Sort-Object) -join ', ')
 try
 {
     Register-PSResourceRepository -Name $RepositoryName -Uri $RepositoryPath -Trusted
@@ -979,9 +1004,9 @@ finally
 {
     Unregister-PSResourceRepository -Name $RepositoryName -ErrorAction SilentlyContinue
 }
+'repositories after: ' + (@(Get-PSResourceRepository | ForEach-Object Name | Sort-Object) -join ', ')
 '@
 
-        $repositoriesBefore = @(Get-PSResourceRepository | ForEach-Object Name | Sort-Object)
         $savedDataHome = $env:XDG_DATA_HOME
         try
         {
@@ -999,7 +1024,11 @@ finally
         }
 
         $publishExitCode | Should -Be 0 -Because ($publishOutput -join [Environment]::NewLine)
-        @(Get-PSResourceRepository | ForEach-Object Name | Sort-Object) | Should -Be $repositoriesBefore
+        $repositoriesBefore = @($publishOutput | ForEach-Object { "$_" } | Where-Object { $_.StartsWith('repositories before: ', [System.StringComparison]::Ordinal) })
+        $repositoriesAfter = @($publishOutput | ForEach-Object { "$_" } | Where-Object { $_.StartsWith('repositories after: ', [System.StringComparison]::Ordinal) })
+        $repositoriesBefore.Count | Should -Be 1 -Because ($publishOutput -join [Environment]::NewLine)
+        $repositoriesAfter.Count | Should -Be 1 -Because ($publishOutput -join [Environment]::NewLine)
+        $repositoriesAfter[0].Substring('repositories after: '.Length) | Should -BeExactly $repositoriesBefore[0].Substring('repositories before: '.Length)
 
         $savedBase = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($modulesPath, 'CaFixtureSet', '1.0.0'))
         $savedSetPath = [System.IO.Path]::Combine($savedBase, 'completers', 'completers.psd1')
