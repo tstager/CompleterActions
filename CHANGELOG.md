@@ -35,7 +35,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   conforms; a failure writes nothing. The file is UTF-8 without a
   byte-order mark and holds no date, version, or machine path. Supports
   `-Force`, `-PassThru`, `-WhatIf`, and `-Confirm`; `-WhatIf` names the
-  program the probe would run.
+  program the probe would run. A name with no letter or digit outside its
+  suffix, such as `_.exe`, and a `-HelpArgument` with a line break are
+  refused before anything runs or is written.
 - **`Import-CompleterSet -Name`.** Imports the completer set of an
   installed completer set package: a module whose manifest names its set
   file in `PrivateData.CompleterSet`, in a folder directly below the
