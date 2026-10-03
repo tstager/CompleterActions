@@ -327,6 +327,39 @@ Describe 'Help probe process helpers' {
         $functionOnly.Warning | Should -Be "The command 'caprobeonly' was not found as an application, so the subcommand table is empty. Pass captured help with -HelpText, or fill the table by hand."
     }
 
+    It 'matches the name literally, so <Case> resolves nothing' -TestCases @(
+        @{ Case = 'a lone *'; Name = '*' }
+        @{ Case = 'a trailing *'; Name = 'caprobewil*' }
+        @{ Case = 'a ?'; Name = 'caprobewil?' }
+        @{ Case = 'a bracket class'; Name = 'caprobewil[d]' }
+    ) {
+        $directory = New-TestDirectory
+        if ($IsWindows)
+        {
+            New-TestPEFile -Path (Join-Path -Path $directory -ChildPath 'caprobewild.exe') -Subsystem 3
+        }
+        else
+        {
+            Write-TestShellScript -Path (Join-Path -Path $directory -ChildPath 'caprobewild') -Line '#!/bin/sh', 'exit 0' -Executable
+        }
+
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $directory
+            $result = Resolve-TestProbeApplication -Name $Name
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        $result.Name | Should -BeExactly $Name
+        $result.Path | Should -BeNullOrEmpty
+        $result.CanRun | Should -BeFalse
+        $result.Warning | Should -BeExactly "The command '$Name' was not found as an application, so the subcommand table is empty. Pass captured help with -HelpText, or fill the table by hand."
+    }
+
     It 'returns the not-found warning without throwing when ErrorActionPreference is Stop' {
         $name = 'zz_nonexistent_{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8))
 
@@ -349,6 +382,7 @@ Describe 'Help probe process helpers' {
         @{ Case = 'a file named TOOL.BAT'; Build = 'Script'; FileName = 'TOOL.BAT'; Name = 'TOOL'; Reason = 'it is a .bat file, which only runs through cmd.exe' }
         @{ Case = 'a zero-byte .exe'; Build = 'Empty'; FileName = 'caprobeempty.exe'; Name = 'caprobeempty'; Reason = 'its program header could not be read' }
         @{ Case = 'a subsystem 1 .exe'; Build = 'Native'; FileName = 'caprobenative.exe'; Name = 'caprobenative'; Reason = 'it is not a Windows console program (subsystem 1)' }
+        @{ Case = 'a file with no extension'; Build = 'Script'; FileName = 'caprobenoext'; Name = 'caprobenoext'; Reason = 'it has no file extension' }
     ) {
         if (-not $IsWindows)
         {
