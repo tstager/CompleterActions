@@ -21,6 +21,10 @@ under the set's directory that matches -Filter and that no entry lists, hidden
 files included, is an UnlistedScript finding, compared case-insensitively on Windows and
 case-sensitively elsewhere.
 
+With Package, the set is a package set, and Get-CompleterSetPackageFinding
+adds its PackageLayout findings after every entry's findings and before the
+UnlistedScript findings. Without it the findings are exactly the plain set's.
+
 Nothing here reads or writes the session's registrations or runs a script.
 
 .PARAMETER SetDefinition
@@ -30,12 +34,17 @@ returned for the set.
 .PARAMETER Filter
 The file-name pattern of the unlisted-script scan.
 
+.PARAMETER Package
+The record Get-CompleterSetPackage returned for the set, when a module
+manifest declares it.
+
 .OUTPUTS
 CompleterActions.CompleterScriptFinding
 Returns the findings in set order, each entry's in the order MissingScript,
 InvalidEntry, UnreadableTargets, TargetMismatch, DuplicateTarget,
-HashMismatch, MissingHash, InvalidHash, followed by the UnlistedScript
-findings sorted by path. Path is the set file for every finding.
+HashMismatch, MissingHash, InvalidHash, then, for a package set, the
+PackageLayout findings, followed by the UnlistedScript findings sorted by
+path. Path is the set file for every finding.
 #>
 function Get-CompleterSetFinding
 {
@@ -48,7 +57,10 @@ function Get-CompleterSetFinding
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $Filter
+        [string] $Filter,
+
+        [Parameter()]
+        [psobject] $Package
     )
 
     $regenerateHint = 'Regenerate the set with Export-CompleterSet.'
@@ -65,12 +77,14 @@ function Get-CompleterSetFinding
     $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
     $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
     $claimedTargets = @{}
+    $resolvedEntries = [System.Collections.Generic.List[object]]::new()
     $entryIndex = 0
 
     foreach ($rawEntry in $SetDefinition.Entries)
     {
         $entryIndex++
         $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
+        $resolvedEntries.Add($entry)
         $entryExtent = $extents.Entries[$entryIndex - 1]
         $findings = [System.Collections.Generic.List[object]]::new()
 
@@ -134,6 +148,11 @@ function Get-CompleterSetFinding
         }
 
         $findings
+    }
+
+    if ($null -ne $Package)
+    {
+        Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
     }
 
     $unlistedScripts = @(
