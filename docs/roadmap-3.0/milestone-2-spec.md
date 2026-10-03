@@ -692,7 +692,8 @@ Run rules, carried over from milestone 1 and tightened:
 11. **Files, errors, and pipeline input.**
     - The output has no BOM, uses CR LF on Windows and LF elsewhere, and ends with a newline. The same input twice gives identical bytes.
     - An existing file without `-Force` fails with `The file '<path>' already exists. Use -Force to overwrite it.` and leaves the file unchanged; `-Force` replaces it. A file created at `<path>` during a probe (through the replaced runner) also fails the call and is left unchanged. No `.tmp` file remains after any of these.
-    - A missing directory, a non-`.ps1` path, a directory path, and the names `_`, `foo.`, `-x`, `a b`, and `C:\tools\rg` each fail with their section 2 text, wrapped in `Failed to create completer script.`
+    - A missing directory, a non-`.ps1` path, a directory path, and the names `_`, `foo.`, `-x`, `a b`, `C:\tools\rg`, `_.exe`, and `__.cmd` each fail with their section 2 text, wrapped in `Failed to create completer script.`
+    - A `-HelpArgument` that holds CR, LF, or CR LF fails with `Failed to create completer script. -HelpArgument must not contain a line break.`; no process is started and nothing is written.
     - `-PassThru` returns `System.IO.FileInfo`; without it, the command returns nothing.
     - `'Commands:', '  build    Compile' | New-CompleterScript -CommandName fx -Path <scratch>\fx_completer.ps1` gives a table with `build`: the two pipeline lines were joined before parsing.
 12. **Self-check.** With the composer replaced through `InModuleScope` to emit a top-level assignment, the command fails with `New-CompleterScript did not produce a conforming script, so nothing was written.` and no file exists.
@@ -730,7 +731,7 @@ Run rules, carried over from milestone 1 and tightened:
 17. **PS_Completers as a package**, in the scratch clone, after steps 1 to 3 of section 3's "What changes":
     - `Test-CompleterSet -LiteralPath <staging>\PS_Completers\completers\completers.psd1` returns nothing;
     - the clone's Pester run passes with its previous test count plus the package gate;
-    - the staged folder, published and saved under the package isolation rule, gives `Import-CompleterSet -Name PS_Completers` with the same number of `Pending` records and the same `Key` list as `Import-CompleterSet -LiteralPath <scratch>\PS_Completers\ps_completers.psd1` in a second process (362 at `2c590c6`; the assertion is equality, not the number).
+    - the staged folder, published and saved under the package isolation rule, gives `Import-CompleterSet -Name PS_Completers` with the same number of `Pending` records and the same `Key` list as `Import-CompleterSet -LiteralPath <scratch>\PS_Completers\ps_completers.psd1` (the clone's root copy, not the staged one) in a second process (362 at `2c590c6`; the assertion is equality, not the number).
 
 ### Documentation
 
@@ -779,11 +780,11 @@ Settled scope is in section 1's non-goals (option seeding, companion `.md`, vers
    - Recommendation: the full section goes in `about_Completer_Sets`, and `about_Import_Completers` points to it (section 6, edit 3).
    - Alternative: follow the roadmap's wording; the full `COMPLETER SETS AS MODULES` section then moves into `about_Import_Completers`, and `about_Completer_Sets` gets the pointer.
 7. **Where the set file sits in a package.**
-   - Recommendation: in one subfolder directly below the module folder, named with the file in `PrivateData.CompleterSet` (`'<folder>/<file>.psd1'`), with the manifest the only `.psd1` in the module folder; folder and file names free. PS_Completers then keeps `ps_completers.psd1` under `completers/` and keeps its manifest at `package/PS_Completers.psd1` in its repository. This changes the roadmap item's wording (section 6, edit 2).
+   - Recommendation: in one subfolder directly below the module folder, named with the file in `PrivateData.CompleterSet` (`'<folder>/<file>.psd1'`), with the manifest the only `.psd1` in the module folder; folder and file names free, except that the set file's base name must differ from the module name. PS_Completers stages its set as `completers/completers.psd1` (the repository keeps `ps_completers.psd1`; see the set-file name rule of "The package layout") and keeps its manifest at `package/PS_Completers.psd1` in its repository. This changes the roadmap item's wording (section 6, edit 2).
    - Alternative: the roadmap's "set file at the module root". `Publish-PSResource` takes the first `*.psd1` as the manifest, so this fails whenever the set sorts first, and nondeterministically on Linux (section 3).
    - Alternative: the module root with a set name that sorts after the manifest, such as `<ModuleName>.set.psd1`. It publishes on Windows, where the listing came back sorted, but not reliably on Linux, where it did not.
 8. **The `PackageLayout` finding kind** (proposed in section 3). Each row is a separate choice.
-   - Recommendation: add the kind with all three rows. The outside-the-module row is an `Error`, because the installed copy lacks the script and `Import-CompleterSet -Name` rejects the entry. The second-`.psd1` row is an `Error`, because it is the only check that catches the publish failure before `Publish-PSResource` does, and on Linux that failure depends on file order. The `RequiredModules` row is a `Warning`.
+   - Recommendation: add the kind with all three rows (a fourth, the set-file name row, was added on 2026-10-03; see section 3). The outside-the-module row is an `Error`, because the installed copy lacks the script and `Import-CompleterSet -Name` rejects the entry. The second-`.psd1` row is an `Error`, because it is the only check that catches the publish failure before `Publish-PSResource` does, and on Linux that failure depends on file order. The `RequiredModules` row is a `Warning`.
    - Alternatives: the outside-the-module row as a `Warning`; any row dropped; or no kind at all, with the layout rules documented only (section 4) and the author learning of a problem at publish or install time.
 9. **`Test-CompleterSet -Name`** (proposed in section 3).
    - Recommendation: add it. It checks the installed copy, which is where an install-time problem shows, by the same name the profile uses.
