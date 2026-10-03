@@ -48,3 +48,5 @@ winget --help | Set-Content -Encoding utf8 .\winget.txt
 ## Result
 
 Every expected list equals the parser's output on its capture, name for name and in order, and every count equals the section 2 table. No difference needed a version note.
+
+Second reader: the WP2 corpus review checked every expected list against its capture with an independent implementation of the section 2 rules, run on the 14 raw captures. It matched every `<tool>.names.txt` name for name and in order: `7z` 11, `bcdedit` 20, `cargo` 16, `docker` 65, `gh` 34, `go` 19, `kubectl` 43, `pip` 18, `rustup` 17, `sc` 35, `winget` 19, and `git`, `rg`, and `schtasks` 0.
