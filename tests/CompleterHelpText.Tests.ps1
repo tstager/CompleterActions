@@ -1,5 +1,6 @@
 BeforeAll {
     $script:ManifestPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'CompleterActions.psd1'
+    $script:HelpFixtureRoot = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/NewCompleterScript'
 
     function ConvertFrom-TestHelpOutput
     {
@@ -111,6 +112,35 @@ Describe 'Help text decoding, cleaning, and parsing' {
         ConvertTo-TestCleanHelpText -Text $text | Should -BeExactly 'build'
         $elapsed.Stop()
         $elapsed.Elapsed.TotalSeconds | Should -BeLessThan 5
+    }
+
+    It 'parses the <Tool> capture to exactly its expected names in order' -TestCases @(
+        @{ Tool = 'cargo' }
+        @{ Tool = 'docker' }
+        @{ Tool = 'gh' }
+        @{ Tool = 'go' }
+        @{ Tool = '7z' }
+        @{ Tool = 'sc' }
+        @{ Tool = 'bcdedit' }
+        @{ Tool = 'rustup' }
+        @{ Tool = 'pip' }
+        @{ Tool = 'kubectl' }
+        @{ Tool = 'winget' }
+        @{ Tool = 'git' }
+        @{ Tool = 'rg' }
+        @{ Tool = 'schtasks' }
+    ) {
+        param(
+            [string] $Tool
+        )
+
+        $text = Get-Content -LiteralPath (Join-Path -Path $script:HelpFixtureRoot -ChildPath "$Tool.txt") -Raw
+        $expected = @(Get-Content -LiteralPath (Join-Path -Path $script:HelpFixtureRoot -ChildPath "$Tool.names.txt"))
+
+        $names = @(ConvertFrom-TestHelpText -Text (ConvertTo-TestCleanHelpText -Text $text) | ForEach-Object -MemberName Name)
+
+        $names.Count | Should -Be $expected.Count
+        $names -join "`n" | Should -BeExactly ($expected -join "`n")
     }
 
     It 'matches the header <Line>' -TestCases @(
