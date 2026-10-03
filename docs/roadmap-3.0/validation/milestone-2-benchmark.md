@@ -188,3 +188,5 @@ The `-LiteralPath` leg spreads 100.2 to 119.4 ms between its fastest and slowest
 | Spot cost, `-Name` median minus `-LiteralPath` median | at most 20 ms | 14.8 ms in run B, the plan's order; 32.0 ms (run A) and 27.1 ms (run C) in interleaved orders; -1.8 ms over 30 alternating pairs (run D); 14.4 ms pooled | Pass in the plan's order; runs A and C were over, so the owner rules on it |
 | `Lazy` median, branch build (`bb0336c`) | reported, not gated | 761.0 ms | Reported |
 | `Lazy` median, 2.1.0 build (`v2.1.0`) | reported, not gated | 760.5 ms | Reported |
+
+Owner ruling 2026-10-03: accepted. The pooled 60-sample difference is 14.4 ms and the alternating diagnostic is -1.8 ms, so the 20 ms bound sits inside this harness's noise.

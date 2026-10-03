@@ -90,7 +90,7 @@ The command uses `[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName 
 | --- | --- | --- | --- | --- | --- | --- |
 | `-CommandName` | `System.String[]` | all | yes | 0 | no | The native command names. The first is the primary name: it names the functions and state, and it is the one probed. |
 | `-Path` | `System.String` | all | yes | 1 | no | The `.ps1` file to write. Resolved with `GetUnresolvedProviderPathFromPSPath`, as `Export-CompleterSet` resolves its `-Path`. |
-| `-HelpArgument` | `System.String` | Probe | no | named | no | The one argument the probe passes. When omitted the probe chooses (see "Choosing the probe"). |
+| `-HelpArgument` | `System.String` | Probe | no | named | no | The one argument the probe passes. When omitted the probe chooses (see "Choosing the probe"). A value with a line break fails step 1 of "Order of work". |
 | `-HelpText` | `System.String[]` | HelpText | yes | named | by value | Help text the author already captured. Lines are accumulated across pipeline input, joined with LF, cleaned, and parsed; nothing is run. `winget --help \| New-CompleterScript winget .\winget_completer.ps1` binds here. |
 | `-NoProbe` | `SwitchParameter` | NoProbe | yes | named | no | Runs nothing and writes an empty subcommand table. |
 | `-Force` | `SwitchParameter` | all | no | named | no | Overwrites an existing file. |
@@ -104,7 +104,8 @@ The command uses `[CmdletBinding(SupportsShouldProcess, DefaultParameterSetName 
 The command has `begin`, `process`, and `end` blocks. Step 1 runs in `begin`. `process` only accumulates `-HelpText` lines, so `winget --help | New-CompleterScript ...` binds one line per `process` call and the text is joined once. Steps 2 to 7 run once, in `end`.
 
 1. **Validate.** Every check runs before anything is resolved, probed, or written, and under `-WhatIf` too:
-   - each `-CommandName` value is a bare command name (see "Target list");
+   - each `-CommandName` value is a bare command name whose stem is not empty (see "Target list");
+   - `-HelpArgument` contains no CR and no LF, else `-HelpArgument must not contain a line break.` Line 2 of the script names the argument in a `#` comment (see "Skeleton"), which a line break would end;
    - `-Path` ends in `.ps1`, else `Completer scripts must be .ps1 files. Received '<path>'.` (the text `Resolve-CompleterScriptPath` uses);
    - `-Path` is not an existing directory, else `Completer scripts must be file paths. '<path>' is a directory.`;
    - the parent directory exists, else `The directory '<directory>' does not exist.` (the text `Export-CompleterSet` uses);
@@ -126,6 +127,7 @@ Every failure is a terminating error `Failed to create completer script. <reason
 ### Target list
 
 - A command name must match `^(?=.*[A-Za-z0-9])[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?$`: at least one letter or digit; no path separators, spaces, quotes, or wildcard characters; no leading `-` or `.`; and no trailing `.` or `-`. So `_` and `__`, which would give an empty stem, and `foo.`, which would give `foo..exe`, are rejected. Otherwise: `'<name>' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters.`
+- A name that matches but whose only letters and digits are in a trailing `.exe`, `.cmd`, `.bat`, `.ps1`, or `.com`, such as `_.exe` or `__.cmd`, would give an empty stem (see "Names in the generated script"), and with it `function Complete-` and `$script:CompletionCatalog`. It is rejected with `The command name '<name>' has no letter or digit outside its suffix, so no function name can be derived from it.` The check applies to every name, as the pattern does. `_a` passes and gives the stem `A`.
 - The target list is built in `-CommandName` order. Each name is written as given, and a name that does not end in `.exe`, `.cmd`, `.bat`, `.ps1`, or `.com` (compared case-insensitively) is followed by the same name with `.exe` appended. Names are de-duplicated case-insensitively, keeping the first spelling. So:
   - `-CommandName rg` gives `'rg', 'rg.exe'`, and `-CommandName rg, rg.exe` gives the same list;
   - `-CommandName python3.12` gives `'python3.12', 'python3.12.exe'`, because a dotted version is not one of the five suffixes;
@@ -134,7 +136,7 @@ Every failure is a terminating error `Failed to create completer script. <reason
 
 ### Names in the generated script
 
-- **Stem.** The primary name, without a trailing `.exe`, `.cmd`, `.bat`, `.ps1`, or `.com`, is split on every character that is not an ASCII letter or digit; the first character of each part is upper-cased with the invariant culture, and the parts are joined. `rg` and `rg.exe` both give `Rg`, `cargo-binstall` gives `CargoBinstall`, `oh-my-posh` gives `OhMyPosh`, `DSC` stays `DSC`, `7z` gives `7z`. A stem that starts with a digit is valid: `$script:7zCompletionCatalog` and `Complete-7z` parse and pass the grammar (checked 2026-10-02). The target-list regex guarantees at least one letter or digit, so the stem is never empty.
+- **Stem.** The primary name, without a trailing `.exe`, `.cmd`, `.bat`, `.ps1`, or `.com`, is split on every character that is not an ASCII letter or digit; the first character of each part is upper-cased with the invariant culture, and the parts are joined. `rg` and `rg.exe` both give `Rg`, `cargo-binstall` gives `CargoBinstall`, `oh-my-posh` gives `OhMyPosh`, `DSC` stays `DSC`, `7z` gives `7z`. A stem that starts with a digit is valid: `$script:7zCompletionCatalog` and `Complete-7z` parse and pass the grammar (checked 2026-10-02). The regex alone does not keep the stem from being empty, because `_.exe` and `__.cmd` match it; the empty-stem rule of "Target list" rejects them in step 1, so no script is ever written with an empty stem.
 - **State variable:** `$script:<Stem>CompletionCatalog`, the naming PS_Completers already uses (`du_completer/du_completer.ps1` declares `$script:DuCompletionCatalog`).
 - **Completion function:** `Complete-<Stem>`, as in `Complete-Du`.
 - Line 1 uses the primary name as given, so `-CommandName rg.exe` writes `# rg.exe tab completion for PowerShell`.
@@ -340,7 +342,7 @@ PS_Completers/
     LICENSE
     README.md
     completers/
-      ps_completers.psd1        the set, written by Export-CompleterSet
+      completers.psd1           the set, written by Export-CompleterSet
       7z_completer/
         7z_completer.ps1
         7z_completer.md
@@ -351,7 +353,8 @@ PS_Completers/
 
 - **The module folder (`ModuleBase`) holds exactly one `.psd1`, the manifest.** `Publish-PSResource` takes the first `*.psd1` it finds in the folder as the module manifest. Tested on 2026-10-02 against a local file repository: `completers.psd1` beside `PS_Completers.psd1`, and `aaa.psd1` beside `ZzPk.psd1`, each failed with "No author was provided in the module manifest"; a set file whose name sorts after the manifest's published, and so did a set in a subfolder. On Linux the directory listing came back unsorted, so a set beside the manifest publishes or fails depending on file system order.
 - **The set file sits in one subfolder directly below `ModuleBase`.** `PrivateData.CompleterSet` names both, as `'<folder>/<file>.psd1'`. The scripts sit in or below that folder, and every entry `Path` is relative, which is how `Export-CompleterSet` writes a path under the set's folder (`src/Public/Export-CompleterSet.ps1`).
-- **The folder and file names are free.** The examples use `completers/`. PS_Completers keeps its set's name, `ps_completers.psd1`. Because the set and the manifest never share a folder, a set named like the manifest except for letter case, which Windows and macOS treat as one file, causes no collision.
+- **The set file's base name differs from the module name, compared case-insensitively.** PSResourceGet 1.2.0 `Save-PSResource` reads any `.psd1` in the package whose base name equals the module name, case-insensitively, as the manifest, even in a subfolder: on 2026-10-03, under WSL, a package `PS_Completers` holding `completers/ps_completers.psd1` published but could not be saved, and the same package with the set named `set.psd1` saved (`validation/milestone-2-runtime.md`, row 5). `Test-CompleterSet` reports the collision (below).
+- **Otherwise the folder and file names are free.** The examples use `completers/completers.psd1`. PS_Completers's package names its set `completers/completers.psd1`; the repository keeps `ps_completers.psd1` (see "PS_Completers as the reference package").
 - This deviates from the roadmap item's "the set file at the module root, scripts beside it", which cannot be published reliably. Question 7 asks the owner to accept it, and section 6 carries the roadmap edit.
 
 The manifest needs four things:
@@ -447,9 +450,12 @@ A resolution failure is the terminating error `Failed to test completer set. <re
 | --- | --- | --- | --- | --- |
 | Error | An entry's `Path` is fully qualified, or resolves outside the module folder | the entry's `Path` value | `Entry <n> ('<path>'): the script is outside the module folder, so an installed copy of the package does not contain it.` | `Move the script under the folder that holds the set file, then regenerate the set with Export-CompleterSet.` |
 | Error | The module folder holds a `.psd1` other than the manifest | line 1, column 1 | `The module folder '<ModuleBase>' holds '<file>' beside the module manifest '<manifest>', so Publish-PSResource can take the wrong file as the manifest.` | `Keep the module manifest as the only .psd1 in the module folder; move the set into a subfolder and update PrivateData.CompleterSet.` |
+| Error | The set file's base name equals the module name, compared case-insensitively on every platform (the module name is the manifest's base name, or under `-Name` the installed module folder's spelling) | line 1, column 1 | `The set file '<file>' has the base name of the module '<Name>', so PSResourceGet can take it as the module manifest when it saves or installs the package.` | `Rename the set file so its base name differs from the module name, for example to completers.psd1, and update PrivateData.CompleterSet.` |
 | Warning | `RequiredModules` does not list `CompleterActions` with a `ModuleVersion` or `RequiredVersion` of 2.2.0 or later | line 1, column 1 | `The module manifest '<manifest>' does not require CompleterActions 2.2.0 or later, so installing the package does not install Import-CompleterSet -Name.` | `Add @{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' } to RequiredModules in '<manifest>'.` |
 
-The first row is reported per entry, in set order. The second row gives one finding per extra `.psd1`, in ordinal order of file name. The `PackageLayout` findings come in row order: every row 1 finding, then row 2's, then row 3's.
+The first row is reported per entry, in set order. The second row gives one finding per extra `.psd1`, in ordinal order of file name. The `PackageLayout` findings come in row order: every row 1 finding, then row 2's, then row 3's, then row 4's.
+
+Row 3 was added on 2026-10-03, after WP9 found that PSResourceGet 1.2.0 reads a `.psd1` named like the module as the manifest, even in a subfolder ("The package layout"). `<file>` is the set's file name. Like the other rows it fires only for a set a manifest declares, so every set that 2.1.0 tests still gives 2.1.0's findings, and `Import-CompleterSet -Name` is unchanged.
 
 The severity rule extends 2.1.0's: `Error` when the package would fail to publish, install, or import, and `Warning` when it installs but a clean machine is missing a piece. A fully qualified path is an error even when it points inside the module folder, because it names the source tree, not the installed copy. On Windows, a script on another drive than the set is written fully qualified by `Export-CompleterSet`, which is exactly what the first row catches.
 
@@ -463,16 +469,16 @@ No change. Run with `-Path` in the set's folder, it already writes relative, for
 
 Nothing here is part of the module change. It is listed so the owner can see the whole cost, and so the order against the releases is fixed.
 
-**The package.** The layout tree above is PS_Completers', with `PrivateData.CompleterSet = 'completers/ps_completers.psd1'`. The set and the `*_completer` folders keep their positions relative to each other, so the set file is copied byte for byte: its relative paths and its hashes hold unchanged.
+**The package.** The layout tree above is PS_Completers', with `PrivateData.CompleterSet = 'completers/completers.psd1'`. The set is staged as `completers/completers.psd1`, not under its repository name, because a set named `ps_completers.psd1` in a module named `PS_Completers` cannot be saved or installed (the set-file name rule of "The package layout"). The set and the `*_completer` folders keep their positions relative to each other, so the set file is copied byte for byte under its new name: its relative paths and its hashes hold unchanged.
 
 **What changes in the PS_Completers repository:**
 
 1. **A manifest at `package/PS_Completers.psd1`**, shaped as above. It cannot sit at the repository root, because `PS_Completers.psd1` and `ps_completers.psd1` are one file on Windows and macOS.
-2. **A staging tool** (name free, for example `tools/Build-Package.ps1`) that builds `<staging>/PS_Completers/`: the manifest, `LICENSE`, and `README.md` at its root, and `ps_completers.psd1` with every `*_completer` folder under `completers/`. It leaves out `tests`, `tools`, `.github`, `docs`, `package`, and `.claude`. `Publish-PSResource` packs the whole folder it is given, so publishing the repository root would ship the tests and tools.
-3. **A package gate**, if question 8 is accepted: `tests/Completers.Tests.ps1` stages into `$TestDrive` and asserts that `Test-CompleterSet -LiteralPath <staging>/PS_Completers/completers/ps_completers.psd1` returns nothing. The manifest one folder up makes it a package set.
+2. **A staging tool** (name free, for example `tools/Build-Package.ps1`) that builds `<staging>/PS_Completers/`: the manifest, `LICENSE`, and `README.md` at its root, and, under `completers/`, `ps_completers.psd1` copied as `completers.psd1` with every `*_completer` folder. It leaves out `tests`, `tools`, `.github`, `docs`, `package`, and `.claude`. `Publish-PSResource` packs the whole folder it is given, so publishing the repository root would ship the tests and tools.
+3. **A package gate**, if question 8 is accepted: `tests/Completers.Tests.ps1` stages into `$TestDrive` and asserts that `Test-CompleterSet -LiteralPath <staging>/PS_Completers/completers/completers.psd1` returns nothing. The manifest one folder up makes it a package set, so the gate also catches a set staged under the module's name.
 4. **`README.md`** gains an install section (`Install-PSResource PS_Completers`, then `Import-CompleterSet -Name PS_Completers`), after the publish.
 
-**What does not change.** The set keeps its name and place in the repository, so every file that names it stays correct: `README.md` (lines 17, 43, 71), `.github/skills/powershell-completer-implementation/SKILL.md` (lines 21, 132, 187, 198, 217, 248), `.github/skills/powershell-completer-implementation/validation-checklist.md` (lines 41, 168, 176), `tests/Completers.Tests.ps1` (comment line 9, `Describe` title line 46, `$script:SetPath` line 50), `tools/Export-CompleterSetFile.ps1` (lines 5, 22), and the owner's profile line. `.github/workflows/conformance.yml` is unchanged: it installs CompleterActions with `-Prerelease` and never installs PS_Completers, so the manifest's `RequiredModules` has no effect on CI.
+**What does not change.** The set keeps its name and place in the repository (only the staged copy is named `completers.psd1`), so every file that names it stays correct: `README.md` (lines 17, 43, 71), `.github/skills/powershell-completer-implementation/SKILL.md` (lines 21, 132, 187, 198, 217, 248), `.github/skills/powershell-completer-implementation/validation-checklist.md` (lines 41, 168, 176), `tests/Completers.Tests.ps1` (comment line 9, `Describe` title line 46, `$script:SetPath` line 50), `tools/Export-CompleterSetFile.ps1` (lines 5, 22), and the owner's profile line. `.github/workflows/conformance.yml` is unchanged: it installs CompleterActions with `-Prerelease` and never installs PS_Completers, so the manifest's `RequiredModules` has no effect on CI.
 
 **Order:**
 
@@ -713,13 +719,16 @@ Run rules, carried over from milestone 1 and tightened:
     | One entry `Path` made fully qualified | `PackageLayout` (Error) at that `Path` |
     | One script moved to `<ModuleBase>\..\outside_completer.ps1`, set regenerated | `PackageLayout` (Error) at that `Path` |
     | A second `.psd1` added beside the manifest | `PackageLayout` (Error) at line 1 of the set, naming the file |
+    | Manifest renamed to the set file's base name (`Completers.psd1` beside `completers/completers.psd1`) | `PackageLayout` (Error) at line 1 of the set, naming the set file and the module |
     | `RequiredModules` emptied | `PackageLayout` (Warning) at line 1 of the set, naming the manifest |
     | Manifest deleted | none of the above; the set is no longer a package set |
+
+    The set-file name row also fires through `-Name` for an installed module `Completers` whose set is `completers/completers.psd1`, and gives nothing for `CaFixtureSet` with the same set, on every leg.
 
     `Test-CompleterSet -Name CaFixtureSet` returns nothing on an installed copy: a package folder in a scratch module root on every leg, and the copy check 2 saved, where check 2's save step runs. On Windows legs where the repository and `$env:TEMP` are on different drives (the GitHub runner: workspace on D:, temp on C:), a set generated in the test drive for a script in the repository gives exactly one `PackageLayout` Error, for the fully qualified path; the test is skipped with that reason where both are on one drive.
 16. **Plain sets are untouched.** Every `tests/CompleterSetDrift.Tests.ps1` test passes unchanged. In the scratch clone, `Test-CompleterSet -LiteralPath <scratch>\PS_Completers\ps_completers.psd1` returns nothing under the branch build, as under 2.1.0.
 17. **PS_Completers as a package**, in the scratch clone, after steps 1 to 3 of section 3's "What changes":
-    - `Test-CompleterSet -LiteralPath <staging>\PS_Completers\completers\ps_completers.psd1` returns nothing;
+    - `Test-CompleterSet -LiteralPath <staging>\PS_Completers\completers\completers.psd1` returns nothing;
     - the clone's Pester run passes with its previous test count plus the package gate;
     - the staged folder, published and saved under the package isolation rule, gives `Import-CompleterSet -Name PS_Completers` with the same number of `Pending` records and the same `Key` list as `Import-CompleterSet -LiteralPath <scratch>\PS_Completers\ps_completers.psd1` in a second process (362 at `2c590c6`; the assertion is equality, not the number).
 
