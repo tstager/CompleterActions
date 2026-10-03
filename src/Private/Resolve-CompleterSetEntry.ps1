@@ -29,9 +29,16 @@ different Hash, or a script that cannot be read for its hash, falls through
 to the parse, so such an entry gets exactly the problems it would get with
 no Hash at all. A trusted entry's Hash is ignored and its script is not read.
 
+When ModuleBase is given, as Import-CompleterSet -Name gives it, the
+resolved path must lie inside that folder, compared with a trailing separator
+and with the platform's case rule (case-insensitive on Windows and macOS,
+case-sensitive on Linux). An entry outside it gets the OutsideModule problem
+and no existence, extension, hash, or parse check, so its file is never
+opened.
+
 Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
-MissingScript, UnreadableTargets, or TargetMismatch; Message is the text
-Import-CompleterSet reports.
+MissingScript, OutsideModule, UnreadableTargets, or TargetMismatch; Message
+is the text Import-CompleterSet reports.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -47,6 +54,12 @@ Disables the fast path, so every strict entry whose script is usable is
 parsed once, and records the script's actual hash and parse-derived targets
 for drift checks. A trusted entry's script is read for its hash but still not
 parsed.
+
+.PARAMETER ModuleName
+The installed module folder's name, used in the OutsideModule problem.
+
+.PARAMETER ModuleBase
+The full path of the module folder the entry's script must stay inside.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
@@ -81,10 +94,25 @@ function Resolve-CompleterSetEntry
         [string] $SetDirectory,
 
         [Parameter()]
-        [switch] $Verify
+        [switch] $Verify,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ModuleName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ModuleBase
     )
 
     $problems = [System.Collections.Generic.List[hashtable]]::new()
+    $moduleBasePrefix = $null
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+
+    if ($PSBoundParameters.ContainsKey('ModuleBase'))
+    {
+        $moduleBasePrefix = $ModuleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    }
     $declaredPath = $null
     $resolvedPath = $null
     $hasHash = $false
@@ -119,7 +147,11 @@ function Resolve-CompleterSetEntry
             $declaredPath = [string] $Entry['Path']
             $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if (-not [System.IO.File]::Exists($resolvedPath))
+            if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+            {
+                $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+            }
+            elseif (-not [System.IO.File]::Exists($resolvedPath))
             {
                 $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }

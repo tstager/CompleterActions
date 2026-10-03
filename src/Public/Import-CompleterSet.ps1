@@ -57,11 +57,31 @@ completer were registered. -Force replaces existing registrations for the
 set's targets and retries Failed ones; Reset-Completer retries them without
 re-importing the set.
 
+With -Name the set comes from an installed completer set package: a module
+whose manifest names its set file in PrivateData.CompleterSet, as
+'<folder>/<file>.psd1' in a folder directly below the module folder, which
+holds the manifest as its only .psd1. The module is found the way
+Import-Module finds it, without loading it: the first $env:PSModulePath root
+that has the module wins, and within it the highest version, which is used
+even when its set is broken. The manifest is read as data, so the package's
+RootModule, ScriptsToProcess, NestedModules, and RequiredModules never load or
+run. Every name is resolved before any set is imported, and the set is then
+imported as -LiteralPath imports it, with two rules for packages. An entry
+whose script resolves outside the module folder is an invalid entry. A set
+with trusted entries writes one warning per name that counts them. Installing
+a completer set package and importing it by name is a decision to run its
+scripts: each one runs at its first tab, under its entry's trust tier.
+
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
 
 .PARAMETER LiteralPath
 The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Name
+The names of installed completer set modules. Each name is taken literally: a
+name containing *, ?, [, or ] fails the call before any name is resolved. The
+parameter takes no pipeline input.
 
 .PARAMETER SkipInvalid
 Writes each invalid entry as a warning and registers the valid entries instead
@@ -88,6 +108,13 @@ PS> Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid -Force
 
 Registers the valid entries, warns about the rest, and replaces any existing
 registration for the same targets.
+
+.EXAMPLE
+PS> Import-CompleterSet -Name PS_Completers
+
+Registers every completer script in the set of the installed PS_Completers
+package. After Install-PSResource PS_Completers this is the one line a profile
+needs, with no path.
 #>
 function Import-CompleterSet
 {
@@ -103,6 +130,10 @@ function Import-CompleterSet
         [Alias('PSPath')]
         [ValidateNotNullOrEmpty()]
         [string[]] $LiteralPath,
+
+        [Parameter(Mandatory, ParameterSetName = 'Name')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Name,
 
         [Parameter()]
         [switch] $SkipInvalid,
@@ -123,7 +154,7 @@ function Import-CompleterSet
                         (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
                     }
                 }
-                else
+                elseif ($PSCmdlet.ParameterSetName -eq 'Path')
                 {
                     foreach ($pathItem in $Path)
                     {
@@ -132,16 +163,63 @@ function Import-CompleterSet
                 }
             )
 
-            foreach ($setPath in $resolvedPaths)
+            $sets = @(
+                if ($PSCmdlet.ParameterSetName -eq 'Name')
+                {
+                    foreach ($nameItem in $Name)
+                    {
+                        if ($nameItem -match '[*?\[\]]')
+                        {
+                            throw "Import-CompleterSet -Name does not accept wildcards. Received '$nameItem'."
+                        }
+                    }
+
+                    foreach ($nameItem in $Name)
+                    {
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        @{ SetPath = $setModule.SetPath; Module = $setModule }
+                    }
+                }
+                else
+                {
+                    foreach ($resolvedPath in $resolvedPaths)
+                    {
+                        @{ SetPath = $resolvedPath; Module = $null }
+                    }
+                }
+            )
+
+            foreach ($set in $sets)
             {
+                $setPath = $set.SetPath
+                $setModule = $set.Module
+                $moduleParameters = @{}
+
+                if ($null -ne $setModule)
+                {
+                    Write-Verbose -Message "Completer set module '$($setModule.Name)' $($setModule.Version) at '$($setModule.ModuleBase)': '$setPath'."
+                    $moduleParameters = @{ ModuleName = $setModule.Name; ModuleBase = $setModule.ModuleBase }
+                }
+
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+
+                if ($null -ne $setModule)
+                {
+                    $trustedEntryCount = @($setDefinition.Entries.Where({ $_ -is [System.Collections.IDictionary] -and $_.Contains('Trusted') -and $_['Trusted'] -is [bool] -and $_['Trusted'] })).Count
+
+                    if ($trustedEntryCount -gt 0)
+                    {
+                        Write-Warning -Message "The completer set module '$($setModule.Name)' $($setModule.Version) declares $trustedEntryCount trusted completer scripts, which run without the strict grammar check at first tab."
+                    }
+                }
+
                 $snapshot = Get-CompleterRegistrationSnapshot
                 $entryIndex = 0
                 $staticEntries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory @moduleParameters
                     }
                 )
                 $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)

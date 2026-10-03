@@ -953,7 +953,22 @@ The first tab press for a target loads the script and moves the record to
 `LoadError`, and the completion engine's default completion applies as if no
 completer were registered. `-Force` replaces existing registrations for the
 set's targets and retries `Failed` ones; `Reset-Completer` retries them without
-re-importing the set.</maml:para>
+re-importing the set.
+
+With `-Name` the set comes from an installed completer set package: a module
+whose manifest names its set file in `PrivateData.CompleterSet`, as
+`'&lt;folder&gt;/&lt;file&gt;.psd1'` in a folder directly below the module folder, which
+holds the manifest as its only `.psd1`. The module is found the way
+`Import-Module` finds it, without loading it: the first `$env:PSModulePath` root
+that has the module wins, and within it the highest version, which is used
+even when its set is broken. The manifest is read as data, so the package's
+`RootModule`, `ScriptsToProcess`, `NestedModules`, and `RequiredModules` never
+load or run. Every name is resolved before any set is imported, and the set is
+then imported as `-LiteralPath` imports it, with two rules for packages. An
+entry whose script resolves outside the module folder is an invalid entry. A
+set with trusted entries writes one warning per name that counts them.
+Installing a completer set package and importing it by name is a decision to
+run its scripts: each one runs at its first tab, under its entry's trust tier.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -1034,6 +1049,45 @@ re-importing the set.</maml:para>
           </dev:type>
         </command:parameter>
       </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Import-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Name</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>SkipInvalid</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Force</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
     </command:syntax>
     <command:parameters>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="cf">
@@ -1060,6 +1114,18 @@ retries them without re-importing the set.</maml:para>
         <maml:name>LiteralPath</maml:name>
         <maml:description>
           <maml:para>The literal path to a completer set file. Wildcards are not expanded.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Name</maml:name>
+        <maml:description>
+          <maml:para>The names of installed completer set modules. Each name is taken literally: a
+name containing `*`, `?`, `[`, or `]` fails the call before any name is
+resolved. The parameter takes no pipeline input.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         <dev:type>
@@ -1161,6 +1227,20 @@ Import-CompleterSet -Path ~\Completers\completers.psd1 -WhatIf
           <maml:para>&#x80;</maml:para>
           <maml:para>Runs the full validation and reports what would be registered without changing
 the session.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 4 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterSet -Name PS_Completers
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Registers every completer script in the set of the installed `PS_Completers`
+package. After `Install-PSResource PS_Completers` this is the one line a profile
+needs, with no path.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
