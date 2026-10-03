@@ -1097,13 +1097,23 @@ Describe 'Probe decisions' {
         $scriptPath = Join-Path -Path $directory -ChildPath 'cashellprobe'
         $lines = @('#!/bin/sh', 'printf ''Commands:\n  build    Compile the project\n  test     Run the tests\n''', 'exit 0')
 
+        # chmod runs with the session's PATH; only resolution uses the scratch PATH.
+        Write-TestShellScript -Path $scriptPath -Line $lines -Executable
         $savedPath = $env:PATH
         try
         {
             $env:PATH = $directory
-            Write-TestShellScript -Path $scriptPath -Line $lines -Executable
             $runnable = Resolve-TestProbeApplication -Name 'cashellprobe'
-            Write-TestShellScript -Path $scriptPath -Line $lines
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        Write-TestShellScript -Path $scriptPath -Line $lines
+        try
+        {
+            $env:PATH = $directory
             $notExecutable = Resolve-TestProbeApplication -Name 'cashellprobe'
         }
         finally
