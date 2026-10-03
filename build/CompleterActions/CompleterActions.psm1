@@ -964,11 +964,31 @@ completer were registered. -Force replaces existing registrations for the
 set's targets and retries Failed ones; Reset-Completer retries them without
 re-importing the set.
 
+With -Name the set comes from an installed completer set package: a module
+whose manifest names its set file in PrivateData.CompleterSet, as
+'<folder>/<file>.psd1' in a folder directly below the module folder, which
+holds the manifest as its only .psd1. The module is found the way
+Import-Module finds it, without loading it: the first $env:PSModulePath root
+that has the module wins, and within it the highest version, which is used
+even when its set is broken. The manifest is read as data, so the package's
+RootModule, ScriptsToProcess, NestedModules, and RequiredModules never load or
+run. Every name is resolved before any set is imported, and the set is then
+imported as -LiteralPath imports it, with two rules for packages. An entry
+whose script resolves outside the module folder is an invalid entry. A set
+with trusted entries writes one warning per name that counts them. Installing
+a completer set package and importing it by name is a decision to run its
+scripts: each one runs at its first tab, under its entry's trust tier.
+
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
 
 .PARAMETER LiteralPath
 The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Name
+The names of installed completer set modules. Each name is taken literally: a
+name containing *, ?, [, or ] fails the call before any name is resolved. The
+parameter takes no pipeline input.
 
 .PARAMETER SkipInvalid
 Writes each invalid entry as a warning and registers the valid entries instead
@@ -995,6 +1015,13 @@ PS> Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid -Force
 
 Registers the valid entries, warns about the rest, and replaces any existing
 registration for the same targets.
+
+.EXAMPLE
+PS> Import-CompleterSet -Name PS_Completers
+
+Registers every completer script in the set of the installed PS_Completers
+package. After Install-PSResource PS_Completers this is the one line a profile
+needs, with no path.
 #>
 function Import-CompleterSet
 <#
@@ -1014,6 +1041,10 @@ function Import-CompleterSet
         [ValidateNotNullOrEmpty()]
         [string[]] $LiteralPath,
 
+        [Parameter(Mandatory, ParameterSetName = 'Name')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Name,
+
         [Parameter()]
         [switch] $SkipInvalid,
 
@@ -1025,33 +1056,73 @@ function Import-CompleterSet
     {
         try
         {
-            $resolvedPaths = @(
-                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+            $sets = @(
+                if ($PSCmdlet.ParameterSetName -eq 'Name')
+                {
+                    foreach ($nameItem in $Name)
+                    {
+                        if ($nameItem -match '[*?\[\]]')
+                        {
+                            throw "Import-CompleterSet -Name does not accept wildcards. Received '$nameItem'."
+                        }
+                    }
+
+                    foreach ($nameItem in $Name)
+                    {
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        @{ SetPath = $setModule.SetPath; Module = $setModule }
+                    }
+                }
+                elseif ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
                 {
                     foreach ($literalPathItem in $LiteralPath)
                     {
-                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                        @{ SetPath = (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName; Module = $null }
                     }
                 }
                 else
                 {
                     foreach ($pathItem in $Path)
                     {
-                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                        foreach ($resolvedPath in @(Resolve-Path -Path $pathItem -ErrorAction Stop))
+                        {
+                            @{ SetPath = $resolvedPath.ProviderPath; Module = $null }
+                        }
                     }
                 }
             )
 
-            foreach ($setPath in $resolvedPaths)
+            foreach ($set in $sets)
             {
+                $setPath = $set.SetPath
+                $setModule = $set.Module
+                $moduleParameters = @{}
+
+                if ($null -ne $setModule)
+                {
+                    Write-Verbose -Message "Completer set module '$($setModule.Name)' $($setModule.Version) at '$($setModule.ModuleBase)': '$setPath'."
+                    $moduleParameters = @{ ModuleName = $setModule.Name; ModuleBase = $setModule.ModuleBase }
+                }
+
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+
+                if ($null -ne $setModule)
+                {
+                    $trustedEntryCount = @($setDefinition.Entries.Where({ $_ -is [System.Collections.IDictionary] -and $_.Contains('Trusted') -and $_['Trusted'] -is [bool] -and $_['Trusted'] })).Count
+
+                    if ($trustedEntryCount -gt 0)
+                    {
+                        Write-Warning -Message "The completer set module '$($setModule.Name)' $($setModule.Version) declares $trustedEntryCount trusted completer scripts, which run without the strict grammar check at first tab."
+                    }
+                }
+
                 $snapshot = Get-CompleterRegistrationSnapshot
                 $entryIndex = 0
                 $staticEntries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory @moduleParameters
                     }
                 )
                 $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
@@ -5846,9 +5917,16 @@ different Hash, or a script that cannot be read for its hash, falls through
 to the parse, so such an entry gets exactly the problems it would get with
 no Hash at all. A trusted entry's Hash is ignored and its script is not read.
 
+When ModuleBase is given, as Import-CompleterSet -Name gives it, the
+resolved path must lie inside that folder, compared with a trailing separator
+and with the platform's case rule (case-insensitive on Windows and macOS,
+case-sensitive on Linux). An entry outside it gets the OutsideModule problem
+and no existence, extension, hash, or parse check, so its file is never
+opened.
+
 Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
-MissingScript, UnreadableTargets, or TargetMismatch; Message is the text
-Import-CompleterSet reports.
+MissingScript, OutsideModule, UnreadableTargets, or TargetMismatch; Message
+is the text Import-CompleterSet reports.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -5864,6 +5942,12 @@ Disables the fast path, so every strict entry whose script is usable is
 parsed once, and records the script's actual hash and parse-derived targets
 for drift checks. A trusted entry's script is read for its hash but still not
 parsed.
+
+.PARAMETER ModuleName
+The installed module folder's name, used in the OutsideModule problem.
+
+.PARAMETER ModuleBase
+The full path of the module folder the entry's script must stay inside.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
@@ -5901,10 +5985,25 @@ function Resolve-CompleterSetEntry
         [string] $SetDirectory,
 
         [Parameter()]
-        [switch] $Verify
+        [switch] $Verify,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ModuleName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ModuleBase
     )
 
     $problems = [System.Collections.Generic.List[hashtable]]::new()
+    $moduleBasePrefix = $null
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+
+    if ($PSBoundParameters.ContainsKey('ModuleBase'))
+    {
+        $moduleBasePrefix = $ModuleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    }
     $declaredPath = $null
     $resolvedPath = $null
     $hasHash = $false
@@ -5939,7 +6038,11 @@ function Resolve-CompleterSetEntry
             $declaredPath = [string] $Entry['Path']
             $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if (-not [System.IO.File]::Exists($resolvedPath))
+            if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+            {
+                $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+            }
+            elseif (-not [System.IO.File]::Exists($resolvedPath))
             {
                 $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }
@@ -6150,6 +6253,225 @@ function Resolve-CompleterSetEntry
     }
 
     $record
+}
+<#
+.SYNOPSIS
+Finds an installed completer set module by name and returns its set file.
+
+.DESCRIPTION
+Follows the module lookup without calling Get-Module. The roots of
+$env:PSModulePath are walked in order, split on the platform's path separator,
+skipping empty and missing entries. In each root the module folders are the
+subdirectories whose name equals Name case-insensitively, on every platform,
+and within a module folder the manifest is the .psd1 whose base name equals
+the folder's name case-insensitively.
+
+The candidates in a root are every version subfolder that parses as a version
+and equals its manifest's ModuleVersion, and the unversioned layout, the
+manifest directly in the module folder. The first root with a candidate wins;
+within it the highest version wins, and the unversioned layout is used only
+when the root has no versioned candidate. The chosen module is never replaced
+by a lower version, even when its set declaration is broken.
+
+Manifests are read with Import-PowerShellDataFile, as data only, so nothing in
+the package runs. PrivateData.CompleterSet must name a .psd1 file in a folder
+directly below ModuleBase, with / or \ as the separator, and the file must
+exist. A failure throws the bare reason; the caller adds its own prefix.
+
+.PARAMETER Name
+The module name, taken literally.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns Name (the installed module folder's spelling), Version (ModuleVersion,
+followed by -<Prerelease> when PrivateData.PSData.Prerelease is set),
+ModuleBase (the full path of the version folder, or of the module folder for
+the unversioned layout), ManifestPath, Manifest (the manifest's data), and
+SetPath (the full path of the set file).
+#>
+function Resolve-CompleterSetModule
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name
+    )
+
+    $sortOrdinal = {
+        param([string[]] $Value)
+
+        $sorted = [string[]] @($Value)
+        [System.Array]::Sort($sorted, [System.StringComparer]::Ordinal)
+        $sorted
+    }
+
+    $findManifest = {
+        param([string] $Folder, [string] $ModuleName)
+
+        $manifestPaths = @(
+            foreach ($file in [System.IO.Directory]::EnumerateFiles($Folder, '*.psd1'))
+            {
+                if ([string]::Equals([System.IO.Path]::GetExtension($file), '.psd1', [System.StringComparison]::OrdinalIgnoreCase) -and
+                    [string]::Equals([System.IO.Path]::GetFileNameWithoutExtension($file), $ModuleName, [System.StringComparison]::OrdinalIgnoreCase))
+                {
+                    $file
+                }
+            }
+        )
+
+        if ($manifestPaths.Count -gt 0)
+        {
+            @(& $sortOrdinal $manifestPaths)[0]
+        }
+    }
+
+    $chosen = $null
+
+    foreach ($root in ([string] $env:PSModulePath).Split([System.IO.Path]::PathSeparator))
+    {
+        if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Directory]::Exists($root))
+        {
+            continue
+        }
+
+        $moduleFolders = @(
+            foreach ($directory in [System.IO.Directory]::EnumerateDirectories($root))
+            {
+                if ([string]::Equals([System.IO.Path]::GetFileName($directory), $Name, [System.StringComparison]::OrdinalIgnoreCase))
+                {
+                    $directory
+                }
+            }
+        )
+
+        if ($moduleFolders.Count -eq 0)
+        {
+            continue
+        }
+
+        $moduleFolders = @(& $sortOrdinal $moduleFolders)
+        $order = 0
+        $versionFolders = @(
+            foreach ($moduleFolder in $moduleFolders)
+            {
+                foreach ($versionFolder in @(& $sortOrdinal @([System.IO.Directory]::EnumerateDirectories($moduleFolder))))
+                {
+                    $folderVersion = $null
+
+                    if ([version]::TryParse([System.IO.Path]::GetFileName($versionFolder), [ref] $folderVersion))
+                    {
+                        $order++
+                        [pscustomobject] @{ ModuleFolder = $moduleFolder; Folder = $versionFolder; FolderVersion = $folderVersion; Order = $order }
+                    }
+                }
+            }
+        )
+
+        foreach ($versionFolder in @($versionFolders | Sort-Object -Property @{ Expression = 'FolderVersion'; Descending = $true }, @{ Expression = 'Order'; Descending = $false }))
+        {
+            $moduleName = [System.IO.Path]::GetFileName($versionFolder.ModuleFolder)
+            $manifestPath = & $findManifest $versionFolder.Folder $moduleName
+
+            if ($null -eq $manifestPath)
+            {
+                continue
+            }
+
+            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+            $manifestVersion = $null
+
+            if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion) -and $manifestVersion -eq $versionFolder.FolderVersion)
+            {
+                $chosen = @{ Name = $moduleName; ModuleBase = $versionFolder.Folder; ManifestPath = $manifestPath; Manifest = $manifest }
+                break
+            }
+        }
+
+        if ($null -eq $chosen)
+        {
+            foreach ($moduleFolder in $moduleFolders)
+            {
+                $moduleName = [System.IO.Path]::GetFileName($moduleFolder)
+                $manifestPath = & $findManifest $moduleFolder $moduleName
+
+                if ($null -ne $manifestPath)
+                {
+                    $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+                    $chosen = @{ Name = $moduleName; ModuleBase = $moduleFolder; ManifestPath = $manifestPath; Manifest = $manifest }
+                    break
+                }
+            }
+        }
+
+        if ($null -ne $chosen)
+        {
+            break
+        }
+    }
+
+    if ($null -eq $chosen)
+    {
+        throw "No installed module named '$Name' was found in `$env:PSModulePath. Install it with Install-PSResource $Name."
+    }
+
+    $moduleName = $chosen.Name
+    $moduleBase = [System.IO.Path]::GetFullPath($chosen.ModuleBase)
+    $manifest = $chosen.Manifest
+    $privateData = $manifest['PrivateData']
+    $version = [string] $manifest['ModuleVersion']
+
+    if ($privateData -is [System.Collections.IDictionary] -and $privateData['PSData'] -is [System.Collections.IDictionary])
+    {
+        $prerelease = [string] $privateData['PSData']['Prerelease']
+
+        if (-not [string]::IsNullOrEmpty($prerelease))
+        {
+            $version = '{0}-{1}' -f $version, $prerelease
+        }
+    }
+
+    $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
+
+    if ($null -eq $declaredSet -or ($declaredSet -is [string] -and $declaredSet.Length -eq 0))
+    {
+        throw "The module '$moduleName' $version at '$moduleBase' does not declare a completer set. A completer set module names its set file in PrivateData.CompleterSet."
+    }
+
+    $segments = @(
+        if ($declaredSet -is [string] -and -not [System.IO.Path]::IsPathRooted($declaredSet))
+        {
+            $declaredSet.Replace('\', '/').Split('/')
+        }
+    )
+    $isValidDeclaration = $segments.Count -eq 2 -and
+        @($segments.Where({ [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' -or [System.IO.Path]::IsPathRooted($_) })).Count -eq 0 -and
+        [System.IO.Path]::GetExtension($segments[1]) -eq '.psd1'
+
+    if (-not $isValidDeclaration)
+    {
+        throw "The module '$moduleName' $version declares the completer set '$declaredSet', which must be a .psd1 file in a folder directly below '$moduleBase'."
+    }
+
+    $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+
+    if (-not [System.IO.File]::Exists($setPath))
+    {
+        throw "The completer set '$setPath' declared by the module '$moduleName' $version does not exist."
+    }
+
+    [pscustomobject] [ordered] @{
+        Name         = $moduleName
+        Version      = $version
+        ModuleBase   = $moduleBase
+        ManifestPath = [System.IO.Path]::GetFullPath($chosen.ManifestPath)
+        Manifest     = $manifest
+        SetPath      = $setPath
+    }
 }
 <#
 .SYNOPSIS
