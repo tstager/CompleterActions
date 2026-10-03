@@ -1,0 +1,16 @@
+build
+check
+clean
+doc
+new
+init
+add
+remove
+run
+test
+bench
+update
+search
+publish
+install
+uninstall

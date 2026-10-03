@@ -1,0 +1,17 @@
+install
+uninstall
+toolchain
+default
+show
+update
+check
+target
+component
+override
+run
+which
+doc
+self
+set
+completions
+help
