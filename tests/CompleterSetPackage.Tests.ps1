@@ -1624,3 +1624,71 @@ finally
         @($help.Parameters.parameter).name | Should -Contain 'Name'
     }
 }
+
+Describe 'Completer authoring and packages leave PSReadLine alone' {
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:PackageCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name $script:ModuleManifestPath -Force | Out-Null
+
+        $script:PackageRoot = Join-Path -Path $TestDrive -ChildPath ('neutral-{0}' -f ([guid]::NewGuid().ToString('N')))
+        New-Item -Path $script:PackageRoot -ItemType Directory | Out-Null
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:PackageCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'leaves PSReadLine key handlers unchanged across New-CompleterScript with a probe, Import-CompleterSet -Name, and Test-CompleterSet -Name' {
+        Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
+
+        if ($null -eq (Get-Module -Name 'PSReadLine'))
+        {
+            Set-ItResult -Skipped -Because 'PSReadLine is not loaded in this session'
+        }
+
+        $before = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $fixture = Join-Path -Path $script:PackageRoot -ChildPath 'neutral-help.ps1'
+        Set-Content -LiteralPath $fixture -Encoding utf8 -Value "'Commands:'", "'  build    Compile the project'", "'  test     Run the tests'"
+        $scriptPath = Join-Path -Path $script:PackageRoot -ChildPath 'pwsh_completer.ps1'
+        $file = New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $fixture -PassThru -WarningVariable probeWarnings -WarningAction SilentlyContinue
+
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $records = @(Import-CompleterSet -Name 'CaFixtureSet' -WarningVariable importWarnings -WarningAction SilentlyContinue)
+            $findings = @(Test-CompleterSet -Name 'CaFixtureSet')
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        @($probeWarnings) | Should -BeNullOrEmpty
+        @(Get-Content -LiteralPath $file.FullName)[1] | Should -BeExactly "# Help-seeded native completer: the subcommand table was read from 'pwsh $fixture' when the script was generated."
+        Test-CompleterScript -LiteralPath $file.FullName | Should -BeNullOrEmpty
+        @($importWarnings) | Should -BeNullOrEmpty
+        $records.Count | Should -Be 6
+        @($records.State | Select-Object -Unique) | Should -Be @('Pending')
+        $findings | Should -BeNullOrEmpty
+        $before.Count | Should -BeGreaterThan 0
+        $after | Should -Be $before
+    }
+}

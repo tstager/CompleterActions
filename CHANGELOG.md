@@ -7,6 +7,82 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Added
+
+- **`New-CompleterScript`.** Writes a native completer script skeleton
+  that passes `Test-CompleterScript` as written: a guarded, literal-only
+  subcommand table, a `Complete-<Stem>` function that offers it in the
+  first argument position, and one bare `Register-ArgumentCompleter` call
+  that names every target. Each `-CommandName` is written as given and
+  followed by its `.exe` form unless it already ends in `.exe`, `.cmd`,
+  `.bat`, `.ps1`, or `.com`. The table is seeded in one of three ways. By
+  default the command probes the tool's help: it runs `--help`, and on
+  Windows also `/?` once when `--help` ran to completion but gave no
+  subcommand and fewer than five non-blank lines, or it runs the one
+  argument given with `-HelpArgument`. The probe runs only an
+  application, never a function, alias, cmdlet, or PowerShell script,
+  and on Windows only a
+  `.exe` whose header marks a console program; it runs with no shell,
+  standard input closed, the temporary directory as its working
+  directory, and `NO_COLOR=1`, under a 5-second limit, and output from a
+  run that timed out or left a process holding its output is not used.
+  `-HelpText` parses help the author captured, from the pipeline or as an
+  argument, and runs nothing; `-NoProbe` writes an empty table. Help is
+  decoded, cleaned of terminal escapes and progress lines, and parsed by
+  fixed rules for a commands section. Before the file is put in place, a
+  temporary copy is checked with the strict grammar and its targets are
+  derived as `Register-Completer -Lazy` derives them, so every output
+  conforms; a failure writes nothing. The file is UTF-8 without a
+  byte-order mark and holds no date, version, or machine path. Supports
+  `-Force`, `-PassThru`, `-WhatIf`, and `-Confirm`; `-WhatIf` names the
+  program the probe would run.
+- **`Import-CompleterSet -Name`.** Imports the completer set of an
+  installed completer set package: a module whose manifest names its set
+  file in `PrivateData.CompleterSet`, in a folder directly below the
+  module folder. The module is found as `Import-Module` finds it, without
+  loading it or calling `Get-Module -ListAvailable`: the first
+  `$env:PSModulePath` root that has the module wins, and within it the
+  highest version, with the module folder's name matched
+  case-insensitively on every platform. The manifest is read as data, so
+  nothing in the package runs. Two rules apply to a package and not to a
+  set imported by path: an entry whose script resolves outside the module
+  folder is an invalid entry, and a set with trusted entries writes one
+  warning that counts them. Names are literal, and every name is resolved
+  before any set is imported.
+- **`Test-CompleterSet -Name`.** Tests the set of an installed completer
+  set package, found exactly as `Import-CompleterSet -Name` finds it.
+- **`PackageLayout` findings in `Test-CompleterSet`.** For a set whose
+  module manifest is known, through `-Name` or a `.psd1` one folder above
+  the set that declares it, as in a staged package: an `Error` for each
+  entry whose `Path` is fully qualified or outside the module folder, an
+  `Error` for each other `.psd1` beside the manifest, which
+  `Publish-PSResource` can take as the manifest, and a `Warning` when
+  `RequiredModules` does not require CompleterActions 2.2.0 or later. They
+  come after the entry findings and before `UnlistedScript`. A set that no
+  manifest declares gets the same findings as in 2.1.0.
+- The module now exports fourteen functions and the same three aliases.
+
+### Documentation
+
+- The third edition of `about_Import_Completers` and
+  `about_Completer_Sets`. `about_Import_Completers` gains a section on
+  scaffolding a completer with `New-CompleterScript`: the three ways to
+  seed the table, what the probe runs and refuses to run, its limit and
+  working directory, the parsing rules with examples that work and one
+  that does not, the residual risks, and the skeleton read against the
+  three shapes. Its workflow starts from `New-CompleterScript` and ends
+  with `Export-CompleterSet` and `Test-CompleterSet`, and a new paragraph
+  points to the package layout. `about_Completer_Sets` gains full sections
+  on the hash and the fast path, on checking for drift with
+  `Test-CompleterSet`, with every finding kind, its severity, and its fix,
+  and on completer sets as modules: the package layout and manifest,
+  `New-ModuleManifest`, `Import-CompleterSet -Name` and its two package
+  rules, what installing a package means for trust, `Test-CompleterSet
+  -Name`, and staging before `Publish-PSResource`.
+- Command help for `New-CompleterScript`, and the `Name` parameter sets of
+  `Import-CompleterSet` and `Test-CompleterSet`. README and
+  `.github/copilot-instructions.md` list the new command.
+
 ## [2.1.0] - 2026-10-02
 
 The stable 2.1.0 release. Same code as 2.1.0-preview1, promoted after the

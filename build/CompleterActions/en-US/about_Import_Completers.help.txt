@@ -3,8 +3,8 @@ TOPIC
 
 SYNOPSIS
     Explains how to import standalone completer scripts into this module,
-    which of the two import tiers to use, and how to check and verify a
-    completer script.
+    which of the two import tiers to use, how to scaffold a new completer
+    script, and how to check and verify a completer script.
 
 LONG DESCRIPTION
 
@@ -29,8 +29,11 @@ LONG DESCRIPTION
     - The trusted tier, selected with `-Trusted`, skips the grammar and
       dot-sources the script as-is.
 
-    Two more commands support the workflow around the import:
+    Three more commands support the workflow around the import:
 
+    - `New-CompleterScript` writes a new native completer script that
+      already conforms to the strict grammar, with a subcommand table read
+      from the tool's help. It is the starting point for a new script.
     - `Test-CompleterScript` runs the strict grammar without executing the
       script and returns every finding as an object with a line number and a
       fix hint. It is the conformance step.
@@ -201,6 +204,236 @@ OUTPUT OBJECTS
 
     - `ScriptText`
       The script block text, which is useful for inspection and debugging.
+
+SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
+
+    `New-CompleterScript` writes a new native completer script that already
+    follows the strict grammar, with a table of subcommands read from the
+    tool's help. Start every new script from it, then check the file:
+
+        New-CompleterScript -CommandName cargo `
+            -Path .\cargo_completer\cargo_completer.ps1
+        Test-CompleterScript -LiteralPath .\cargo_completer\cargo_completer.ps1
+
+    `Test-CompleterScript` reports no findings, because the file conforms
+    before you touch it. Without `-PassThru` the command returns nothing;
+    with it, it returns the written file, which pipes into
+    `Test-CompleterScript` and `Import-CompleterScript`. The folder must exist,
+    the path must end in `.ps1`, and an existing file is replaced only with
+    `-Force`. A call that fails leaves nothing at the path.
+
+    Seeding the table
+
+    The subcommand table is seeded in one of three ways, one per parameter
+    set:
+
+    - The probe, which is the default, runs the tool's help and parses it.
+      Use it for a console program that prints its help and exits. Without
+      `-HelpArgument` the probe passes `--help`. On Windows, when `--help`
+      ran to completion, gave no subcommand, and printed fewer than five
+      non-blank lines, which is what a tool that rejects `--help` prints,
+      `/?` runs once and its result is used; `schtasks`, `reg`, `bcdedit`,
+      and `netsh` behave that way. On Linux and macOS `/?` is never tried.
+      `-HelpArgument` passes one argument of your choice instead, such as
+      `help` or `-h`, and the program runs once.
+    - `-HelpText` parses help you captured yourself, and nothing runs. Use
+      it for a tool the probe refuses to run, such as a `.cmd` shim or an
+      app execution alias, for help that needs more than one argument, such
+      as `tool help commands`, or whenever you would rather run the tool
+      yourself. Lines piped in are joined before they are parsed:
+
+          winget --help |
+              New-CompleterScript -CommandName winget `
+                  -Path .\winget_completer\winget_completer.ps1
+
+    - `-NoProbe` runs nothing and writes an empty table. Use it for a tool
+      without subcommands, or when you will write the table by hand.
+
+    `-WhatIf` and `-Confirm` name both the file and the program the probe
+    would run, and the probe runs only after the call is confirmed.
+
+    What the probe runs
+
+    The probe resolves the first `-CommandName` value with
+    `Get-Command -CommandType Application`, so it never runs a function, an
+    alias, a cmdlet, or a PowerShell script of that name. On Windows it then
+    reads the file's program header, without starting it, and runs only a
+    `.exe` whose header marks a console program. It does not run a GUI
+    program, a `.cmd` or `.bat` shim such as `npm.cmd`, or an app execution
+    alias such as `winget.exe` under `WindowsApps`, whose header cannot be
+    read. On Linux and macOS any resolved application runs, and a script
+    with a shebang runs its own interpreter. When the command is not found
+    as an application, is refused, or fails to start, a warning says why
+    and suggests `-HelpText`, and the script is written with an empty table.
+
+    The program runs with its one argument and no shell, with standard
+    input closed, so a tool that reads input sees the end of it at once,
+    and with `NO_COLOR=1` added to the session's environment. Its working
+    directory is the temporary directory, `[System.IO.Path]::GetTempPath()`,
+    so a tool that writes into its current directory does not write into
+    your repository. One 5-second limit covers the run and the reading of
+    its output. The output is dropped, with a warning, in two cases:
+
+    - the program has not exited at the limit, so it and the processes it
+      started are stopped;
+    - the program exited, but a process it started, such as a build server
+      or a device bridge, still holds its output a second later, so the
+      output is not waited for.
+
+    The exit code decides nothing, because many tools print their help and
+    exit with a nonzero code. The text used is standard output, or standard
+    error when standard output is empty. It is decoded, and terminal
+    colours, links, backspace overstrikes, and carriage-return progress
+    lines are removed. The same cleaning applies to `-HelpText`.
+
+    How the help is read
+
+    The parser looks for a commands section and reads one subcommand per
+    line, keeping the help's order:
+
+    - A section starts at a header line of one to six words, one of which
+      is `command`, `commands`, `subcommand`, or `subcommands`, optionally
+      followed by a colon or written between `<` and `>`. `Commands:`,
+      `CORE COMMANDS`, `Basic Commands (Beginner):`, and `<Commands>` all
+      start a section; `Options:` does not.
+    - An entry is a name, a separator, and a description. The separator is
+      a colon and a space, two or more dashes, ` - `, two or more spaces, or
+      a tab. A name starts and ends with a letter or digit, and aliases
+      after it (`build, b`) are dropped.
+    - The first entry fixes the section's indentation. A line indented
+      deeper continues a description, and any other line that is not an
+      entry is skipped without ending the section. A blank line, another
+      header, or an entry indented less ends it.
+    - A name that appears twice is kept once. Control and formatting
+      characters in a description become spaces, and an empty description
+      becomes the name.
+
+    `cargo --help` works: its `Commands:` section gives 16 subcommands,
+    `build`, `check`, `clean`, and so on, and its last line,
+    `...  See all commands with --list`, is not an entry, because a name
+    starts with a letter or digit. `pip --help` works too and gives all 18,
+    although two of its descriptions wrap back to the first column
+    (`dependencies.`), because a line that is not an entry does not end the
+    section. `git --help` does not work: its header, `These are common Git
+    commands used in various situations:`, has nine words, and its commands
+    are grouped under headings of their own, so the table is empty. An empty
+    table is not an error and draws no warning, because it is also the
+    right result for a tool with options only, such as `rg`.
+
+    A partial table is the case to watch for. `sc --help` on Windows gives
+    35 subcommands but misses `qmanagedaccount`, whose line,
+    `qmanagedaccount-Queries ...`, uses a single dash, which is not a
+    separator. The script still passes every check, and the command writes
+    no warning. Compare a seeded table with the tool's help before you rely
+    on it, and add what is missing by hand.
+
+    Residual risks
+
+    The probe runs a program you did not write, and some risks remain:
+
+    - The header check cannot see through a console shim that starts a GUI
+      program.
+    - Some tools treat `--help` as an operand: `tee --help` writes a file
+      named `--help` into the temporary directory, and a BSD `yes` prints
+      until the limit.
+    - On Linux and macOS a child can open `/dev/tty` although its standard
+      input is closed.
+    - A process the program started and left running after it exited is no
+      longer in the process tree the probe stops, so it can outlive the
+      probe.
+
+    `-NoProbe` and `-HelpText` avoid all of them.
+
+    The skeleton
+
+    This is the cargo script, with the table cut short:
+
+        # cargo tab completion for PowerShell
+        # Help-seeded native completer: the subcommand table was read from 'cargo --help' when the script was generated.
+
+        Set-StrictMode -Version 2.0
+
+        if (-not (Get-Variable -Name CargoCompletionCatalog -Scope Script -ErrorAction Ignore)) {
+            $script:CargoCompletionCatalog = @{
+                Subcommands = @(
+                    @{ Name = 'build'; Description = 'Compile the current package' }
+                    @{ Name = 'check'; Description = 'Analyze the current package and report errors, but don''t build object files' }
+                )
+            }
+        }
+
+        function Complete-Cargo {
+            param(
+                [string]$wordToComplete,
+                [System.Management.Automation.Language.CommandAst]$commandAst,
+                [int]$cursorPosition
+            )
+
+            # Offer subcommands in the first argument position only; extend this function for options and values.
+            $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })
+            if ($precedingElements.Count -gt 1) {
+                return
+            }
+
+            foreach ($subcommand in $script:CargoCompletionCatalog.Subcommands) {
+                if ($subcommand.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    [System.Management.Automation.CompletionResult]::new($subcommand.Name, $subcommand.Name, 'ParameterValue', $subcommand.Description)
+                }
+            }
+        }
+
+        Register-ArgumentCompleter -Native -CommandName 'cargo', 'cargo.exe' -ScriptBlock {
+            param($wordToComplete, $commandAst, $cursorPosition)
+
+            Complete-Cargo -wordToComplete $wordToComplete -commandAst $commandAst -cursorPosition $cursorPosition
+        }
+
+    Read against the three shapes below:
+
+    - The two comment lines name the command and the source of the table.
+      From `-HelpText` the second reads `... read from help text passed to
+      New-CompleterScript.`, and an empty table gives `# Native completer
+      skeleton: add subcommands to the table and options to
+      Complete-Cargo.` No date, version, or machine path appears, so the
+      same input always gives the same bytes.
+    - The guarded `$script:CargoCompletionCatalog` block is shape 1: one
+      `$script:` assignment of literals behind a `Get-Variable` guard. Every
+      string is single-quoted, with each quote character doubled, as in
+      `don''t`. An empty table is written `Subcommands = @()`.
+    - `Complete-Cargo` is where shape 2's work goes. It offers the table in
+      the first argument position only, and returning nothing elsewhere
+      lets PowerShell fall back to path completion. Extend it for options
+      and values, and put anything computed, such as tool discovery or a
+      cache filled from live output, in a function it calls lazily. The
+      skeleton has no initializer of its own, because a static table needs
+      none.
+    - The last statement is shape 3: one bare script-scope
+      `Register-ArgumentCompleter` with `-Native`, a literal `-CommandName`
+      list, and a literal `-ScriptBlock`. Each name is written as given and
+      followed by its `.exe` form unless it already ends in `.exe`, `.cmd`,
+      `.bat`, `.ps1`, or `.com`, so `-CommandName rg` registers `'rg',
+      'rg.exe'` and `-CommandName npm.cmd` registers `'npm.cmd'`.
+    - The first name gives the stem of the state variable and the function:
+      `cargo` gives `Cargo`, `cargo-binstall` gives `CargoBinstall`, and
+      `oh-my-posh` gives `OhMyPosh`. The script uses four-space indentation
+      and opening braces on the same line, as completer repositories
+      usually do.
+
+    The guarantee
+
+    Before the file is put in place, the command writes the script to a
+    temporary file beside it, checks that file with the strict grammar
+    `Test-CompleterScript` applies, and derives its targets as
+    `Register-Completer -Lazy` does. Only a file with no finding that
+    registers exactly the target list is moved into place, so every script
+    the command writes passes `Test-CompleterScript`, whatever help it was
+    seeded from. If the check fails, the command writes nothing and asks
+    you to report the defect. The file is UTF-8 without a byte-order mark,
+    with the platform's newline and a final newline.
+
+    Once you edit the script, keeping it inside the grammar is your
+    responsibility. Run `Test-CompleterScript` after every change, as the
+    BASIC WORKFLOW below does.
 
 THE STRICT GRAMMAR
 
@@ -593,6 +826,7 @@ BASIC WORKFLOW
 
     The normal workflow is:
 
+    0. For a new script, start from `New-CompleterScript`.
     1. Import the module.
     2. Run `Test-CompleterScript` over the completer scripts. Fix the findings
        using the three shapes, or decide to import with `-Trusted`.
@@ -600,6 +834,19 @@ BASIC WORKFLOW
     4. Pipe the results into `Register-Completer`.
     5. Verify with `Test-CompleterRegistration` and inspect with
        `Get-Completer`.
+    6. Add the script to the repository's set with `Export-CompleterSet`,
+       then check the set with `Test-CompleterSet`, which returns nothing
+       when the set matches its folder.
+
+DISTRIBUTING COMPLETERS AS A MODULE
+
+    A completer repository can be published as an ordinary PowerShell module
+    whose manifest names its set file in `PrivateData.CompleterSet`. Once it
+    is installed with `Install-PSResource`, a profile line that names the
+    module imports it: `Import-CompleterSet -Name <module>`. The package layout,
+    the manifest, the rules `Import-CompleterSet -Name` applies to a package,
+    and how to stage and publish one are in `about_Completer_Sets`, under
+    COMPLETER SETS AS MODULES.
 
 EXAMPLE 1
 
@@ -689,6 +936,7 @@ COMMON FINDINGS
 
 SEE ALSO
 
+    Get-Help New-CompleterScript -Full
     Get-Help Import-CompleterScript -Full
     Get-Help Test-CompleterScript -Full
     Get-Help Test-CompleterRegistration -Full

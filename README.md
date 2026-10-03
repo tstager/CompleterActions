@@ -39,6 +39,7 @@
 | `Get-Completer` | Lists completer registrations known to the module or discovered from the current runtime, filtered by `-State` and sorted by type, command, and parameter |
 | `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-Completer -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
 | `Import-CompleterSet` | Validates every entry of a completer set up front, then registers the whole set lazily; `-SkipInvalid` warns and registers the rest |
+| `New-CompleterScript` | Writes a completer script skeleton for a native command, with a subcommand table read from its help, that passes `Test-CompleterScript` as written |
 | `Register-Completer` | Registers a managed completer and records it in module state; `-Path -Lazy` registers a completer script that loads on its first tab press |
 | `Reset-Completer` | Returns a Failed or Active script-backed completer to Pending so its script loads again on the next tab press |
 | `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches |
@@ -81,11 +82,12 @@ Runtime registration discovery and unmanaged-registration removal depend on Powe
 
 ## Typical flow
 
-1. Check an existing completer script with `Test-CompleterScript`, or decide to import it with `-Trusted`.
-2. Register a completer directly, or import the script into managed input objects.
-3. Verify the registration with `Test-CompleterRegistration` and inspect it with `Get-Completer`.
-4. Replace or remove registrations when the target changes.
-5. Use `-AllowUnmanaged` only when removing runtime registrations that were not created by the module.
+1. Scaffold a completer: for a new script, `New-CompleterScript -CommandName <tool> -Path .\<tool>_completer.ps1` writes a skeleton whose subcommand table is read from the tool's help.
+2. Check an existing completer script with `Test-CompleterScript`, or decide to import it with `-Trusted`.
+3. Register a completer directly, or import the script into managed input objects.
+4. Verify the registration with `Test-CompleterRegistration` and inspect it with `Get-Completer`.
+5. Replace or remove registrations when the target changes.
+6. Use `-AllowUnmanaged` only when removing runtime registrations that were not created by the module.
 
 ## Examples
 
