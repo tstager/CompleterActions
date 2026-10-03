@@ -1260,6 +1260,7 @@ finally
         @{ Mutation = 'a script moved outside the module folder'; Kind = 'Moved' }
         @{ Mutation = 'a second .psd1 beside the manifest'; Kind = 'SecondManifest' }
         @{ Mutation = 'an emptied RequiredModules'; Kind = 'NoRequiredModules' }
+        @{ Mutation = 'a manifest renamed to the set file''s base name'; Kind = 'ManifestNamedLikeSet' }
         @{ Mutation = 'a deleted manifest'; Kind = 'NoManifest' }
     ) {
         param($Mutation, $Kind)
@@ -1301,6 +1302,11 @@ finally
                     (Import-PowerShellDataFile -LiteralPath $manifestPath).Contains('RequiredModules') | Should -BeFalse
                     Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath
                 }
+                'ManifestNamedLikeSet'
+                {
+                    Move-Item -LiteralPath $manifestPath -Destination (Join-Path -Path $moduleBase -ChildPath 'Completers.psd1')
+                    Get-TestSetNameFinding -SetPath $setPath -ModuleName 'Completers'
+                }
                 'NoManifest'
                 {
                     Remove-Item -LiteralPath $manifestPath
@@ -1328,6 +1334,10 @@ finally
             'SecondManifest'
             {
                 Remove-Item -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'aaa.psd1')
+            }
+            'ManifestNamedLikeSet'
+            {
+                Move-Item -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'Completers.psd1') -Destination $manifestPath
             }
         }
 
