@@ -3302,6 +3302,98 @@ function Get-CompleterActionState
 }
 <#
 .SYNOPSIS
+Reads the Subsystem field of a Windows program's PE header.
+
+.DESCRIPTION
+Opens the file with File.OpenRead, reads at most its first 4096 bytes, and
+returns the optional header's Subsystem value: 2 for a Windows GUI program, 3
+for a Windows console program, and other values for other images. No process
+is started to inspect the file.
+
+The reader checks the MZ signature, follows e_lfanew (the Int32 at 0x3C) to
+the PE\0\0 signature, checks the optional-header magic (0x10B for PE32, 0x20B
+for PE32+), and reads Subsystem as the UInt16 at e_lfanew + 24 + 68, an offset
+that is the same in PE32 and PE32+. A file too short for that, a wrong
+signature or magic, and any failure to open or read the file, such as an app
+execution alias or a file another handle holds exclusively, return null. The
+reader never throws.
+
+.PARAMETER LiteralPath
+The full path of the file to read.
+
+.OUTPUTS
+System.Int32
+Returns the Subsystem value, or null when the header cannot be read.
+#>
+function Get-CompleterPESubsystem
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $buffer = [byte[]]::new(4096)
+    $count = 0
+
+    try
+    {
+        $stream = [System.IO.File]::OpenRead($LiteralPath)
+        try
+        {
+            while ($count -lt $buffer.Length)
+            {
+                $read = $stream.Read($buffer, $count, $buffer.Length - $count)
+                if ($read -eq 0)
+                {
+                    break
+                }
+
+                $count += $read
+            }
+        }
+        finally
+        {
+            $stream.Dispose()
+        }
+    }
+    catch
+    {
+        Write-Debug -Message "The program header of '$LiteralPath' could not be read. $($_.Exception.Message)"
+        return $null
+    }
+
+    if ($count -lt 0x40 -or $buffer[0] -ne 0x4D -or $buffer[1] -ne 0x5A)
+    {
+        return $null
+    }
+
+    $peOffset = [System.BitConverter]::ToInt32($buffer, 0x3C)
+    if ($peOffset -lt 0 -or ([long] $peOffset + 94) -gt $count)
+    {
+        return $null
+    }
+
+    if ($buffer[$peOffset] -ne 0x50 -or $buffer[$peOffset + 1] -ne 0x45 -or $buffer[$peOffset + 2] -ne 0 -or $buffer[$peOffset + 3] -ne 0)
+    {
+        return $null
+    }
+
+    $magic = [System.BitConverter]::ToUInt16($buffer, $peOffset + 24)
+    if ($magic -ne 0x10B -and $magic -ne 0x20B)
+    {
+        return $null
+    }
+
+    [int] [System.BitConverter]::ToUInt16($buffer, $peOffset + 24 + 68)
+}
+<#
+.SYNOPSIS
 Normalizes a completer target into the module's registration key format.
 
 .DESCRIPTION
@@ -4377,6 +4469,263 @@ function Import-CompleterSetDefinition
 }
 <#
 .SYNOPSIS
+Runs a program once to read its help, under one deadline.
+
+.DESCRIPTION
+Starts the program with UseShellExecute off, no window, the arguments in
+ArgumentList so no shell parses them, standard input redirected and closed at
+once, the temporary directory as the working directory, and the session's
+environment plus NO_COLOR=1.
+
+Standard output and standard error are read concurrently as bytes, one
+ReadAsync per stream at a time. Each stream keeps its first 1 MiB (1048576
+bytes) and keeps draining after that, discarding the rest, so a chatty
+program never blocks on a full pipe. The reads are polled from this thread
+with Task.WaitAny and a timeout, so no callback runs PowerShell code and no
+wait is unbounded.
+
+One deadline, fixed at start, covers the process and both reads. A process
+still running at the deadline is killed with its descendants (Kill($true)),
+waited for up to 1 second, and its output is dropped: TimedOut. When the
+process has exited, the reads get until 1 second later or the deadline,
+whichever is earlier; a read still open then means a descendant holds the
+pipe, so the streams are closed, Kill($true) is attempted, and the output is
+dropped: HeldOutput. An exception from Process.Start gives StartFailed with
+the exception's message. Otherwise the result is Exited, with both streams'
+bytes and the exit code; the exit code decides nothing here.
+
+This helper writes no warning or verbose stream; its caller turns the status
+into messages.
+
+.PARAMETER FilePath
+The full path of the program to run.
+
+.PARAMETER ArgumentList
+The arguments, each passed as one argument without shell parsing.
+
+.PARAMETER TimeoutSeconds
+The deadline in seconds, measured from the start of the run.
+
+.OUTPUTS
+CompleterActions.CompleterHelpProcessResult
+Returns a record with Status (Exited, TimedOut, HeldOutput, or StartFailed),
+ExitCode (null unless Exited), StandardOutput and StandardError (byte arrays,
+empty unless Exited), ElapsedMilliseconds, ProcessId (null for StartFailed),
+and StartError (the Process.Start exception message, or null).
+#>
+function Invoke-CompleterHelpProcess
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $FilePath,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]] $ArgumentList,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(0.001, 3600)]
+        [double] $TimeoutSeconds
+    )
+
+    $streamCap = 1048576
+    $readSize = 65536
+    $pollMilliseconds = 50
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.WorkingDirectory = [System.IO.Path]::GetTempPath()
+    $startInfo.Environment['NO_COLOR'] = '1'
+    foreach ($argument in $ArgumentList)
+    {
+        $startInfo.ArgumentList.Add($argument)
+    }
+
+    $status = $null
+    $exitCode = $null
+    $processId = $null
+    $startError = $null
+    $readers = @()
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $deadline = $TimeoutSeconds * 1000
+
+    try
+    {
+        try
+        {
+            $null = $process.Start()
+        }
+        catch
+        {
+            $exception = $_.Exception
+            if ($exception -is [System.Management.Automation.MethodInvocationException] -and $null -ne $exception.InnerException)
+            {
+                $exception = $exception.InnerException
+            }
+
+            $status = 'StartFailed'
+            $startError = $exception.Message
+        }
+
+        if ($null -eq $status)
+        {
+            $processId = $process.Id
+            $process.StandardInput.Close()
+
+            $readers = @(
+                foreach ($stream in @($process.StandardOutput.BaseStream, $process.StandardError.BaseStream))
+                {
+                    $buffer = [byte[]]::new($readSize)
+                    [pscustomobject] @{
+                        Stream = $stream
+                        Buffer = $buffer
+                        Data   = [System.IO.MemoryStream]::new()
+                        Task   = $stream.ReadAsync($buffer, 0, $readSize)
+                        Done   = $false
+                    }
+                }
+            )
+
+            $readDeadline = $deadline
+            $exitSeen = $false
+            while ($true)
+            {
+                $pending = @($readers | Where-Object { -not $_.Done })
+                if ($pending.Count -eq 0)
+                {
+                    break
+                }
+
+                $now = $stopwatch.Elapsed.TotalMilliseconds
+                if (-not $exitSeen -and $process.HasExited)
+                {
+                    $exitSeen = $true
+                    $readDeadline = [System.Math]::Min($now + 1000, $deadline)
+                }
+
+                if ($now -ge $readDeadline)
+                {
+                    $status = if ($exitSeen) { 'HeldOutput' } else { 'TimedOut' }
+                    break
+                }
+
+                $wait = [int] [System.Math]::Ceiling([System.Math]::Min($readDeadline - $now, $pollMilliseconds))
+                $tasks = [System.Threading.Tasks.Task[]] @($pending | ForEach-Object { $_.Task })
+                $null = [System.Threading.Tasks.Task]::WaitAny($tasks, $wait)
+
+                foreach ($reader in $pending)
+                {
+                    if (-not $reader.Task.IsCompleted)
+                    {
+                        continue
+                    }
+
+                    $read = 0
+                    if ($reader.Task.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion)
+                    {
+                        $read = $reader.Task.Result
+                    }
+
+                    if ($read -le 0)
+                    {
+                        $reader.Done = $true
+                        continue
+                    }
+
+                    $keep = [System.Math]::Min($read, $streamCap - $reader.Data.Length)
+                    if ($keep -gt 0)
+                    {
+                        $reader.Data.Write($reader.Buffer, 0, $keep)
+                    }
+
+                    $reader.Task = $reader.Stream.ReadAsync($reader.Buffer, 0, $readSize)
+                }
+            }
+
+            if ($null -eq $status)
+            {
+                $remaining = [int] [System.Math]::Max(0, [System.Math]::Ceiling($deadline - $stopwatch.Elapsed.TotalMilliseconds))
+                if ($process.WaitForExit($remaining))
+                {
+                    $status = 'Exited'
+                    $exitCode = $process.ExitCode
+                }
+                else
+                {
+                    $status = 'TimedOut'
+                }
+            }
+
+            if ($status -eq 'HeldOutput')
+            {
+                foreach ($reader in $readers)
+                {
+                    $reader.Stream.Dispose()
+                }
+            }
+
+            if ($status -ne 'Exited')
+            {
+                try
+                {
+                    $process.Kill($true)
+                }
+                catch
+                {
+                    Write-Debug -Message "Stopping process $processId failed. $($_.Exception.Message)"
+                }
+
+                if ($status -eq 'TimedOut')
+                {
+                    $null = $process.WaitForExit(1000)
+                }
+            }
+        }
+    }
+    finally
+    {
+        foreach ($reader in $readers)
+        {
+            $reader.Stream.Dispose()
+        }
+
+        $process.Dispose()
+    }
+
+    $standardOutput = [byte[]]::new(0)
+    $standardError = [byte[]]::new(0)
+    if ($status -eq 'Exited')
+    {
+        $standardOutput = $readers[0].Data.ToArray()
+        $standardError = $readers[1].Data.ToArray()
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName          = 'CompleterActions.CompleterHelpProcessResult'
+        Status              = $status
+        ExitCode            = $exitCode
+        StandardOutput      = $standardOutput
+        StandardError       = $standardError
+        ElapsedMilliseconds = [long] $stopwatch.ElapsedMilliseconds
+        ProcessId           = $processId
+        StartError          = $startError
+    }
+}
+<#
+.SYNOPSIS
 Loads a lazily registered completer script on its first invocation and delegates the call.
 
 .DESCRIPTION
@@ -5207,6 +5556,103 @@ function Remove-RuntimeCompleterRegistration
         $runtimeRegistration = $null
         $target = $null
         $dictionary = $null
+    }
+}
+<#
+.SYNOPSIS
+Resolves the program a help probe would run and decides whether it may run.
+
+.DESCRIPTION
+Resolves the name with Get-Command -CommandType Application and takes the
+first match, so a function, alias, cmdlet, or script of that name is never
+chosen. The name is escaped with [WildcardPattern]::Escape, so it is matched
+literally: a name with *, ?, or brackets never resolves some other program.
+-ErrorAction Ignore keeps a missing command from throwing under
+$ErrorActionPreference = 'Stop'. Nothing is run.
+
+On Windows the resolved file may run only when it is a .exe whose PE header
+reads as Subsystem 3 (Windows CUI). Any other file gets a reason: a GUI
+program (Subsystem 2), another subsystem, an unreadable header, no file
+extension, or an extension that only runs through cmd.exe. On Linux and macOS
+every resolved application may run.
+
+The warning text is returned as data; this helper writes no stream.
+
+.PARAMETER Name
+The command name to resolve, as the author gave it.
+
+.OUTPUTS
+CompleterActions.CompleterHelpProbeApplication
+Returns a record with Name (as given), Path (the resolved file, or null when
+nothing was found), CanRun, and Warning (the not-found or not-run text, or
+null when the application may run).
+#>
+function Resolve-CompleterHelpProbeApplication
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name
+    )
+
+    $application = Get-Command -Name ([WildcardPattern]::Escape($Name)) -CommandType Application -ErrorAction Ignore | Select-Object -First 1
+
+    $path = $null
+    $warning = $null
+    if ($null -eq $application)
+    {
+        $warning = "The command '$Name' was not found as an application, so the subcommand table is empty. Pass captured help with -HelpText, or fill the table by hand."
+    }
+    else
+    {
+        $path = $application.Path
+        if ($IsWindows)
+        {
+            $extension = [System.IO.Path]::GetExtension($path)
+            $reason = $null
+            if ([string]::Equals($extension, '.exe', [System.StringComparison]::OrdinalIgnoreCase))
+            {
+                $subsystem = Get-CompleterPESubsystem -LiteralPath $path
+                if ($null -eq $subsystem)
+                {
+                    $reason = 'its program header could not be read'
+                }
+                elseif ($subsystem -eq 2)
+                {
+                    $reason = 'it is a Windows GUI program'
+                }
+                elseif ($subsystem -ne 3)
+                {
+                    $reason = "it is not a Windows console program (subsystem $subsystem)"
+                }
+            }
+            elseif ($extension.Length -eq 0)
+            {
+                $reason = 'it has no file extension'
+            }
+            else
+            {
+                $reason = "it is a $($extension.ToLowerInvariant()) file, which only runs through cmd.exe"
+            }
+
+            if ($null -ne $reason)
+            {
+                $warning = "'$path' was not run: $reason. Run '$Name --help' yourself and pass the text with -HelpText."
+            }
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName = 'CompleterActions.CompleterHelpProbeApplication'
+        Name       = $Name
+        Path       = $path
+        CanRun     = $null -ne $path -and $null -eq $warning
+        Warning    = $warning
     }
 }
 <#
@@ -7468,6 +7914,7 @@ Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
 $script:CompleterDeprecationWarningsIssued = [System.Collections.Generic.HashSet[string]]::new()
+$script:CompleterHelpProbeTimeoutSeconds = 5
 New-Alias -Name 'Get-CompleterRegistration' -Value 'Get-CompleterRegistrationLegacy'
 New-Alias -Name 'Register-CompleterRegistration' -Value 'Register-CompleterRegistrationLegacy'
 New-Alias -Name 'Unregister-CompleterRegistration' -Value 'Unregister-CompleterRegistrationLegacy'
