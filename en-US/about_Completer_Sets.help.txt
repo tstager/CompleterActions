@@ -395,7 +395,7 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
     `PrivateData.CompleterSet` names this set file, as in a staged package
     before it is published. When more than one `.psd1` there declares the
     set, the first in ordinal order of file name is the manifest. A package
-    set gets `PackageLayout` findings for three things, in this order:
+    set gets `PackageLayout` findings for four things, in this order:
 
     - Error, one per entry in set order, at the entry's `Path`: the `Path`
       is fully qualified, or resolves outside the module folder, so an
@@ -410,6 +410,11 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
       `Publish-PSResource` can take the wrong file as the manifest. Keep
       the manifest as the only `.psd1` in the module folder; move the set
       into a subfolder and update `PrivateData.CompleterSet`.
+    - Error, at line 1 of the set: the set file's base name equals the
+      module name, compared case-insensitively, so PSResourceGet can take
+      the set as the module manifest when it saves or installs the package.
+      Rename the set file, for example to `completers.psd1`, and update
+      `PrivateData.CompleterSet`.
     - Warning, at line 1 of the set: `RequiredModules` does not list
       `CompleterActions` with a `ModuleVersion` or `RequiredVersion` of
       2.2.0 or later, so installing the package does not install
@@ -475,14 +480,14 @@ COMPLETER SETS AS MODULES
             LICENSE
             README.md
             completers/
-              ps_completers.psd1        the set, written by Export-CompleterSet
+              completers.psd1           the set, written by Export-CompleterSet
               7z_completer/
                 7z_completer.ps1
               git_completer/
                 git_completer.ps1
               ...
 
-    Three rules shape it:
+    Four rules shape it:
 
     - The module folder holds exactly one `.psd1`, the manifest.
       `Publish-PSResource` takes the first `*.psd1` it finds in the folder
@@ -496,10 +501,13 @@ COMPLETER SETS AS MODULES
       relative, which is what `Export-CompleterSet -Path` writes for the
       scripts under the set's folder. Copy the set and its script folders
       together, so the relative paths and the hashes stay valid.
-    - The folder and file names are free; `completers/` is only the
-      convention used here. Because the set and the manifest never share a
-      folder, a set named like the manifest except for letter case, which
-      Windows and macOS treat as one file, causes no collision.
+    - The set file's base name differs from the module name, compared
+      case-insensitively. PSResourceGet reads any `.psd1` in the package
+      whose base name equals the module name as the manifest, even in a
+      subfolder, so `Save-PSResource` cannot save a package named
+      `PS_Completers` that holds `completers/ps_completers.psd1`.
+    - Otherwise the folder and file names are free; `completers/` and
+      `completers.psd1` are only the convention used here.
 
     The manifest needs four things: `PrivateData.CompleterSet`;
     `RequiredModules` naming CompleterActions 2.2.0 or later, so that
@@ -518,7 +526,7 @@ COMPLETER SETS AS MODULES
             VariablesToExport = @()
             AliasesToExport   = @()
             PrivateData       = @{
-                CompleterSet = 'completers/ps_completers.psd1'
+                CompleterSet = 'completers/completers.psd1'
                 PSData       = @{ Tags = @('completer', 'argument-completer') }
             }
         }
@@ -542,7 +550,7 @@ COMPLETER SETS AS MODULES
             -FunctionsToExport @() -CmdletsToExport @() `
             -VariablesToExport @() -AliasesToExport @() `
             -Tags 'completer', 'argument-completer' `
-            -PrivateData @{ CompleterSet = 'completers/ps_completers.psd1' }
+            -PrivateData @{ CompleterSet = 'completers/completers.psd1' }
 
     Importing a package by name
 
@@ -630,11 +638,13 @@ COMPLETER SETS AS MODULES
     a repository root would ship its tests and tools as well. Stage the
     package into a folder of its own: the manifest, `LICENSE`, and
     `README.md` at its root, and the set with its script folders under
-    `completers/`. Check the staged set before you publish. With the
+    `completers/`, the set copied as `completers.psd1` when its own name is
+    the module's. Its content is unchanged, so its relative paths and
+    hashes hold. Check the staged set before you publish. With the
     manifest one folder above it, it is a package set, so the check also
     runs the `PackageLayout` rules, and it must return nothing:
 
-        Test-CompleterSet -LiteralPath <staging>\PS_Completers\completers\ps_completers.psd1
+        Test-CompleterSet -LiteralPath <staging>\PS_Completers\completers\completers.psd1
         Publish-PSResource -Path <staging>\PS_Completers -Repository PSGallery -ApiKey <key>
 
     A machine then installs and imports it with:

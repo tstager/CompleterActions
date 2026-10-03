@@ -55,7 +55,7 @@ set file, as in a staged package before it is published. When more than
 one .psd1 there declares the set, the first in ordinal order of file name is
 the manifest. A .psd1 that is not data declares nothing, and a folder that
 cannot be listed holds no manifest. A set that no manifest declares gets no
-PackageLayout finding. A package set is checked for three things, reported
+PackageLayout finding. A package set is checked for four things, reported
 in this order:
 
 - Error, one per entry in set order, at the entry's Path: the Path is fully
@@ -66,6 +66,9 @@ in this order:
 - Error, one per file in ordinal order of file name: the module folder holds
   a .psd1 other than the manifest, so Publish-PSResource can take the wrong
   file as the manifest.
+- Error: the set file's base name equals the module name, compared
+  case-insensitively, so PSResourceGet can take the set as the module
+  manifest when it saves or installs the package, even from a subfolder.
 - Warning: RequiredModules does not list CompleterActions as a hashtable
   with a ModuleVersion or RequiredVersion of 2.2.0 or later, so installing
   the package does not install Import-CompleterSet -Name.

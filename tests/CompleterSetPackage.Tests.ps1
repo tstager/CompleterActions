@@ -1130,6 +1130,19 @@ Describe 'Test-CompleterSet package checks' {
             "$SetPath|1|1|Error|PackageLayout|The module folder '$ModuleBase' holds '$FileName' beside the module manifest '$ManifestName', so Publish-PSResource can take the wrong file as the manifest.|Keep the module manifest as the only .psd1 in the module folder; move the set into a subfolder and update PrivateData.CompleterSet."
         }
 
+        function Get-TestSetNameFinding
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $SetPath,
+
+                [Parameter(Mandatory)]
+                [string] $ModuleName
+            )
+
+            "$SetPath|1|1|Error|PackageLayout|The set file '$([System.IO.Path]::GetFileName($SetPath))' has the base name of the module '$ModuleName', so PSResourceGet can take it as the module manifest when it saves or installs the package.|Rename the set file so its base name differs from the module name, for example to completers.psd1, and update PrivateData.CompleterSet."
+        }
+
         function Get-TestRequiredModulesFinding
         {
             param(
@@ -1322,6 +1335,47 @@ finally
         [System.IO.File]::WriteAllBytes($manifestPath, $originalManifest)
 
         @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+    }
+
+    It 'applies the set-file name rule to the module <ModuleName> through -<Source>' -TestCases @(
+        @{ ModuleName = 'Completers'; Source = 'LiteralPath'; Fires = $true }
+        @{ ModuleName = 'completers'; Source = 'LiteralPath'; Fires = $true }
+        @{ ModuleName = 'Completers'; Source = 'Name'; Fires = $true }
+        @{ ModuleName = 'CaFixtureSet'; Source = 'LiteralPath'; Fires = $false }
+        @{ ModuleName = 'CaFixtureSet'; Source = 'Name'; Fires = $false }
+    ) {
+        param($ModuleName, $Source, $Fires)
+
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name $ModuleName -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+
+        if ($Source -eq 'Name')
+        {
+            $savedModulePath = $env:PSModulePath
+            try
+            {
+                $env:PSModulePath = Join-TestModulePath -Root $root
+                $findings = @(Test-CompleterSet -Name $ModuleName | Format-TestFinding)
+            }
+            finally
+            {
+                $env:PSModulePath = $savedModulePath
+            }
+        }
+        else
+        {
+            $findings = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+        }
+
+        if ($Fires)
+        {
+            $findings | Should -Be @(Get-TestSetNameFinding -SetPath $setPath -ModuleName $ModuleName)
+        }
+        else
+        {
+            $findings | Should -BeNullOrEmpty
+        }
     }
 
     It 'returns nothing for an installed copy tested by -Name for <Case>' -TestCases @(
@@ -1538,9 +1592,9 @@ finally
     }
 
     It 'writes PackageLayout findings after the entry findings and before UnlistedScript' {
-        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'Completers' -Version '1.0.0' -RequiredModules @()
         $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
-        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'Completers.psd1')
         $qualifiedPath = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'alpha'
         Add-Content -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'beta') -Value '# changed after the set was written' -Encoding utf8
         Copy-Item -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'gamma') -Destination ([System.IO.Path]::Combine($moduleBase, 'completers', 'cafixextra_completer.ps1'))
@@ -1552,13 +1606,15 @@ finally
             'HashMismatch Warning'
             'PackageLayout Error'
             'PackageLayout Error'
+            'PackageLayout Error'
             'PackageLayout Warning'
             'UnlistedScript Warning'
         )
         $findings[0].Message | Should -Match '^Entry 2 '
-        @($findings[1..3] | Format-TestFinding) | Should -Be @(
+        @($findings[1..4] | Format-TestFinding) | Should -Be @(
             (Get-TestOutsideFinding -SetPath $setPath -Index 1 -DeclaredPath $qualifiedPath)
-            (Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'aaa.psd1' -ManifestName 'CaFixtureSet.psd1')
+            (Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'aaa.psd1' -ManifestName 'Completers.psd1')
+            (Get-TestSetNameFinding -SetPath $setPath -ModuleName 'Completers')
             (Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath)
         )
     }

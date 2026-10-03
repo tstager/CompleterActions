@@ -56,7 +56,10 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   the set that declares it, as in a staged package: an `Error` for each
   entry whose `Path` is fully qualified or outside the module folder, an
   `Error` for each other `.psd1` beside the manifest, which
-  `Publish-PSResource` can take as the manifest, and a `Warning` when
+  `Publish-PSResource` can take as the manifest, an `Error` when the set
+  file's base name equals the module name case-insensitively, which
+  PSResourceGet can take as the manifest when it saves or installs the
+  package, even from a subfolder, and a `Warning` when
   `RequiredModules` does not require CompleterActions 2.2.0 or later. They
   come after the entry findings and before `UnlistedScript`. A set that no
   manifest declares gets the same findings as in 2.1.0.
@@ -76,7 +79,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   on the hash and the fast path, on checking for drift with
   `Test-CompleterSet`, with every finding kind, its severity, and its fix,
   and on completer sets as modules: the package layout and manifest,
-  `New-ModuleManifest`, `Import-CompleterSet -Name` and its two package
+  including the rule that the set file's base name differs from the module
+  name, `New-ModuleManifest`, `Import-CompleterSet -Name` and its two package
   rules, what installing a package means for trust, `Test-CompleterSet
   -Name`, and staging before `Publish-PSResource`.
 - Command help for `New-CompleterScript`, and the `Name` parameter sets of

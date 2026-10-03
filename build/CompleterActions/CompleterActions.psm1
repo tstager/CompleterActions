@@ -2501,7 +2501,7 @@ set file, as in a staged package before it is published. When more than
 one .psd1 there declares the set, the first in ordinal order of file name is
 the manifest. A .psd1 that is not data declares nothing, and a folder that
 cannot be listed holds no manifest. A set that no manifest declares gets no
-PackageLayout finding. A package set is checked for three things, reported
+PackageLayout finding. A package set is checked for four things, reported
 in this order:
 
 - Error, one per entry in set order, at the entry's Path: the Path is fully
@@ -2512,6 +2512,9 @@ in this order:
 - Error, one per file in ordinal order of file name: the module folder holds
   a .psd1 other than the manifest, so Publish-PSResource can take the wrong
   file as the manifest.
+- Error: the set file's base name equals the module name, compared
+  case-insensitively, so PSResourceGet can take the set as the module
+  manifest when it saves or installs the package, even from a subfolder.
 - Warning: RequiredModules does not list CompleterActions as a hashtable
   with a ModuleVersion or RequiredVersion of 2.2.0 or later, so installing
   the package does not install Import-CompleterSet -Name.
@@ -5588,7 +5591,7 @@ function Get-CompleterSetPackage
 Checks a package set against the package layout and returns its PackageLayout findings.
 
 .DESCRIPTION
-Runs the three package-layout checks for a completer set whose module
+Runs the four package-layout checks for a completer set whose module
 manifest Get-CompleterSetPackage found, in this order:
 
 - Error, per entry in set order: the entry's Path is fully qualified, or it
@@ -5599,6 +5602,11 @@ manifest Get-CompleterSetPackage found, in this order:
   Publish-PSResource can take that file as the manifest. The message names
   the module folder by its full path and the two files by name. The finding
   points at line 1, column 1 of the set.
+- Error: the set file's base name equals the module name, compared
+  case-insensitively on every platform, so PSResourceGet can take the set as
+  the module manifest when it saves or installs the package. The message
+  names the set file and the module. The finding points at line 1, column 1
+  of the set.
 - Warning: RequiredModules has no hashtable whose ModuleName is
   CompleterActions and whose ModuleVersion or RequiredVersion is 2.2.0 or
   later. The message and hint name the manifest by its full path. The
@@ -5683,6 +5691,13 @@ function Get-CompleterSetPackageFinding
     foreach ($otherManifestName in $otherManifestNames)
     {
         New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The module folder '$moduleBase' holds '$otherManifestName' beside the module manifest '$manifestName', so Publish-PSResource can take the wrong file as the manifest." -Hint 'Keep the module manifest as the only .psd1 in the module folder; move the set into a subfolder and update PrivateData.CompleterSet.'
+    }
+
+    $setName = [System.IO.Path]::GetFileName($setPath)
+
+    if ([string]::Equals([System.IO.Path]::GetFileNameWithoutExtension($setPath), $Package.Name, [System.StringComparison]::OrdinalIgnoreCase))
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The set file '$setName' has the base name of the module '$($Package.Name)', so PSResourceGet can take it as the module manifest when it saves or installs the package." -Hint 'Rename the set file so its base name differs from the module name, for example to completers.psd1, and update PrivateData.CompleterSet.'
     }
 
     $minimumVersion = [version] '2.2.0'
