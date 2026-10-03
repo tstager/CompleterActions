@@ -1066,3 +1066,561 @@ Import-CompleterSet -LiteralPath $SetPath | Select-Object -Property Key, Runtime
         $importErrors | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Test-CompleterSet package checks' {
+    BeforeAll {
+        function Format-TestFinding
+        {
+            param(
+                [Parameter(ValueFromPipeline)]
+                [object] $Finding
+            )
+
+            process
+            {
+                '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $Finding.Path, $Finding.Line, $Finding.Column, $Finding.Severity, $Finding.Construct, $Finding.Message, $Finding.Hint
+            }
+        }
+
+        function Get-TestOutsideFinding
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $SetPath,
+
+                [Parameter(Mandatory)]
+                [int] $Index,
+
+                [Parameter(Mandatory)]
+                [string] $DeclaredPath
+            )
+
+            $setLines = @(Get-Content -LiteralPath $SetPath)
+            $quotedPath = "'$DeclaredPath'"
+
+            for ($lineIndex = 0; $lineIndex -lt $setLines.Count; $lineIndex++)
+            {
+                $column = $setLines[$lineIndex].IndexOf($quotedPath, [System.StringComparison]::Ordinal)
+
+                if ($column -ge 0)
+                {
+                    return '{0}|{1}|{2}|Error|PackageLayout|Entry {3} ({4}): the script is outside the module folder, so an installed copy of the package does not contain it.|Move the script under the folder that holds the set file, then regenerate the set with Export-CompleterSet.' -f $SetPath, ($lineIndex + 1), ($column + 1), $Index, $quotedPath
+                }
+            }
+
+            throw "The set '$SetPath' does not declare '$DeclaredPath'."
+        }
+
+        function Get-TestExtraManifestFinding
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $SetPath,
+
+                [Parameter(Mandatory)]
+                [string] $ModuleBase,
+
+                [Parameter(Mandatory)]
+                [string] $FileName,
+
+                [Parameter(Mandatory)]
+                [string] $ManifestName
+            )
+
+            "$SetPath|1|1|Error|PackageLayout|The module folder '$ModuleBase' holds '$FileName' beside the module manifest '$ManifestName', so Publish-PSResource can take the wrong file as the manifest.|Keep the module manifest as the only .psd1 in the module folder; move the set into a subfolder and update PrivateData.CompleterSet."
+        }
+
+        function Get-TestRequiredModulesFinding
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $SetPath,
+
+                [Parameter(Mandatory)]
+                [string] $ManifestPath
+            )
+
+            "$SetPath|1|1|Warning|PackageLayout|The module manifest '$ManifestPath' does not require CompleterActions 2.2.0 or later, so installing the package does not install Import-CompleterSet -Name.|Add @{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' } to RequiredModules in '$ManifestPath'."
+        }
+
+        function Set-TestQualifiedEntryPath
+        {
+            [CmdletBinding(SupportsShouldProcess)]
+            param(
+                [Parameter(Mandatory)]
+                [string] $ModuleBase,
+
+                [Parameter(Mandatory)]
+                [ValidateSet('alpha', 'beta', 'gamma')]
+                [string] $Fixture
+            )
+
+            $setPath = [System.IO.Path]::Combine($ModuleBase, 'completers', 'completers.psd1')
+            $qualifiedPath = Get-TestFixtureScriptPath -ModuleBase $ModuleBase -Fixture $Fixture
+
+            if ($PSCmdlet.ShouldProcess($setPath, 'Qualify an entry Path'))
+            {
+                $setText = (Get-Content -LiteralPath $setPath -Raw).Replace("'cafix$($Fixture)_completer/cafix$($Fixture)_completer.ps1'", "'$qualifiedPath'")
+                Set-Content -LiteralPath $setPath -Value $setText -Encoding utf8 -NoNewline
+            }
+
+            $qualifiedPath
+        }
+
+        function Save-TestCompleterSetPackage
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $PackageBase,
+
+                [Parameter(Mandatory)]
+                [string] $WorkFolder
+            )
+
+            $repositoryPath = Join-Path -Path $WorkFolder -ChildPath 'repo'
+            $modulesPath = Join-Path -Path $WorkFolder -ChildPath 'saved'
+            $dataHome = Join-Path -Path $WorkFolder -ChildPath 'xdg'
+            New-Item -Path $repositoryPath, $modulesPath, $dataHome -ItemType Directory | Out-Null
+            $repositoryName = 'CaLocal-{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8))
+
+            $publishScriptPath = Join-Path -Path $WorkFolder -ChildPath 'publish.ps1'
+            Set-Content -LiteralPath $publishScriptPath -Encoding utf8 -Value @'
+param($RepositoryName, $RepositoryPath, $PackagePath, $ModulesPath)
+$ErrorActionPreference = 'Stop'
+'repositories before: ' + (@(Get-PSResourceRepository | ForEach-Object Name | Sort-Object) -join ', ')
+try
+{
+    Register-PSResourceRepository -Name $RepositoryName -Uri $RepositoryPath -Trusted
+    Publish-PSResource -Path $PackagePath -Repository $RepositoryName -SkipModuleManifestValidate -SkipDependenciesCheck
+    Save-PSResource -Name 'CaFixtureSet' -Repository $RepositoryName -Path $ModulesPath -SkipDependencyCheck
+}
+finally
+{
+    Unregister-PSResourceRepository -Name $RepositoryName -ErrorAction SilentlyContinue
+}
+'repositories after: ' + (@(Get-PSResourceRepository | ForEach-Object Name | Sort-Object) -join ', ')
+'@
+
+            $savedDataHome = $env:XDG_DATA_HOME
+            try
+            {
+                if (-not $IsWindows)
+                {
+                    $env:XDG_DATA_HOME = $dataHome
+                }
+
+                $publishOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $publishScriptPath -RepositoryName $repositoryName -RepositoryPath $repositoryPath -PackagePath $PackageBase -ModulesPath $modulesPath 2>&1)
+                $publishExitCode = $LASTEXITCODE
+            }
+            finally
+            {
+                $env:XDG_DATA_HOME = $savedDataHome
+            }
+
+            $publishExitCode | Should -Be 0 -Because ($publishOutput -join [Environment]::NewLine)
+            $repositoriesBefore = @($publishOutput | ForEach-Object { "$_" } | Where-Object { $_.StartsWith('repositories before: ', [System.StringComparison]::Ordinal) })
+            $repositoriesAfter = @($publishOutput | ForEach-Object { "$_" } | Where-Object { $_.StartsWith('repositories after: ', [System.StringComparison]::Ordinal) })
+            $repositoriesBefore.Count | Should -Be 1 -Because ($publishOutput -join [Environment]::NewLine)
+            $repositoriesAfter.Count | Should -Be 1 -Because ($publishOutput -join [Environment]::NewLine)
+            $repositoriesAfter[0].Substring('repositories after: '.Length) | Should -BeExactly $repositoriesBefore[0].Substring('repositories before: '.Length)
+
+            $modulesPath
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        Import-Module -Name $script:ModuleManifestPath -Force | Out-Null
+
+        $script:PackageRoot = Join-Path -Path $TestDrive -ChildPath ('pkg-{0}' -f ([guid]::NewGuid().ToString('N')))
+        New-Item -Path $script:PackageRoot -ItemType Directory | Out-Null
+        $script:SavedModulePath = $env:PSModulePath
+    }
+
+    AfterEach {
+        $env:PSModulePath = $script:SavedModulePath
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'reports <Mutation> and nothing after reverting it' -TestCases @(
+        @{ Mutation = 'a fully qualified Path'; Kind = 'Qualified' }
+        @{ Mutation = 'a script moved outside the module folder'; Kind = 'Moved' }
+        @{ Mutation = 'a second .psd1 beside the manifest'; Kind = 'SecondManifest' }
+        @{ Mutation = 'an emptied RequiredModules'; Kind = 'NoRequiredModules' }
+        @{ Mutation = 'a deleted manifest'; Kind = 'NoManifest' }
+    ) {
+        param($Mutation, $Kind)
+
+        $null = $Mutation
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        $originalSet = [System.IO.File]::ReadAllBytes($setPath)
+        $originalManifest = [System.IO.File]::ReadAllBytes($manifestPath)
+        $fixturePaths = @('alpha', 'beta', 'gamma' | ForEach-Object { Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture $_ })
+        $outsidePath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, '..', 'outside_completer.ps1'))
+
+        @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+
+        $expected = @(
+            switch ($Kind)
+            {
+                'Qualified'
+                {
+                    $qualifiedPath = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'beta'
+                    Get-TestOutsideFinding -SetPath $setPath -Index 2 -DeclaredPath $qualifiedPath
+                }
+                'Moved'
+                {
+                    Move-Item -LiteralPath $fixturePaths[0] -Destination $outsidePath
+                    Export-TestPackageSet -ModuleBase $moduleBase -ScriptPath $outsidePath, $fixturePaths[1], $fixturePaths[2]
+                    Get-TestOutsideFinding -SetPath $setPath -Index 1 -DeclaredPath '../../outside_completer.ps1'
+                }
+                'SecondManifest'
+                {
+                    Set-Content -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'aaa.psd1') -Value '@{ Version = 1 }' -Encoding utf8
+                    Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'aaa.psd1' -ManifestName 'CaFixtureSet.psd1'
+                }
+                'NoRequiredModules'
+                {
+                    $manifestText = (Get-Content -LiteralPath $manifestPath -Raw) -replace '(?m)^RequiredModules = .*$', '# RequiredModules = @()'
+                    Set-Content -LiteralPath $manifestPath -Value $manifestText -Encoding utf8 -NoNewline
+                    (Import-PowerShellDataFile -LiteralPath $manifestPath).Contains('RequiredModules') | Should -BeFalse
+                    Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath
+                }
+                'NoManifest'
+                {
+                    Remove-Item -LiteralPath $manifestPath
+                }
+            }
+        )
+
+        $mutated = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+
+        if ($expected.Count -eq 0)
+        {
+            $mutated | Should -BeNullOrEmpty
+        }
+        else
+        {
+            $mutated | Should -Be $expected
+        }
+
+        switch ($Kind)
+        {
+            'Moved'
+            {
+                Move-Item -LiteralPath $outsidePath -Destination $fixturePaths[0]
+            }
+            'SecondManifest'
+            {
+                Remove-Item -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'aaa.psd1')
+            }
+        }
+
+        [System.IO.File]::WriteAllBytes($setPath, $originalSet)
+        [System.IO.File]::WriteAllBytes($manifestPath, $originalManifest)
+
+        @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+    }
+
+    It 'returns nothing for an installed copy tested by -Name for <Case>' -TestCases @(
+        @{ Case = 'a package folder in a scratch module root'; Source = 'Scratch' }
+        @{ Case = 'the copy Save-PSResource saved'; Source = 'Saved' }
+    ) {
+        param($Case, $Source)
+
+        $null = $Case
+
+        if ($Source -eq 'Saved')
+        {
+            if (-not (Get-Command -Name 'Compress-PSResource' -ErrorAction Ignore))
+            {
+                Set-ItResult -Skipped -Because 'PSResourceGet 1.1.0 or later is required'
+            }
+
+            if ($IsWindows -and $env:GITHUB_ACTIONS -ne 'true')
+            {
+                Set-ItResult -Skipped -Because 'the PSResourceGet store cannot be redirected on Windows'
+            }
+
+            $packageBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'source') -Name 'CaFixtureSet' -Version '1.0.0'
+            $root = Save-TestCompleterSetPackage -PackageBase $packageBase -WorkFolder $script:PackageRoot
+        }
+        else
+        {
+            $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+            $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        }
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $findings = @(Test-CompleterSet -Name 'CaFixtureSet' -ErrorVariable testErrors -ErrorAction Continue)
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $findings | Should -BeNullOrEmpty
+        $testErrors | Should -BeNullOrEmpty
+        Test-Path -LiteralPath ([System.IO.Path]::Combine($root, 'CaFixtureSet', '1.0.0', 'completers', 'completers.psd1')) | Should -BeTrue
+    }
+
+    It 'reports one PackageLayout error for a script on another drive than the set' {
+        if (-not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'drive letters exist on Windows only'
+        }
+
+        if ([string]::Equals([System.IO.Path]::GetPathRoot($PSScriptRoot), [System.IO.Path]::GetPathRoot([string] $TestDrive), [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            Set-ItResult -Skipped -Because 'the repository and TestDrive share a drive'
+        }
+
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $repositoryScriptPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($script:PackageFixtureRoot, 'cafixalpha_completer', 'cafixalpha_completer.ps1'))
+        Remove-Item -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'alpha')
+        Export-TestPackageSet -ModuleBase $moduleBase -ScriptPath $repositoryScriptPath, (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'beta'), (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'gamma')
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+
+        $findings | Should -Be @(Get-TestOutsideFinding -SetPath $setPath -Index 1 -DeclaredPath $repositoryScriptPath)
+    }
+
+    It 'fails with Failed to test completer set for <Case>' -TestCases @(
+        @{ Case = 'a missing module'; Kind = 'Missing'; Names = @('CaFixtureSet', 'cafixmissing') }
+        @{ Case = 'a wildcard name'; Kind = 'Wildcard'; Names = @('CaFixtureSet', 'CaFixture[S]et') }
+        @{ Case = 'a manifest without CompleterSet'; Kind = 'NotDeclared'; Names = @('cafixtureset') }
+    ) {
+        param($Case, $Kind, $Names)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $privateData = if ($Kind -eq 'NotDeclared') { @{} } else { @{ CompleterSet = 'completers/completers.psd1' } }
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0' -PrivateData $privateData
+
+        $expected = switch ($Kind)
+        {
+            'Missing' { "No installed module named 'cafixmissing' was found in `$env:PSModulePath. Install it with Install-PSResource cafixmissing." }
+            'Wildcard' { "Test-CompleterSet -Name does not accept wildcards. Received 'CaFixture[S]et'." }
+            'NotDeclared' { "The module 'CaFixtureSet' 1.0.0 at '$moduleBase' does not declare a completer set. A completer set module names its set file in PrivateData.CompleterSet." }
+        }
+
+        & (Get-Module -Name 'CompleterActions') {
+            $script:TestResolveCalls = 0
+            $script:TestResolveCommand = (Get-Command -Name 'Resolve-CompleterSetModule' -CommandType Function).ScriptBlock
+
+            function script:Resolve-CompleterSetModule
+            {
+                param([string] $Name)
+
+                $script:TestResolveCalls++
+                & $script:TestResolveCommand -Name $Name
+            }
+        }
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $thrown = { Test-CompleterSet -Name $Names } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $expected"
+        $resolveCalls = & (Get-Module -Name 'CompleterActions') { $script:TestResolveCalls }
+
+        if ($Kind -eq 'Wildcard')
+        {
+            $resolveCalls | Should -Be 0 -Because 'the wildcard check runs before any name is resolved'
+        }
+        else
+        {
+            $resolveCalls | Should -Be $Names.Count
+        }
+    }
+
+    It 'treats a parent .psd1 that is not data as no manifest' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        $null = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'alpha'
+        @(Test-CompleterSet -LiteralPath $setPath).Construct | Should -Be @('PackageLayout', 'PackageLayout')
+
+        Set-Content -LiteralPath $manifestPath -Value "@{ ModuleVersion = '1.0.0'; PrivateData = @{ CompleterSet = 'completers/completers.psd1' }; Stamp = (Get-Date) }" -Encoding utf8
+        { Import-PowerShellDataFile -LiteralPath $manifestPath } | Should -Throw
+
+        @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+    }
+
+    It 'treats a parent folder that cannot be listed as holding no manifest' {
+        if ($IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'denying a folder listing needs an ACL edit; the Linux legs cover the rule'
+        }
+
+        if ((& id -u) -eq '0')
+        {
+            Set-ItResult -Skipped -Because 'root ignores file modes'
+        }
+
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $null = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'alpha'
+        @(Test-CompleterSet -LiteralPath $setPath).Construct | Should -Be @('PackageLayout', 'PackageLayout')
+
+        try
+        {
+            & chmod a-r $moduleBase
+            $LASTEXITCODE | Should -Be 0
+            { [System.IO.Directory]::GetFiles($moduleBase) } | Should -Throw
+            $findings = @(Test-CompleterSet -LiteralPath $setPath)
+        }
+        finally
+        {
+            & chmod a+r $moduleBase
+        }
+
+        $findings | Should -BeNullOrEmpty
+    }
+
+    It 'reports no finding for a manifest with a RootModule' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0' -RootModule 'CaFixtureSet.psm1'
+        Set-Content -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psm1') -Value 'function Get-CaFixture { }' -Encoding utf8
+        (Import-PowerShellDataFile -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psd1')).RootModule | Should -Be 'CaFixtureSet.psm1'
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $byName = @(Test-CompleterSet -Name 'CaFixtureSet')
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $byName | Should -BeNullOrEmpty
+        @(Test-CompleterSet -LiteralPath ([System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1'))) | Should -BeNullOrEmpty
+    }
+
+    It 'accepts RequiredModules <Case>' -TestCases @(
+        @{ Case = 'as a hashtable with ModuleVersion 2.2.0'; RequiredModules = @(@{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' }); Warns = $false }
+        @{ Case = 'as a hashtable with RequiredVersion 2.3.0'; RequiredModules = @(@{ ModuleName = 'CompleterActions'; RequiredVersion = '2.3.0' }); Warns = $false }
+        @{ Case = 'as a hashtable with ModuleVersion 2.1.0, with a warning'; RequiredModules = @(@{ ModuleName = 'CompleterActions'; ModuleVersion = '2.1.0' }); Warns = $true }
+        @{ Case = 'as a bare string, with a warning'; RequiredModules = @('CompleterActions'); Warns = $true }
+    ) {
+        param($Case, $RequiredModules, $Warns)
+
+        $null = $Case
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules $RequiredModules
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+
+        if ($Warns)
+        {
+            $findings | Should -Be @(Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath)
+        }
+        else
+        {
+            $findings | Should -BeNullOrEmpty
+        }
+    }
+
+    It 'writes PackageLayout findings after the entry findings and before UnlistedScript' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        $qualifiedPath = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'alpha'
+        Add-Content -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'beta') -Value '# changed after the set was written' -Encoding utf8
+        Copy-Item -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'gamma') -Destination ([System.IO.Path]::Combine($moduleBase, 'completers', 'cafixextra_completer.ps1'))
+        Set-Content -LiteralPath (Join-Path -Path $moduleBase -ChildPath 'aaa.psd1') -Value '@{ Version = 1 }' -Encoding utf8
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath)
+
+        @($findings | ForEach-Object { '{0} {1}' -f $_.Construct, $_.Severity }) | Should -Be @(
+            'HashMismatch Warning'
+            'PackageLayout Error'
+            'PackageLayout Error'
+            'PackageLayout Warning'
+            'UnlistedScript Warning'
+        )
+        $findings[0].Message | Should -Match '^Entry 2 '
+        @($findings[1..3] | Format-TestFinding) | Should -Be @(
+            (Get-TestOutsideFinding -SetPath $setPath -Index 1 -DeclaredPath $qualifiedPath)
+            (Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'aaa.psd1' -ManifestName 'CaFixtureSet.psd1')
+            (Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath)
+        )
+    }
+
+    It 'writes one finding per extra .psd1 in ordinal order' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+
+        foreach ($extraName in 'b.psd1', 'B2.psd1', 'a.psd1', '_x.psd1')
+        {
+            Set-Content -LiteralPath (Join-Path -Path $moduleBase -ChildPath $extraName) -Value '@{}' -Encoding utf8
+        }
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+
+        $findings | Should -Be @(
+            foreach ($extraName in 'B2.psd1', '_x.psd1', 'a.psd1', 'b.psd1')
+            {
+                Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName $extraName -ManifestName 'CaFixtureSet.psd1'
+            }
+        )
+    }
+
+    It 'uses the first declaring .psd1 in ordinal order as the manifest' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'Zz' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        New-ModuleManifest -Path (Join-Path -Path $moduleBase -ChildPath 'aa.psd1') -ModuleVersion '1.0.0' -Author 'CompleterActions tests' -Description 'A second manifest that declares the same set.' -PrivateData @{ CompleterSet = 'completers/completers.psd1' }
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+
+        $findings | Should -Be @(Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'aa.psd1' -ManifestName 'Zz.psd1')
+    }
+
+    It 'tests every set named by -Name in order' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $setBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $altBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureAlt' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($setBase, 'completers', 'completers.psd1')
+        $altPath = [System.IO.Path]::Combine($altBase, 'completers', 'completers.psd1')
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $setFirst = @(Test-CompleterSet -Name 'CaFixtureSet', 'CaFixtureAlt' | Format-TestFinding)
+            $altFirst = @(Test-CompleterSet -Name 'cafixturealt', 'cafixtureset' | Format-TestFinding)
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $setFinding = Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath ([System.IO.Path]::Combine($setBase, 'CaFixtureSet.psd1'))
+        $altFinding = Get-TestRequiredModulesFinding -SetPath $altPath -ManifestPath ([System.IO.Path]::Combine($altBase, 'CaFixtureAlt.psd1'))
+        $setFirst | Should -Be @($setFinding, $altFinding)
+        $altFirst | Should -Be @($altFinding, $setFinding)
+    }
+
+    It 'reads the help for all three parameter sets' {
+        $help = Get-Help -Name 'Test-CompleterSet' -Full -ErrorAction Stop
+
+        @($help.Syntax.syntaxItem).Count | Should -Be 3
+        @($help.Parameters.parameter).name | Should -Contain 'Name'
+    }
+}

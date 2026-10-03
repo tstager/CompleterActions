@@ -2182,27 +2182,68 @@ or Warning when the set still imports but is stale or slower:
 - HashMismatch (Warning): the script changed since the Hash was written.
 - MissingHash (Warning): the entry has no Hash.
 - InvalidHash (Warning): the Hash is not 'SHA256:' and 64 hexadecimal digits.
+- PackageLayout (Error or Warning): the set belongs to a completer set
+  package that breaks the package layout. Error when the package would fail
+  to publish, install, or import, and Warning when it installs but a clean
+  machine is missing a piece, as listed below.
 - UnlistedScript (Warning): a file under the set's directory matches -Filter
   and no entry lists it.
 
-Findings come in set order, each entry's in the order above, and the
-UnlistedScript findings follow, sorted by path. Path is the set file for
-every finding, because the fix is always made in the set, usually by
-regenerating it with Export-CompleterSet.
+Findings come in set order, each entry's in the order above, then the
+PackageLayout findings, and the UnlistedScript findings follow, sorted by
+path. Path is the set file for every finding, because the fix is always made
+in the set, usually by regenerating it with Export-CompleterSet; a finding
+about the manifest or the module folder names the file in Message and points
+at line 1, column 1 of the set.
 
-Every -Path or -LiteralPath value is resolved before any set is tested. The
-sets are then tested in the order given, and each set's findings are written
-before the next set is read. A set that cannot be read, such as one without
-Version = 1, stops the call with a terminating error after the findings of
-the earlier sets. A folder under a set's directory that cannot be read also
-stops the call with a terminating error, after that set's entry findings,
-because the scan for unlisted scripts would be incomplete.
+A set is a package set when its module manifest is known: through -Name, or,
+for -Path and -LiteralPath, when the folder above the set file's folder holds
+a .psd1 that reads as data and whose PrivateData.CompleterSet resolves to the
+set file, as in a staged package before it is published. When more than
+one .psd1 there declares the set, the first in ordinal order of file name is
+the manifest. A .psd1 that is not data declares nothing, and a folder that
+cannot be listed holds no manifest. A set that no manifest declares gets no
+PackageLayout finding. A package set is checked for three things, reported
+in this order:
+
+- Error, one per entry in set order, at the entry's Path: the Path is fully
+  qualified, or resolves outside the module folder, so an installed copy of
+  the package does not contain the script. A fully qualified path is an
+  error even inside the module folder, because it names the source tree, not
+  the installed copy.
+- Error, one per file in ordinal order of file name: the module folder holds
+  a .psd1 other than the manifest, so Publish-PSResource can take the wrong
+  file as the manifest.
+- Warning: RequiredModules does not list CompleterActions as a hashtable
+  with a ModuleVersion or RequiredVersion of 2.2.0 or later, so installing
+  the package does not install Import-CompleterSet -Name.
+
+A RootModule in the manifest is not a finding.
+
+With -Name the set comes from an installed completer set package, found
+exactly as Import-CompleterSet -Name finds it: the first $env:PSModulePath
+root that has the module wins, and within it the highest version. The
+manifest is read as data, so nothing in the package runs. Each name is taken
+literally, and a name that does not resolve fails the call.
+
+Every -Path, -LiteralPath, or -Name value is resolved before any set is
+tested. The sets are then tested in the order given, and each set's findings
+are written before the next set is read. A set that cannot be read, such as
+one without Version = 1, stops the call with a terminating error after the
+findings of the earlier sets. A folder under a set's directory that cannot be
+read also stops the call with a terminating error, after that set's entry
+findings, because the scan for unlisted scripts would be incomplete.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
 
 .PARAMETER LiteralPath
 The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Name
+The names of installed completer set modules. Each name is taken literally: a
+name containing *, ?, [, or ] fails the call before any name is resolved. The
+parameter takes no pipeline input.
 
 .PARAMETER Filter
 The file-name pattern of the scan for scripts that no entry lists. The scan
@@ -2224,6 +2265,12 @@ script the set does not list, or nothing when the set is current.
 PS> Test-CompleterSet -LiteralPath .\completers.psd1 | Where-Object Severity -eq Error
 
 Lists only the drift that would make Import-CompleterSet reject the set.
+
+.EXAMPLE
+PS> Test-CompleterSet -Name PS_Completers
+
+Checks the installed PS_Completers package's set against its scripts and the
+package layout, by the same name the profile's Import-CompleterSet line uses.
 #>
 function Test-CompleterSet
 <#
@@ -2243,6 +2290,10 @@ function Test-CompleterSet
         [ValidateNotNullOrEmpty()]
         [string[]] $LiteralPath,
 
+        [Parameter(Mandatory, ParameterSetName = 'Name')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Name,
+
         [Parameter()]
         [ValidateNotNullOrEmpty()]
         [string] $Filter = '*_completer.ps1'
@@ -2252,27 +2303,54 @@ function Test-CompleterSet
     {
         try
         {
-            $resolvedPaths = @(
-                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+            $sets = @(
+                if ($PSCmdlet.ParameterSetName -eq 'Name')
+                {
+                    foreach ($nameItem in $Name)
+                    {
+                        if ($nameItem -match '[*?\[\]]')
+                        {
+                            throw "Test-CompleterSet -Name does not accept wildcards. Received '$nameItem'."
+                        }
+                    }
+
+                    foreach ($nameItem in $Name)
+                    {
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        @{ SetPath = $setModule.SetPath; Module = $setModule }
+                    }
+                }
+                elseif ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
                 {
                     foreach ($literalPathItem in $LiteralPath)
                     {
-                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                        @{ SetPath = (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName; Module = $null }
                     }
                 }
                 else
                 {
                     foreach ($pathItem in $Path)
                     {
-                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                        foreach ($resolvedPath in @(Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath))
+                        {
+                            @{ SetPath = $resolvedPath; Module = $null }
+                        }
                     }
                 }
             )
 
-            foreach ($setPath in $resolvedPaths)
+            foreach ($set in $sets)
             {
-                $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
-                Get-CompleterSetFinding -SetDefinition $setDefinition -Filter $Filter
+                $setDefinition = Import-CompleterSetDefinition -LiteralPath $set.SetPath
+                $findingParameters = @{ SetDefinition = $setDefinition; Filter = $Filter }
+                $package = Get-CompleterSetPackage -SetPath $setDefinition.Path -Module $set.Module
+
+                if ($null -ne $package)
+                {
+                    $findingParameters['Package'] = $package
+                }
+
+                Get-CompleterSetFinding @findingParameters
             }
         }
         catch
@@ -4934,6 +5012,10 @@ under the set's directory that matches -Filter and that no entry lists, hidden
 files included, is an UnlistedScript finding, compared case-insensitively on Windows and
 case-sensitively elsewhere.
 
+With Package, the set is a package set, and Get-CompleterSetPackageFinding
+adds its PackageLayout findings after every entry's findings and before the
+UnlistedScript findings. Without it the findings are exactly the plain set's.
+
 Nothing here reads or writes the session's registrations or runs a script.
 
 .PARAMETER SetDefinition
@@ -4943,12 +5025,17 @@ returned for the set.
 .PARAMETER Filter
 The file-name pattern of the unlisted-script scan.
 
+.PARAMETER Package
+The record Get-CompleterSetPackage returned for the set, when a module
+manifest declares it.
+
 .OUTPUTS
 CompleterActions.CompleterScriptFinding
 Returns the findings in set order, each entry's in the order MissingScript,
 InvalidEntry, UnreadableTargets, TargetMismatch, DuplicateTarget,
-HashMismatch, MissingHash, InvalidHash, followed by the UnlistedScript
-findings sorted by path. Path is the set file for every finding.
+HashMismatch, MissingHash, InvalidHash, then, for a package set, the
+PackageLayout findings, followed by the UnlistedScript findings sorted by
+path. Path is the set file for every finding.
 #>
 function Get-CompleterSetFinding
 <#
@@ -4964,7 +5051,10 @@ function Get-CompleterSetFinding
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $Filter
+        [string] $Filter,
+
+        [Parameter()]
+        [psobject] $Package
     )
 
     $regenerateHint = 'Regenerate the set with Export-CompleterSet.'
@@ -4981,12 +5071,14 @@ function Get-CompleterSetFinding
     $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
     $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
     $claimedTargets = @{}
+    $resolvedEntries = [System.Collections.Generic.List[object]]::new()
     $entryIndex = 0
 
     foreach ($rawEntry in $SetDefinition.Entries)
     {
         $entryIndex++
         $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
+        $resolvedEntries.Add($entry)
         $entryExtent = $extents.Entries[$entryIndex - 1]
         $findings = [System.Collections.Generic.List[object]]::new()
 
@@ -5052,6 +5144,11 @@ function Get-CompleterSetFinding
         $findings
     }
 
+    if ($null -ne $Package)
+    {
+        Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
+    }
+
     $unlistedScripts = @(
         Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
             Where-Object { -not $listedPaths.Contains($_.FullName) } |
@@ -5061,6 +5158,255 @@ function Get-CompleterSetFinding
     foreach ($unlistedScript in $unlistedScripts)
     {
         New-CompleterScriptFinding -Path $setPath -Extent $extents.EntriesExtent -Construct 'UnlistedScript' -Severity Warning -Message "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it." -Hint $regenerateHint
+    }
+}
+<#
+.SYNOPSIS
+Finds the module manifest that declares a completer set, if any.
+
+.DESCRIPTION
+Decides whether a completer set is a package set, one whose module manifest
+is known, so Test-CompleterSet can check the package layout.
+
+With Module, as Test-CompleterSet -Name gives it, the manifest is the one
+Resolve-CompleterSetModule chose. Without it, the candidates are the .psd1
+files in the folder above the set file's folder, taken in ordinal order of
+file name. The first that Import-PowerShellDataFile reads as data and whose
+PrivateData.CompleterSet resolves to the set file is the manifest, so a
+staged package is recognised before it is published, whatever its folder is
+called. A .psd1 that is not data does not declare the set, and a folder that
+cannot be listed holds no manifest. Paths are compared case-insensitively on
+Windows and macOS and case-sensitively on Linux.
+
+Nothing is imported or run: manifests are read as data only.
+
+.PARAMETER SetPath
+The full path of the completer set file.
+
+.PARAMETER Module
+The record Resolve-CompleterSetModule returned for the set.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns Name, ManifestPath, ModuleBase (the folder that holds the manifest),
+and Manifest (the manifest's data), or nothing when no manifest declares the
+set.
+#>
+function Get-CompleterSetPackage
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $SetPath,
+
+        [Parameter()]
+        [psobject] $Module
+    )
+
+    if ($null -ne $Module)
+    {
+        return [pscustomobject] [ordered] @{
+            Name         = $Module.Name
+            ManifestPath = $Module.ManifestPath
+            ModuleBase   = $Module.ModuleBase
+            Manifest     = $Module.Manifest
+        }
+    }
+
+    $setDirectory = [System.IO.Path]::GetDirectoryName($SetPath)
+    $moduleBase = if ([string]::IsNullOrEmpty($setDirectory)) { $null } else { [System.IO.Path]::GetDirectoryName($setDirectory) }
+
+    if ([string]::IsNullOrEmpty($moduleBase))
+    {
+        return
+    }
+
+    try
+    {
+        $fileNames = [string[]] @(
+            foreach ($file in [System.IO.Directory]::EnumerateFiles($moduleBase))
+            {
+                if ([string]::Equals([System.IO.Path]::GetExtension($file), '.psd1', [System.StringComparison]::OrdinalIgnoreCase))
+                {
+                    [System.IO.Path]::GetFileName($file)
+                }
+            }
+        )
+    }
+    catch
+    {
+        return
+    }
+
+    [System.Array]::Sort($fileNames, [System.StringComparer]::Ordinal)
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+
+    foreach ($fileName in $fileNames)
+    {
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, $fileName)
+
+        try
+        {
+            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+        }
+        catch
+        {
+            continue
+        }
+
+        $privateData = $manifest['PrivateData']
+        $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
+
+        if ($declaredSet -isnot [string] -or [string]::IsNullOrWhiteSpace($declaredSet) -or [System.IO.Path]::IsPathRooted($declaredSet))
+        {
+            continue
+        }
+
+        $declaredSetPath = [System.IO.Path]::GetFullPath($declaredSet.Replace('\', '/'), $moduleBase)
+
+        if ([string]::Equals($declaredSetPath, $SetPath, $pathComparison))
+        {
+            return [pscustomobject] [ordered] @{
+                Name         = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                ManifestPath = $manifestPath
+                ModuleBase   = $moduleBase
+                Manifest     = $manifest
+            }
+        }
+    }
+}
+<#
+.SYNOPSIS
+Checks a package set against the package layout and returns its PackageLayout findings.
+
+.DESCRIPTION
+Runs the three package-layout checks for a completer set whose module
+manifest Get-CompleterSetPackage found, in this order:
+
+- Error, per entry in set order: the entry's Path is fully qualified, or it
+  resolves outside the module folder. The folder is compared with a trailing
+  separator, case-insensitively on Windows and macOS and case-sensitively on
+  Linux. The finding points at the entry's Path value.
+- Error, per other .psd1 in the module folder in ordinal order of file name:
+  Publish-PSResource can take that file as the manifest. The message names
+  the module folder by its full path and the two files by name. The finding
+  points at line 1, column 1 of the set.
+- Warning: RequiredModules has no hashtable whose ModuleName is
+  CompleterActions and whose ModuleVersion or RequiredVersion is 2.2.0 or
+  later. The message and hint name the manifest by its full path. The
+  finding points at line 1, column 1 of the set.
+
+Path is the set file for every finding. Nothing is imported or run.
+
+.PARAMETER SetDefinition
+The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
+returned for the set.
+
+.PARAMETER Package
+The record Get-CompleterSetPackage returned for the set.
+
+.PARAMETER Entry
+The set's entries as Resolve-CompleterSetEntry returned them, in set order.
+
+.OUTPUTS
+CompleterActions.CompleterScriptFinding
+Returns the PackageLayout findings in the order above, or nothing.
+#>
+function Get-CompleterSetPackageFinding
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $SetDefinition,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Package,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Entry
+    )
+
+    $setPath = $SetDefinition.Path
+    $moduleBase = $Package.ModuleBase
+    $manifestPath = $Package.ManifestPath
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $moduleBasePrefix = $moduleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $lineOne = [string] (Get-Content -LiteralPath $setPath -TotalCount 1)
+    $positionOne = [System.Management.Automation.Language.ScriptPosition]::new($setPath, 1, 1, $lineOne)
+    $extentOne = [System.Management.Automation.Language.ScriptExtent]::new($positionOne, $positionOne)
+
+    foreach ($setEntry in $Entry)
+    {
+        if ([string]::IsNullOrWhiteSpace($setEntry.DeclaredPath))
+        {
+            continue
+        }
+
+        if ([System.IO.Path]::IsPathFullyQualified($setEntry.DeclaredPath) -or -not $setEntry.Path.StartsWith($moduleBasePrefix, $pathComparison))
+        {
+            $entryExtent = $extents.Entries[$setEntry.Index - 1]
+            $pathExtent = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryExtent.Extent }
+            New-CompleterScriptFinding -Path $setPath -Extent $pathExtent -Construct 'PackageLayout' -Message "Entry $($setEntry.Index) ('$($setEntry.DeclaredPath)'): the script is outside the module folder, so an installed copy of the package does not contain it." -Hint 'Move the script under the folder that holds the set file, then regenerate the set with Export-CompleterSet.'
+        }
+    }
+
+    $otherManifestNames = [string[]] @(
+        foreach ($file in [System.IO.Directory]::EnumerateFiles($moduleBase))
+        {
+            if ([string]::Equals([System.IO.Path]::GetExtension($file), '.psd1', [System.StringComparison]::OrdinalIgnoreCase) -and
+                -not [string]::Equals($file, $manifestPath, $pathComparison))
+            {
+                [System.IO.Path]::GetFileName($file)
+            }
+        }
+    )
+    [System.Array]::Sort($otherManifestNames, [System.StringComparer]::Ordinal)
+
+    $manifestName = [System.IO.Path]::GetFileName($manifestPath)
+
+    foreach ($otherManifestName in $otherManifestNames)
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The module folder '$moduleBase' holds '$otherManifestName' beside the module manifest '$manifestName', so Publish-PSResource can take the wrong file as the manifest." -Hint 'Keep the module manifest as the only .psd1 in the module folder; move the set into a subfolder and update PrivateData.CompleterSet.'
+    }
+
+    $minimumVersion = [version] '2.2.0'
+    $requiresCompleterActions = $false
+
+    foreach ($requiredModule in @($Package.Manifest['RequiredModules']))
+    {
+        if ($requiredModule -isnot [System.Collections.IDictionary] -or
+            -not [string]::Equals([string] $requiredModule['ModuleName'], 'CompleterActions', [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            continue
+        }
+
+        foreach ($versionKey in 'ModuleVersion', 'RequiredVersion')
+        {
+            $requiredVersion = $null
+
+            if ([version]::TryParse([string] $requiredModule[$versionKey], [ref] $requiredVersion) -and $requiredVersion -ge $minimumVersion)
+            {
+                $requiresCompleterActions = $true
+            }
+        }
+    }
+
+    if (-not $requiresCompleterActions)
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Severity Warning -Message "The module manifest '$manifestPath' does not require CompleterActions 2.2.0 or later, so installing the package does not install Import-CompleterSet -Name." -Hint "Add @{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' } to RequiredModules in '$manifestPath'."
     }
 }
 <#
