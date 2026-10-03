@@ -3,7 +3,7 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-10-02): milestones 0 and 1 shipped; 2.1.0 stable cut from the preview code after the soak. Next is milestone 2 (2.2.0), spec and plan to be drafted under docs/roadmap-3.0/.
+Status (2026-10-03): milestones 0 and 1 shipped; milestone 2 spec and plan accepted with every recommendation (docs/roadmap-3.0/milestone-2-spec.md and milestone-2-plan.md), implementation starting on feat/milestone-2-authoring-distribution.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
