@@ -78,6 +78,7 @@ FormatsToProcess = @(
      'Get-CompleterRegistrationLegacy',
      'Import-CompleterScript',
      'Import-CompleterSet',
+     'New-CompleterScript',
      'Register-Completer',
      'Register-CompleterRegistrationLegacy',
      'Reset-Completer',

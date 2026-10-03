@@ -741,4 +741,10 @@ Describe 'Runtime capability probe' {
         $bootstrapLines | Should -Contain 'Assert-CompleterRuntimeCapability'
         @($builtModuleLines | Select-Object -Last $bootstrapLines.Count) | Should -Be $bootstrapLines -Because 'the packaged module must call the import bootstrap after every function definition'
     }
+
+    It 'finds no Get-ArgumentCompleter or Unregister-ArgumentCompleter on this engine' {
+        $engineCmdlets = @(Get-Command -Name 'Get-ArgumentCompleter', 'Unregister-ArgumentCompleter' -ErrorAction Ignore)
+
+        $engineCmdlets | Should -BeNullOrEmpty -Because "PowerShell $($PSVersionTable.PSVersion) now has $(($engineCmdlets.Name | Sort-Object) -join ' and '), so engine cmdlet detection is due: see appendix A of docs/roadmap-3.0/milestone-2-spec.md"
+    }
 }
