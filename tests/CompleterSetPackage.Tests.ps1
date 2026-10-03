@@ -1626,6 +1626,43 @@ finally
 }
 
 Describe 'Completer authoring and packages leave PSReadLine alone' {
+    BeforeAll {
+        # Replaces Invoke-CompleterHelpProcess in module scope with a
+        # pass-through that puts -NoProfile -NonInteractive -File in front of
+        # the one probe argument, because a user profile can keep
+        # 'pwsh <file>' from exiting. The probe still records the argument it
+        # was given, and the AfterEach module removal drops the shim.
+        function Install-TestRunnerShim
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only replaces a function in the imported test module.')]
+            [CmdletBinding()]
+            param(
+                [Parameter()]
+                [switch] $NoProfile
+            )
+
+            & (Get-Module -Name 'CompleterActions') {
+                param($NoProfile)
+
+                $script:TestRunnerNoProfile = $NoProfile
+                $script:TestRunnerOriginal = ${function:Invoke-CompleterHelpProcess}
+
+                function script:Invoke-CompleterHelpProcess
+                {
+                    param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                    $arguments = @($ArgumentList)
+                    if ($script:TestRunnerNoProfile)
+                    {
+                        $arguments = @('-NoProfile', '-NonInteractive', '-File') + $arguments
+                    }
+
+                    & $script:TestRunnerOriginal -FilePath $FilePath -ArgumentList $arguments -TimeoutSeconds $TimeoutSeconds
+                }
+            } $NoProfile.IsPresent
+        }
+    }
+
     BeforeEach {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
 
@@ -1662,6 +1699,7 @@ Describe 'Completer authoring and packages leave PSReadLine alone' {
         $fixture = Join-Path -Path $script:PackageRoot -ChildPath 'neutral-help.ps1'
         Set-Content -LiteralPath $fixture -Encoding utf8 -Value "'Commands:'", "'  build    Compile the project'", "'  test     Run the tests'"
         $scriptPath = Join-Path -Path $script:PackageRoot -ChildPath 'pwsh_completer.ps1'
+        Install-TestRunnerShim -NoProfile
         $file = New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $fixture -PassThru -WarningVariable probeWarnings -WarningAction SilentlyContinue
 
         $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
