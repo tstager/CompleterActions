@@ -546,7 +546,8 @@ COMPLETER SETS AS MODULES
 
     Importing a package by name
 
-    Once the package is installed, one line with no path imports it:
+    Once the package is installed, a profile line that names the module
+    imports it:
 
         Import-CompleterSet -Name PS_Completers
 
@@ -659,7 +660,7 @@ WORKFLOW
         Import-CompleterSet -Path ~\Completers\completers.psd1
 
     When the repository is installed as a completer set package, the
-    profile line needs no path:
+    profile line names the module instead:
 
         Import-CompleterSet -Name <module>
 

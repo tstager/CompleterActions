@@ -59,9 +59,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
   `Publish-PSResource` can take as the manifest, and a `Warning` when
   `RequiredModules` does not require CompleterActions 2.2.0 or later. They
   come after the entry findings and before `UnlistedScript`. A set that no
-  manifest declares gets the same findings as in 2.1.0. With
-  `New-CompleterScript` the module exports fourteen functions and the same
-  three aliases.
+  manifest declares gets the same findings as in 2.1.0.
+- The module now exports fourteen functions and the same three aliases.
 
 ### Documentation
 

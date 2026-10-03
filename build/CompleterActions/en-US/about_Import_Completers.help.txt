@@ -209,14 +209,16 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 
     `New-CompleterScript` writes a new native completer script that already
     follows the strict grammar, with a table of subcommands read from the
-    tool's help. Start every new script from it:
+    tool's help. Start every new script from it, then check the file:
 
         New-CompleterScript -CommandName cargo `
-            -Path .\cargo_completer\cargo_completer.ps1 -PassThru |
-            Test-CompleterScript
+            -Path .\cargo_completer\cargo_completer.ps1
+        Test-CompleterScript -LiteralPath .\cargo_completer\cargo_completer.ps1
 
-    The pipeline is empty, because the file conforms before you touch it.
-    Without `-PassThru` the command returns nothing. The folder must exist,
+    `Test-CompleterScript` reports no findings, because the file conforms
+    before you touch it. Without `-PassThru` the command returns nothing;
+    with it, it returns the written file, which pipes into
+    `Test-CompleterScript` and `Import-CompleterScript`. The folder must exist,
     the path must end in `.ps1`, and an existing file is replaced only with
     `-Force`. A call that fails leaves nothing at the path.
 
@@ -840,8 +842,8 @@ DISTRIBUTING COMPLETERS AS A MODULE
 
     A completer repository can be published as an ordinary PowerShell module
     whose manifest names its set file in `PrivateData.CompleterSet`. Once it
-    is installed with `Install-PSResource`, a profile imports it with
-    `Import-CompleterSet -Name <module>`, with no path. The package layout,
+    is installed with `Install-PSResource`, a profile line that names the
+    module imports it: `Import-CompleterSet -Name <module>`. The package layout,
     the manifest, the rules `Import-CompleterSet -Name` applies to a package,
     and how to stage and publish one are in `about_Completer_Sets`, under
     COMPLETER SETS AS MODULES.
