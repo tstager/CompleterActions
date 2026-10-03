@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-02
+
+The stable 2.1.0 release. Same code as 2.1.0-preview1, promoted after the
+preview soaked in a profile and in the PS_Completers conformance CI without a
+defect, per roadmap decision 7. The 2.1.0-preview1 section below is the full
+record of the milestone: the set-file `Hash`, the bulk registration path,
+`Reset-Completer`, `Test-CompleterSet`, and the startup benchmark.
+
 ## [2.1.0-preview1] - 2026-09-29
 
 ### Added
@@ -560,7 +568,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.1.0-preview1...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0
 [2.1.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0-preview1
 [2.0.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0-rc1...v2.0.0
 [2.0.0-rc1]: https://github.com/tstager/CompleterActions/compare/v2.0.0-preview3...v2.0.0-rc1
