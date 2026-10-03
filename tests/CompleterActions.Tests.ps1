@@ -52,6 +52,30 @@ BeforeAll {
             }
         }
     }
+
+    function Invoke-TestBuildHelp
+    {
+        param(
+            [Parameter(Mandatory)]
+            [scriptblock] $Script
+        )
+
+        $manifestPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'build', 'CompleterActions', 'CompleterActions.psd1'))
+
+        & pwsh -NoProfile -NonInteractive -Command {
+            param($ManifestPath, $ScriptText)
+
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name $ManifestPath -Force
+
+            if ((Get-Module -Name 'CompleterActions').ModuleBase -ne (Split-Path -Path $ManifestPath -Parent))
+            {
+                throw 'wrong ModuleBase'
+            }
+
+            & ([scriptblock]::Create($ScriptText))
+        } -args $manifestPath, $Script.ToString()
+    }
 }
 
 Describe 'Completer registration public API' {
@@ -154,6 +178,88 @@ Describe 'Completer registration public API' {
 
         $help.Name | Should -Be 'about_CompleterActions_Migration'
         $help.Synopsis | Should -Match 'changed in CompleterActions 2.0.0'
+    }
+
+    It 'has the third-edition headings in <Topic>' -TestCases @(
+        @{
+            Topic       = 'about_Completer_Sets'
+            Heading     = @('THE HASH AND THE FAST PATH', 'CHECKING FOR DRIFT WITH TEST-COMPLETERSET', 'COMPLETER SETS AS MODULES')
+            Order       = @()
+            Section     = 'COMPLETER SETS AS MODULES'
+            SectionText = @('PrivateData.CompleterSet', 'Import-CompleterSet -Name')
+        }
+        @{
+            Topic       = 'about_Import_Completers'
+            Heading     = @('SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT', 'DISTRIBUTING COMPLETERS AS A MODULE')
+            Order       = @('SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT', 'THE STRICT GRAMMAR')
+            Section     = ''
+            SectionText = @()
+        }
+    ) {
+        param($Topic, $Heading, $Order, $Section, $SectionText)
+
+        $topicPath = [System.IO.Path]::Combine($PSScriptRoot, '..', 'build', 'CompleterActions', 'en-US', "$Topic.help.txt")
+        $lines = @(Get-Content -LiteralPath $topicPath)
+        $headings = @($lines | Where-Object { $_ -match '^\S' })
+
+        foreach ($expectedHeading in $Heading)
+        {
+            $headings | Should -Contain $expectedHeading
+        }
+
+        if ($Order.Count -gt 0)
+        {
+            $firstIndex = [System.Array]::IndexOf($headings, $Order[0])
+            $secondIndex = [System.Array]::IndexOf($headings, $Order[1])
+
+            $firstIndex | Should -BeGreaterOrEqual 0
+            $secondIndex | Should -BeGreaterThan $firstIndex
+        }
+
+        if (-not [string]::IsNullOrEmpty($Section))
+        {
+            $start = [System.Array]::IndexOf($lines, $Section)
+            $end = $start + 1
+            while ($end -lt $lines.Count -and $lines[$end] -notmatch '^\S')
+            {
+                $end++
+            }
+
+            $body = $lines[($start + 1)..($end - 1)] -join "`n"
+
+            foreach ($expectedText in $SectionText)
+            {
+                $body | Should -Match ([regex]::Escape($expectedText))
+            }
+        }
+    }
+
+    It 'gives New-CompleterScript the section 2 synopsis and three examples' {
+        $help = Invoke-TestBuildHelp -Script {
+            $help = Get-Help -Name 'New-CompleterScript' -Examples -ErrorAction Stop
+
+            [pscustomobject] @{
+                Synopsis = [string] $help.Synopsis
+                Examples = @($help.examples.example).Count
+            }
+        }
+
+        $help.Synopsis | Should -BeExactly 'Writes a completer script skeleton for a native command that passes Test-CompleterScript as written.'
+        $help.Examples | Should -Be 3
+    }
+
+    It 'resolves help for Import-CompleterSet -Name' {
+        $help = Invoke-TestBuildHelp -Script {
+            $parameter = Get-Help -Name 'Import-CompleterSet' -Parameter 'Name' -ErrorAction Stop
+
+            [pscustomobject] @{
+                Name        = [string] $parameter.name
+                Description = [string] (@($parameter.description | ForEach-Object Text) -join ' ')
+            }
+        }
+
+        $help.Name | Should -BeExactly 'Name'
+        $help.Description | Should -Not -BeNullOrEmpty
     }
 
     It 'treats repeated registration with the same script block as idempotent' {
