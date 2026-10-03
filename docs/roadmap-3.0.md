@@ -3,13 +3,13 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-10-03): milestones 0 and 1 shipped; milestone 2 spec and plan accepted with every recommendation (docs/roadmap-3.0/milestone-2-spec.md and milestone-2-plan.md), implementation starting on feat/milestone-2-authoring-distribution.
+Status (2026-10-03): milestones 0 and 1 shipped; milestone 2 preview shipped the same day as 2.2.0-preview1 (PR #8, merge 30e39b8, release commit 5a25401); stable 2.2.0 after the soak, then milestone 3.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
 | 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Shipped 2026-10-02, tag v2.1.0, from the preview1 code; preview shipped 2026-09-29, PR #7 (merge ad267e1) |
-| 2 Authoring and distribution | 2.2.0 | Planned, additive |
+| 2 Authoring and distribution | 2.2.0-preview1, then 2.2.0 | Preview shipped 2026-10-03, tag v2.2.0-preview1, PR #8 (merge 30e39b8); stable after soak |
 | 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking |
 
 Three milestones from the 2.0.0 baseline to the next major release. The first two ship on the 2.x line and carry the recommendations that came out of the 2.0 retrospective. The breaking surface is deliberately small: it removes what 2.0 promised to remove, raises the engine floor to what CI has always tested, and moves the engine boundary into typed code.
@@ -57,19 +57,21 @@ The first criterion was "under half the 2.0.0 lazy import time". Under the secti
 
 ## Milestone 2: Authoring and distribution (2.2.0, additive)
 
-The 169 scripts are hand-written and live in one personal repo. Make the next script cheaper to write and make a set something other people can install.
+**Preview shipped 2026-10-03 as v2.2.0-preview1** (PR #8 merged as 30e39b8, release commit 5a25401, PSGallery prerelease label preview1). Three of the four items landed plus the follow-up decisions of 2026-10-03; engine cmdlet detection is held as an accepted contract (spec Appendix A) because PowerShell PR #26680 has not reached a shipped engine. 615 Pester tests (337 before), eight CI legs green, 17 commands exported (14 functions and 3 aliases). Import-time gate: the unhashed 2.2.0 import is 1.02 of the 2.1.0 import (bound 1.05); the `-Name` lookup costs 14.8 ms over `-LiteralPath` in the plan's order and 14.4 ms pooled over 60 samples, accepted by the owner against the 20 ms bound. Validation records are under docs/roadmap-3.0/validation/.
+
+The 173 scripts are hand-written and live in one personal repo. Make the next script cheaper to write and make a set something other people can install.
 
 - **New-CompleterScript** (feature). Emits a strict-grammar-conformant skeleton for a native command: the `Register-ArgumentCompleter` block, the literal target list, and a subcommand table seeded from the command's `--help` or `/?` output when it can be read safely. Output passes `Test-CompleterScript` before the author touches it.
-- **Installable completer sets** (feature). A documented layout for a completer-set module on PSGallery: the set file at the module root, scripts beside it, relative paths as `Export-CompleterSet` already writes them. `Import-CompleterSet -Name <module>` resolves the set from an installed module so a profile line can name a package instead of a path.
-- **Engine cmdlet detection** (infra). When the engine exports `Get-ArgumentCompleter` and `Unregister-ArgumentCompleter`, the runtime snapshot and removal go through them; otherwise the reflection path runs unchanged. Additive, so 2.x profiles gain it the day the engine does. Tracks PR #26680.
-- **Author guide, third edition** (docs). `about_Import_Completers` gains the scaffold workflow and the package layout; `about_Completer_Sets` gains the hash and drift sections.
+- **Installable completer sets** (feature). A documented layout for a completer-set module on PSGallery: the manifest is the only `.psd1` in the module folder, the set file sits in one subfolder named by `PrivateData.CompleterSet` with a base name that differs from the module name (PSResourceGet reads a same-named `.psd1` as the manifest), scripts beside it, relative paths as `Export-CompleterSet` already writes them. `Import-CompleterSet -Name <module>` resolves the set from an installed module so a profile line can name a package instead of a path.
+- **Engine cmdlet detection** (infra). When the engine exports `Get-ArgumentCompleter` and `Unregister-ArgumentCompleter`, the runtime snapshot and removal go through them; otherwise the reflection path runs unchanged. Additive, so 2.x profiles gain it the day the engine does. Tracks PR #26680. **Deferred 2026-10-03:** the PR has not merged, so no shipped engine has the cmdlets; the contract is written in docs/roadmap-3.0/milestone-2-spec.md Appendix A and ships in the first 2.x minor after a released engine has them (decision 3 unchanged).
+- **Author guide, third edition** (docs). `about_Import_Completers` gains the scaffold workflow and points to the package layout; `about_Completer_Sets` gains the package layout and the hash and drift sections.
 
 Exit criteria:
 
 ```powershell
-New-CompleterScript -CommandName rg -Path .\rg_completer.ps1 | Test-CompleterScript   # empty
-Install-PSResource PS_Completers; Import-CompleterSet -Name PS_Completers               # one line, no path
-Get-Command Get-ArgumentCompleter -ErrorAction Ignore                                  # when present, Get-Completer no longer touches reflection
+New-CompleterScript -CommandName rg -Path .\rg_completer.ps1 -PassThru | Test-CompleterScript   # empty (restated with -PassThru 2026-10-03; nothing is piped without it)
+Install-PSResource PS_Completers; Import-CompleterSet -Name PS_Completers               # one line, no path (checked by hand after 2.2.0 stable and the owner's PS_Completers publish; it gates marking the milestone shipped, not the release)
+Get-Command Get-ArgumentCompleter -ErrorAction Ignore                                  # when present, Get-Completer no longer touches reflection (deferred: no shipped engine has the cmdlets; met in the 2.x minor that ships Appendix A)
 ```
 
 ## Milestone 3: Compiled core and the engine boundary (3.0.0-rc1 then 3.0.0, breaking)
@@ -78,7 +80,7 @@ The breaking surface is short and every item was promised or implied by 2.0. Shi
 
 - **Compiled core** (breaking). A small C# assembly holds the record types, the enums, the engine access, the AST conformance walk, and the lazy stub. `CompleterRegistration` and friends become public .NET types under the `CompleterActions` namespace, so `-is [CompleterActions.CompleterRegistration]` works in any scope and the dotted PSTypeName stops being a workaround. The conformance walk drops from about 20 ms per script to well under 1 ms, which reopens decision 5 of the 2.0 roadmap: the grammar can run at import again without touching the ratio.
 - **Version-gated engine access** (breaking). Inside the compiled layer, the engine cmdlets are the primary path and reflection is the path for engines that predate them. The import-time probe stays and names the engine version in its message. Nothing in the public surface changes; the failure mode does.
-- **Remove the deprecated surface** (breaking). `Get-CompleterRegistration`, `Register-CompleterRegistration`, `Unregister-CompleterRegistration`, the three exported legacy wrappers, and the `-ManagedOnly` and `-DiscoveredOnly` translations go. The module exports ten functions and no aliases: the eight of 2.0 plus Reset-Completer and Test-CompleterSet from 2.1.0. The PS_Completers tests and tools still call the old names, so that repo migrates first.
+- **Remove the deprecated surface** (breaking). `Get-CompleterRegistration`, `Register-CompleterRegistration`, `Unregister-CompleterRegistration`, the three exported legacy wrappers, and the `-ManagedOnly` and `-DiscoveredOnly` translations go. The module exports eleven functions and no aliases: the eight of 2.0 plus Reset-Completer and Test-CompleterSet from 2.1.0 and New-CompleterScript from 2.2.0. The PS_Completers tests and tools still call the old names, so that repo migrates first.
 - **Minimum engine 7.4 LTS** (breaking). `PowerShellVersion = '7.4'` in the manifest, matching the CI matrix that has been the real support statement since 1.3.0.
 - **Migration guide** (docs). `about_CompleterActions_Migration` rewritten for 2.x to 3.0: the removed names, the public types, the engine floor.
 - **Release candidate** (release). Tag `v3.0.0-rc1` first; promote to `v3.0.0` only after the candidate has soaked without a defect; a defect means rc2.
@@ -86,7 +88,7 @@ The breaking surface is short and every item was promised or implied by 2.0. Shi
 Exit criteria:
 
 ```powershell
-Get-Command -Module CompleterActions | Measure-Object     # 10 functions, 0 aliases (8 from 2.0 plus Reset-Completer and Test-CompleterSet)
+Get-Command -Module CompleterActions | Measure-Object     # 11 functions, 0 aliases (8 from 2.0 plus Reset-Completer, Test-CompleterSet, and New-CompleterScript)
 Get-Completer | Select-Object -First 1 | ForEach-Object { $_ -is [CompleterActions.CompleterRegistration] }   # True from the prompt, outside the module
 Get-CompleterRegistration                                 # command not found
 Find-PSResource CompleterActions -Repository PSGallery -Prerelease   # 3.0.0-rc1 listed; 3.0.0 stable only after the candidate soaks
