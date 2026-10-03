@@ -2199,10 +2199,10 @@ at line 1, column 1 of the set.
 A set is a package set when its module manifest is known: through -Name, or,
 for -Path and -LiteralPath, when the folder above the set file's folder holds
 a .psd1 that reads as data and whose PrivateData.CompleterSet resolves to the
-set file, as in a staged package before it is published. When more than one
-.psd1 there declares the set, the first in ordinal order of file name is the
-manifest. A .psd1 that is not data declares nothing, and a folder that cannot
-be listed holds no manifest. A set that no manifest declares gets no
+set file, as in a staged package before it is published. When more than
+one .psd1 there declares the set, the first in ordinal order of file name is
+the manifest. A .psd1 that is not data declares nothing, and a folder that
+cannot be listed holds no manifest. A set that no manifest declares gets no
 PackageLayout finding. A package set is checked for three things, reported
 in this order:
 
