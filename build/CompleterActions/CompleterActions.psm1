@@ -3841,11 +3841,12 @@ runs after a timeout, a start failure, or held output, so one call returns at
 most one warning.
 
 A run that timed out, whose output a descendant held, or that failed to start
-gives its warning and an empty table. For a run that exited, the text is
-standard output, or standard error when standard output is empty or
-whitespace after decoding; the exit code decides nothing. The text is decoded,
-cleaned, and parsed with the help text helpers. Each run that exited adds one
-probe verbose line.
+gives its warning and an empty table, and adds no probe verbose line, because
+the line's exit code, characters, and subcommands describe a run that exited.
+For a run that exited, the text is standard output, or standard error when
+standard output is empty or whitespace after decoding; the exit code decides
+nothing. The text is decoded, cleaned, and parsed with the help text helpers,
+and the run adds one probe verbose line.
 
 Warnings and verbose lines are returned as data; this helper writes no
 stream.
@@ -3864,7 +3865,8 @@ The deadline for each run, in seconds.
 .OUTPUTS
 CompleterActions.CompleterHelpSubcommandResult
 Returns a record with Subcommands (the parsed rows, in help order), Argument
-(the argument of the run whose result was used, or null when nothing ran),
+(the argument of the last run that exited, whose result was used, or null
+when no run exited; a /? run that does not exit leaves it at --help),
 Warnings, and VerboseLines.
 #>
 function Get-CompleterHelpSubcommand
@@ -3879,11 +3881,9 @@ function Get-CompleterHelpSubcommand
         [psobject] $Application,
 
         [Parameter()]
-        [AllowEmptyString()]
         [string] $HelpArgument,
 
         [Parameter(Mandatory)]
-        [ValidateRange(0.001, 3600)]
         [double] $TimeoutSeconds
     )
 
@@ -3899,22 +3899,22 @@ function Get-CompleterHelpSubcommand
     else
     {
         $hasHelpArgument = $PSBoundParameters.ContainsKey('HelpArgument')
-        $argument = if ($hasHelpArgument) { $HelpArgument } else { '--help' }
+        $runArgument = if ($hasHelpArgument) { $HelpArgument } else { '--help' }
         $limit = $TimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 
         while ($true)
         {
-            $result = Invoke-CompleterHelpProcess -FilePath $Application.Path -ArgumentList @($argument) -TimeoutSeconds $TimeoutSeconds
+            $result = Invoke-CompleterHelpProcess -FilePath $Application.Path -ArgumentList @($runArgument) -TimeoutSeconds $TimeoutSeconds
 
             switch ($result.Status)
             {
                 'TimedOut'
                 {
-                    $warnings.Add("'$($Application.Name) $argument' did not exit within $limit seconds and was stopped, so its help was not used.")
+                    $warnings.Add("'$($Application.Name) $runArgument' did not exit within $limit seconds and was stopped, so its help was not used.")
                 }
                 'HeldOutput'
                 {
-                    $warnings.Add("'$($Application.Name) $argument' exited but left a process holding its output, so its help was not used.")
+                    $warnings.Add("'$($Application.Name) $runArgument' exited but left a process holding its output, so its help was not used.")
                 }
                 'StartFailed'
                 {
@@ -3935,6 +3935,7 @@ function Get-CompleterHelpSubcommand
 
             $cleanText = ConvertTo-CompleterCleanHelpText -Text $text
             $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+            $argument = $runArgument
             $verboseLines.Add("Probed '$($Application.Path) $argument': exit $($result.ExitCode), $($text.Length) characters, $($subcommands.Count) subcommands, $($result.ElapsedMilliseconds) ms.")
 
             $tryFallback = $IsWindows -and -not $hasHelpArgument -and $argument -eq '--help' -and $subcommands.Count -eq 0
@@ -3949,7 +3950,7 @@ function Get-CompleterHelpSubcommand
                 break
             }
 
-            $argument = '/?'
+            $runArgument = '/?'
         }
     }
 
