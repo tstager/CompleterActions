@@ -99,6 +99,7 @@ Describe 'Completer script skeleton' {
         @{ Name = 'rg*' }
         @{ Name = '.x' }
         @{ Name = 'x-' }
+        @{ Name = '_.exe' }
     ) {
         $thrown = {
             InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Name = $Name } -ScriptBlock {
@@ -336,8 +337,11 @@ Describe 'Completer script skeleton' {
 
     It 'fails without -Force when the file appeared before the move, and leaves it unchanged' {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
-        Set-Content -LiteralPath $scriptPath -Value 'existing content' -Encoding utf8
-        $before = [System.IO.File]::ReadAllBytes($scriptPath)
+
+        # The file appears while the temporary file is checked, after any check a caller made before the call.
+        Mock -CommandName 'Get-CompleterScriptFinding' -ModuleName 'CompleterActions' -MockWith {
+            [System.IO.File]::WriteAllText(($LiteralPath -replace '\.[0-9a-f]{8}\.tmp\z', ''), 'existing content')
+        }
 
         $thrown = {
             InModuleScope -ModuleName 'CompleterActions' -Parameters @{ ScriptPath = $scriptPath } -ScriptBlock {
@@ -349,7 +353,29 @@ Describe 'Completer script skeleton' {
         } | Should -Throw -PassThru
 
         $thrown.Exception.Message | Should -BeExactly ($script:AlreadyExistsFormat -f $scriptPath)
-        [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($scriptPath)) | Should -BeExactly ([System.Convert]::ToBase64String($before))
+        Should -Invoke -CommandName 'Get-CompleterScriptFinding' -ModuleName 'CompleterActions' -Times 1 -Exactly
+        [System.IO.File]::ReadAllText($scriptPath) | Should -BeExactly 'existing content'
+        @(Get-ChildItem -LiteralPath $script:CaseFolder -Filter '*.tmp' -Force).Count | Should -Be 0
+    }
+
+    It 'resolves a relative path against the current location' {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+
+        Push-Location -LiteralPath $script:CaseFolder
+        try
+        {
+            $written = InModuleScope -ModuleName 'CompleterActions' -ScriptBlock {
+                $lines = @(Get-CompleterScriptSkeleton -Name 'rg' -Stem 'Rg' -Target 'rg', 'rg.exe' -Subcommand @())
+                Save-CompleterScriptFile -Line $lines -LiteralPath 'rg_completer.ps1' -ExpectedTarget 'rg', 'rg.exe'
+            }
+        }
+        finally
+        {
+            Pop-Location
+        }
+
+        $written.FullName | Should -Be $scriptPath
+        Test-Path -LiteralPath $scriptPath | Should -BeTrue
         @(Get-ChildItem -LiteralPath $script:CaseFolder -Filter '*.tmp' -Force).Count | Should -Be 0
     }
 
