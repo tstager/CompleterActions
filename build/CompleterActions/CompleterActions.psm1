@@ -2954,6 +2954,278 @@ function Assert-CompleterScriptConformance
 }
 <#
 .SYNOPSIS
+Decodes the bytes a help probe captured into text.
+
+.DESCRIPTION
+Applies the help decoding steps in order. Bytes that start with the UTF-16 LE
+byte-order mark FF FE, or that contain U+0000 when decoded leniently as UTF-8,
+are decoded as UTF-16 LE. Otherwise the bytes are decoded as strict UTF-8,
+after skipping a UTF-8 byte-order mark. When strict UTF-8 fails, Windows
+decodes with the OEM code page of the current culture and Linux and macOS
+decode with Latin-1 (code page 28591). A leading U+FEFF left by any decoder is
+removed last. The text is not cleaned; ConvertTo-CompleterCleanHelpText does
+that.
+
+.PARAMETER Bytes
+The captured bytes of one output stream.
+
+.OUTPUTS
+System.String
+#>
+function ConvertFrom-CompleterHelpOutput
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [byte[]] $Bytes
+    )
+
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE)
+    {
+        $text = [System.Text.Encoding]::Unicode.GetString($Bytes)
+    }
+    elseif ([System.Text.Encoding]::UTF8.GetString($Bytes).Contains([char] 0))
+    {
+        $text = [System.Text.Encoding]::Unicode.GetString($Bytes)
+    }
+    else
+    {
+        $offset = 0
+        if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF)
+        {
+            $offset = 3
+        }
+
+        try
+        {
+            $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($Bytes, $offset, $Bytes.Length - $offset)
+        }
+        catch [System.Text.DecoderFallbackException]
+        {
+            $codePage = if ($IsWindows)
+            {
+                [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage
+            }
+            else
+            {
+                28591
+            }
+
+            $text = [System.Text.Encoding]::GetEncoding($codePage).GetString($Bytes)
+        }
+    }
+
+    if ($text.Length -gt 0 -and $text[0] -eq [char] 0xFEFF)
+    {
+        $text = $text.Substring(1)
+    }
+
+    $text
+}
+<#
+.SYNOPSIS
+Parses the subcommand table out of cleaned help text.
+
+.DESCRIPTION
+Reads the text line by line with fixed rules. A section header is a whole line
+of one to six words, optionally wrapped in angle brackets and followed by a
+colon, one of which is command, commands, subcommand, or subcommands. After a
+header, blank and underline lines are skipped and the first entry fixes the
+section's indentation; any other line before the first entry ends the
+section. Entries at that indentation are kept; deeper lines are
+continuations and other non-entry lines are skipped. A blank line, a header,
+or a shallower entry ends the section. Names keep help order and are
+de-duplicated case-insensitively. Control, format, and line and paragraph
+separator characters in a description become spaces, whitespace runs
+collapse, and an empty description becomes the name.
+
+.PARAMETER Text
+Help text already cleaned by ConvertTo-CompleterCleanHelpText.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+#>
+function ConvertFrom-CompleterHelpText
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Text
+    )
+
+    $headerPattern = [regex]::new('^\s*<?(?<words>[A-Za-z(),]+(?: [A-Za-z(),]+){0,5})>?:?\s*$')
+    $entryPattern = [regex]::new('^(?<indent>[ \t]*)(?<name>/?[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\*?(?:,\s*[A-Za-z0-9][A-Za-z0-9._-]*)*(?<sep>\s*:\s+|-{2,}| - |\t| {2,})(?<desc>.*)$')
+    $underlinePattern = [regex]::new('^\s*(?:=+|-+)\s*$')
+    $headerWords = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]] @('command', 'commands', 'subcommand', 'subcommands'),
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    $inSection = $false
+    $sectionIndent = -1
+
+    foreach ($line in $Text.Split("`n"))
+    {
+        $header = $headerPattern.Match($line)
+        if ($header.Success)
+        {
+            $isHeader = $false
+            foreach ($word in $header.Groups['words'].Value.Split(' '))
+            {
+                if ($headerWords.Contains($word.Trim('(', ')', ',')))
+                {
+                    $isHeader = $true
+                    break
+                }
+            }
+
+            if ($isHeader)
+            {
+                $inSection = $true
+                $sectionIndent = -1
+                continue
+            }
+        }
+
+        if (-not $inSection)
+        {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($line))
+        {
+            if ($sectionIndent -ge 0)
+            {
+                $inSection = $false
+            }
+
+            continue
+        }
+
+        if ($sectionIndent -lt 0)
+        {
+            if ($underlinePattern.IsMatch($line))
+            {
+                continue
+            }
+
+            $entry = $entryPattern.Match($line)
+            if (-not $entry.Success)
+            {
+                $inSection = $false
+                continue
+            }
+
+            $sectionIndent = $entry.Groups['indent'].Length
+        }
+        else
+        {
+            $indent = $line.Length - $line.TrimStart(' ', "`t").Length
+            if ($indent -gt $sectionIndent)
+            {
+                continue
+            }
+
+            $entry = $entryPattern.Match($line)
+            if (-not $entry.Success)
+            {
+                continue
+            }
+
+            if ($indent -lt $sectionIndent)
+            {
+                $inSection = $false
+                continue
+            }
+        }
+
+        $name = $entry.Groups['name'].Value
+        if (-not $seen.Add($name))
+        {
+            continue
+        }
+
+        $description = [regex]::Replace($entry.Groups['desc'].Value, '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', ' ')
+        $description = [regex]::Replace($description, '\s+', ' ').Trim()
+        if ($description.Length -eq 0)
+        {
+            $description = $name
+        }
+
+        [pscustomobject] [ordered] @{
+            Name        = $name
+            Description = $description
+        }
+    }
+}
+<#
+.SYNOPSIS
+Removes terminal formatting from help text.
+
+.DESCRIPTION
+Applies the help cleaning rules in order: CSI sequences, OSC sequences such as
+titles and OSC 8 hyperlinks (only the link text remains), any remaining
+two-character escape, backspace overstrikes, and carriage returns. CR LF
+becomes LF, and then each line keeps only the text after its last remaining
+CR, which removes progress lines. The probe output and -HelpText both go
+through this cleaner before parsing. The result uses LF line endings.
+
+.PARAMETER Text
+The decoded help text.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterCleanHelpText
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Text
+    )
+
+    $clean = [regex]::Replace($Text, '\e\[[0-9;?]*[ -/]*[@-~]', '')
+    $clean = [regex]::Replace($clean, '\e\][^\a\e]*(?:\a|\e\\)', '')
+    $clean = [regex]::Replace($clean, '\e[@-_]', '')
+
+    $overstrike = [regex]::new('[^\x08]\x08')
+    while ($overstrike.IsMatch($clean))
+    {
+        $clean = $overstrike.Replace($clean, '')
+    }
+
+    $clean = $clean.Replace([string] [char] 0x08, '').Replace("`r`n", "`n")
+
+    $lines = $clean.Split("`n")
+    for ($index = 0; $index -lt $lines.Length; $index++)
+    {
+        $lastReturn = $lines[$index].LastIndexOf("`r")
+        if ($lastReturn -ge 0)
+        {
+            $lines[$index] = $lines[$index].Substring($lastReturn + 1)
+        }
+    }
+
+    $lines -join "`n"
+}
+<#
+.SYNOPSIS
 Finds managed completer registrations from module state.
 
 .DESCRIPTION
