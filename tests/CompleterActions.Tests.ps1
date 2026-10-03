@@ -62,7 +62,7 @@ BeforeAll {
 
         $manifestPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'build', 'CompleterActions', 'CompleterActions.psd1'))
 
-        & pwsh -NoProfile -NonInteractive -Command {
+        $output = & pwsh -NoProfile -NonInteractive -Command {
             param($ManifestPath, $ScriptText)
 
             $ErrorActionPreference = 'Stop'
@@ -75,6 +75,13 @@ BeforeAll {
 
             & ([scriptblock]::Create($ScriptText))
         } -args $manifestPath, $Script.ToString()
+
+        if ($LASTEXITCODE -ne 0)
+        {
+            throw "Invoke-TestBuildHelp: the child pwsh exited with code $LASTEXITCODE."
+        }
+
+        $output
     }
 }
 
