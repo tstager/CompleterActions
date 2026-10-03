@@ -1223,8 +1223,8 @@ alias, cmdlet, or script of that name is never run. On Windows it runs only
 a .exe whose PE header marks a console program, so GUI programs, shims such as
 npm.cmd, and app execution aliases are refused with a warning. The program
 runs with the help argument alone, standard input closed, the temporary
-directory as its working directory, and NO_COLOR set, under a 5-second limit. Without
--HelpArgument the probe passes --help; on Windows, when --help ran to
+directory as its working directory, and NO_COLOR set, under a 5-second limit.
+Without -HelpArgument the probe passes --help; on Windows, when --help ran to
 completion, gave no subcommand, and printed fewer than five non-blank lines,
 /? runs once and its result is used. A run that does not exit in time, or that
 leaves a process holding its output, is stopped and its output is not used.
@@ -1247,7 +1247,8 @@ The native command names. The first is the primary name: it names the
 functions and state, and it is the one probed.
 
 .PARAMETER Path
-The .ps1 file to write. The parent directory must exist.
+The .ps1 file to write. A relative path is resolved against the current
+location. The parent directory must exist.
 
 .PARAMETER HelpArgument
 The one argument the probe passes. When omitted the probe passes --help and,
@@ -1256,6 +1257,7 @@ on Windows, may fall back to /?.
 .PARAMETER HelpText
 Help text the author already captured. Lines are accumulated across pipeline
 input, joined with LF, cleaned, and parsed; nothing is run.
+winget --help | New-CompleterScript winget .\winget_completer.ps1 binds here.
 
 .PARAMETER NoProbe
 Runs nothing and writes an empty subcommand table.
@@ -1264,7 +1266,9 @@ Runs nothing and writes an empty subcommand table.
 Overwrites an existing file.
 
 .PARAMETER PassThru
-Returns the written file.
+Returns the written file as System.IO.FileInfo, so it pipes into
+Test-CompleterScript and Import-CompleterScript. Without -PassThru the
+command returns nothing.
 
 .INPUTS
 System.String
@@ -1303,11 +1307,9 @@ function New-CompleterScript
         [string[]] $CommandName,
 
         [Parameter(Mandatory, Position = 1)]
-        [ValidateNotNullOrEmpty()]
         [string] $Path,
 
         [Parameter(ParameterSetName = 'Probe')]
-        [ValidateNotNullOrEmpty()]
         [string] $HelpArgument,
 
         [Parameter(Mandatory, ParameterSetName = 'HelpText', ValueFromPipeline)]
@@ -1356,7 +1358,10 @@ function New-CompleterScript
         }
         catch
         {
-            throw "Failed to create completer script. $($_.Exception.Message)"
+            # ThrowTerminatingError, unlike throw, is not silenced by -ErrorAction
+            # SilentlyContinue or Ignore, so a failed check never lets end write.
+            $exception = [System.InvalidOperationException]::new("Failed to create completer script. $($_.Exception.Message)", $_.Exception)
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new($exception, 'NewCompleterScriptFailed', [System.Management.Automation.ErrorCategory]::InvalidOperation, $Path))
         }
 
         $helpLines = [System.Collections.Generic.List[string]]::new()
@@ -1474,7 +1479,8 @@ function New-CompleterScript
         }
         catch
         {
-            throw "Failed to create completer script. $($_.Exception.Message)"
+            $exception = [System.InvalidOperationException]::new("Failed to create completer script. $($_.Exception.Message)", $_.Exception)
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new($exception, 'NewCompleterScriptFailed', [System.Management.Automation.ErrorCategory]::InvalidOperation, $Path))
         }
     }
 }
