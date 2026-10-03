@@ -32,8 +32,10 @@ completion, gave no subcommand, and printed fewer than five non-blank lines,
 leaves a process holding its output, is stopped and its output is not used.
 -WhatIf and -Confirm name the program before anything runs.
 
-Before anything is resolved, probed, or written, every -CommandName value and
-the -Path are checked: the path must end in .ps1, must not be a directory, and
+Before anything is resolved, probed, or written, every -CommandName value,
+-HelpArgument, and the -Path are checked: a name must keep a letter or digit
+outside a trailing .exe, .cmd, .bat, .ps1, or .com, -HelpArgument must not
+contain a line break, the path must end in .ps1, must not be a directory, and
 its folder must exist, and the file must not exist unless -Force is given. The
 script is written to a temporary file beside the target, checked with the
 strict grammar Test-CompleterScript applies, and moved into place only when it
@@ -54,7 +56,8 @@ location. The parent directory must exist.
 
 .PARAMETER HelpArgument
 The one argument the probe passes. When omitted the probe passes --help and,
-on Windows, may fall back to /?.
+on Windows, may fall back to /?. It must not contain a line break, because
+line 2 of the script names it in a comment.
 
 .PARAMETER HelpText
 Help text the author already captured. Lines are accumulated across pipeline
@@ -131,6 +134,13 @@ function New-CompleterScript
         try
         {
             $targetNames = @(ConvertTo-CompleterTargetName -CommandName $CommandName)
+
+            # Line 2 of the script names the argument in a comment, which a line break would end.
+            if ($HelpArgument.IndexOfAny([char[]] "`r`n") -ge 0)
+            {
+                throw '-HelpArgument must not contain a line break.'
+            }
+
             $outputPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
 
             if ([System.IO.Path]::GetExtension($outputPath) -ne '.ps1')

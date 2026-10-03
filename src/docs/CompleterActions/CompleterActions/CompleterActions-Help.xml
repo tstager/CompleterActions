@@ -1289,8 +1289,10 @@ them in the first argument position, and one bare
 The first `-CommandName` value is the primary name: it names the functions and
 the state variable, and it is the one probed. Every name must be a bare command
 name: at least one letter or digit, no path separators, spaces, quotes, or
-wildcard characters, no leading `-` or `.`, and no trailing `.` or `-`. The
-target list follows the `-CommandName` order, and a name that does not end in
+wildcard characters, no leading `-` or `.`, and no trailing `.` or `-`. A name
+must also keep a letter or digit outside a trailing `.exe`, `.cmd`, `.bat`,
+`.ps1`, or `.com`, because the function names are derived from what is left:
+`_.exe` is refused and `_a` gives `Complete-A`. The target list follows the `-CommandName` order, and a name that does not end in
 `.exe`, `.cmd`, `.bat`, `.ps1`, or `.com` is followed by the same name with
 `.exe` appended, so `-CommandName rg` registers `'rg', 'rg.exe'` and
 `-CommandName npm.cmd` registers `'npm.cmd'` alone. Names are de-duplicated
@@ -1333,8 +1335,9 @@ separator characters in a description become spaces, and an empty description
 becomes the name. Help without a commands section gives an empty table, which
 is not an error and not a warning.
 
-Before anything is resolved, probed, or written, every `-CommandName` value
-and the `-Path` are checked: the path must end in `.ps1`, must not be a
+Before anything is resolved, probed, or written, every `-CommandName` value,
+`-HelpArgument`, and the `-Path` are checked: `-HelpArgument` must not contain
+a line break, the path must end in `.ps1`, must not be a
 directory, and its folder must exist, and the file must not exist unless
 `-Force` is given. `-WhatIf` and `-Confirm` name the file and the program the
 probe would run, and the probe runs only after the call is confirmed.
@@ -1552,7 +1555,8 @@ functions and state, and it is the one probed.</maml:para>
         <maml:name>HelpArgument</maml:name>
         <maml:description>
           <maml:para>The one argument the probe passes. When omitted the probe passes `--help` and,
-on Windows, may fall back to `/?`.</maml:para>
+on Windows, may fall back to `/?`. It must not contain a line break, because
+line 2 of the script names it in a comment.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
         <dev:type>

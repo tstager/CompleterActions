@@ -99,7 +99,6 @@ Describe 'Completer script skeleton' {
         @{ Name = 'rg*' }
         @{ Name = '.x' }
         @{ Name = 'x-' }
-        @{ Name = '_.exe' }
     ) {
         $thrown = {
             InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Name = $Name } -ScriptBlock {
@@ -110,6 +109,22 @@ Describe 'Completer script skeleton' {
         } | Should -Throw -PassThru
 
         $thrown.Exception.Message | Should -BeExactly ("'{0}' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters." -f $Name)
+    }
+
+    It 'rejects the command name <Name>, whose stem would be empty' -TestCases @(
+        @{ Name = '_.exe' }
+        @{ Name = '__.cmd' }
+        @{ Name = '_+.COM' }
+    ) {
+        $thrown = {
+            InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Name = $Name } -ScriptBlock {
+                param($Name)
+
+                ConvertTo-CompleterTargetName -CommandName 'rg', $Name
+            }
+        } | Should -Throw -PassThru
+
+        $thrown.Exception.Message | Should -BeExactly ("The command name '{0}' has no letter or digit outside its suffix, so no function name can be derived from it." -f $Name)
     }
 
     It 'derives the stem <Stem> from <Name>' -TestCases @(
@@ -1105,6 +1120,8 @@ switch ($Case)
         @{ Case = 'the name -x'; CommandName = '-x'; Leaf = 'x_completer.ps1'; Reason = "'-x' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters." }
         @{ Case = 'the name a b'; CommandName = 'a b'; Leaf = 'x_completer.ps1'; Reason = "'a b' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters." }
         @{ Case = 'the name C:\tools\rg'; CommandName = 'C:\tools\rg'; Leaf = 'x_completer.ps1'; Reason = "'C:\tools\rg' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters." }
+        @{ Case = 'the name _.exe'; CommandName = '_.exe'; Leaf = 'x_completer.ps1'; Reason = "The command name '_.exe' has no letter or digit outside its suffix, so no function name can be derived from it." }
+        @{ Case = 'the name __.cmd'; CommandName = '__.cmd'; Leaf = 'x_completer.ps1'; Reason = "The command name '__.cmd' has no letter or digit outside its suffix, so no function name can be derived from it." }
     ) {
         $null = New-Item -ItemType Directory -Path (Join-Path -Path $script:CaseFolder -ChildPath 'folder.ps1')
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath $Leaf.Replace('\', [System.IO.Path]::DirectorySeparatorChar)
@@ -1113,6 +1130,37 @@ switch ($Case)
         $thrown = { New-CompleterScript -CommandName $CommandName -Path $scriptPath -NoProbe } | Should -Throw -PassThru
 
         $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + $expectedReason)
+        @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 0
+    }
+
+    It 'writes Complete-A for the name _a, whose letter is outside any suffix' {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'a_completer.ps1'
+
+        New-CompleterScript -CommandName '_a' -Path $scriptPath -NoProbe
+
+        $text = Get-Content -LiteralPath $scriptPath -Raw
+        $text | Should -BeLikeExactly '*function Complete-A {*'
+        $text | Should -BeLikeExactly "*-CommandName '_a', '_a.exe' -ScriptBlock*"
+        Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+    }
+
+    It 'fails a -HelpArgument that holds <Case>, before anything runs or is written' -TestCases @(
+        @{ Case = 'a carriage return'; HelpArgument = "--he`rlp" }
+        @{ Case = 'a line feed'; HelpArgument = "--he`nlp" }
+        @{ Case = 'a CR LF pair'; HelpArgument = "--he`r`nlp" }
+    ) {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
+        $result = New-TestExitedResult -Text "Commands:`n  build    Compile the project`n"
+        Install-TestRunnerShim -Fake ({
+                param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                $result
+            }.GetNewClosure())
+
+        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $HelpArgument } | Should -Throw -PassThru
+
+        $thrown.Exception.Message | Should -BeExactly 'Failed to create completer script. -HelpArgument must not contain a line break.'
+        @(Get-TestProbeRun).Count | Should -Be 0
         @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 0
     }
 

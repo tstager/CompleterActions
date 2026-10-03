@@ -1230,8 +1230,10 @@ completion, gave no subcommand, and printed fewer than five non-blank lines,
 leaves a process holding its output, is stopped and its output is not used.
 -WhatIf and -Confirm name the program before anything runs.
 
-Before anything is resolved, probed, or written, every -CommandName value and
-the -Path are checked: the path must end in .ps1, must not be a directory, and
+Before anything is resolved, probed, or written, every -CommandName value,
+-HelpArgument, and the -Path are checked: a name must keep a letter or digit
+outside a trailing .exe, .cmd, .bat, .ps1, or .com, -HelpArgument must not
+contain a line break, the path must end in .ps1, must not be a directory, and
 its folder must exist, and the file must not exist unless -Force is given. The
 script is written to a temporary file beside the target, checked with the
 strict grammar Test-CompleterScript applies, and moved into place only when it
@@ -1252,7 +1254,8 @@ location. The parent directory must exist.
 
 .PARAMETER HelpArgument
 The one argument the probe passes. When omitted the probe passes --help and,
-on Windows, may fall back to /?.
+on Windows, may fall back to /?. It must not contain a line break, because
+line 2 of the script names it in a comment.
 
 .PARAMETER HelpText
 Help text the author already captured. Lines are accumulated across pipeline
@@ -1332,6 +1335,13 @@ function New-CompleterScript
         try
         {
             $targetNames = @(ConvertTo-CompleterTargetName -CommandName $CommandName)
+
+            # Line 2 of the script names the argument in a comment, which a line break would end.
+            if ($HelpArgument.IndexOfAny([char[]] "`r`n") -ge 0)
+            {
+                throw '-HelpArgument must not contain a line break.'
+            }
+
             $outputPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
 
             if ([System.IO.Path]::GetExtension($outputPath) -ne '.ps1')
@@ -3777,9 +3787,10 @@ Builds the native target list a generated completer script registers.
 Checks every command name before building anything, and throws for the first
 name that is not a bare command name: at least one ASCII letter or digit, no
 path separators, spaces, quotes, or wildcard characters, no leading '-' or
-'.', no trailing '.' or '-', and a letter or digit before any trailing .exe,
-.cmd, .bat, .ps1, or .com, so the stem is never empty. The list then follows
-the -CommandName order.
+'.', and no trailing '.' or '-'. A name that passes but whose stem would be
+empty, such as '_.exe', whose only letters are its suffix, is then refused
+with its own reason, so no function name is ever derived from an empty stem.
+The list then follows the -CommandName order.
 Each name is written as given, and a name that does not end in .exe, .cmd,
 .bat, .ps1, or .com is followed by the same name with .exe appended. Names are
 de-duplicated case-insensitively, keeping the first spelling, so 'rg' and
@@ -3805,15 +3816,19 @@ function ConvertTo-CompleterTargetName
         [string[]] $CommandName
     )
 
-    # The spec's pattern, with \z in place of $ so a trailing newline does not match, and a
-    # lookahead that rejects a name such as '_.exe' whose stem would be empty.
-    $commandNamePattern = '^(?=.*[A-Za-z0-9])(?!(?i:[^A-Za-z0-9]*\.(?:exe|cmd|bat|ps1|com))\z)[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
+    # The spec's pattern, with \z in place of $ so a trailing newline does not match.
+    $commandNamePattern = '^(?=.*[A-Za-z0-9])[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
 
     foreach ($commandNameItem in $CommandName)
     {
         if (-not [System.Text.RegularExpressions.Regex]::IsMatch($commandNameItem, $commandNamePattern))
         {
             throw "'$commandNameItem' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters."
+        }
+
+        if ([string]::IsNullOrEmpty((ConvertTo-CompleterScriptStem -Name $commandNameItem)))
+        {
+            throw "The command name '$commandNameItem' has no letter or digit outside its suffix, so no function name can be derived from it."
         }
     }
 
