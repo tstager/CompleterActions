@@ -3,12 +3,12 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-09-28): milestone 0 done; milestone 1 spec and plan accepted (docs/roadmap-3.0/milestone-1-spec.md and milestone-1-plan.md), ready to branch as feat/milestone-1-faster-imports.
+Status (2026-10-02): milestones 0 and 1 shipped; 2.1.0 stable cut from the preview code after the soak. Next is milestone 2 (2.2.0), spec and plan to be drafted under docs/roadmap-3.0/.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
-| 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Preview shipped 2026-09-29, tag v2.1.0-preview1, PR #7 (merge ad267e1); stable after soak |
+| 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Shipped 2026-10-02, tag v2.1.0, from the preview1 code; preview shipped 2026-09-29, PR #7 (merge ad267e1) |
 | 2 Authoring and distribution | 2.2.0 | Planned, additive |
 | 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking |
 
@@ -35,7 +35,7 @@ Public commands: 8 (11 exported functions). Private helpers: 45. Source: about 6
 
 ## Milestone 1: Faster imports and recovery (2.1.0, additive)
 
-**Preview shipped 2026-09-29 as v2.1.0-preview1** (PR #7 merged as ad267e1, release commit e6078f4, PSGallery prerelease label preview1). All five items landed plus two new commands; 337 Pester tests, eight CI legs green, 173-script set regenerates with exactly one Hash line per entry, PSReadLine snapshots identical. Benchmark over the 173-script set, ten samples each, four runs: 2.0.0 lazy 1589 to 1676 ms, 2.1.0 lazy 815 to 886 ms, ratio 0.49 to 0.54; unhashed set 0.83 to 0.90 of 2.0.0. Stable 2.1.0 waits for the soak per decision 7.
+**Shipped 2026-10-02 as v2.1.0** (release commit 2086f7f) from the preview1 code after the soak passed, per decision 7. **Preview shipped 2026-09-29 as v2.1.0-preview1** (PR #7 merged as ad267e1, release commit e6078f4, PSGallery prerelease label preview1). All five items landed plus two new commands; 337 Pester tests, eight CI legs green, 173-script set regenerates with exactly one Hash line per entry, PSReadLine snapshots identical. Benchmark over the 173-script set, ten samples each, four runs: 2.0.0 lazy 1589 to 1676 ms, 2.1.0 lazy 815 to 886 ms, ratio 0.49 to 0.54; unhashed set 0.83 to 0.90 of 2.0.0.
 
 The two performance levers left after milestone 3 of the 2.0 roadmap, plus the one operational gap the soak has shown.
 
@@ -78,7 +78,7 @@ The breaking surface is short and every item was promised or implied by 2.0. Shi
 
 - **Compiled core** (breaking). A small C# assembly holds the record types, the enums, the engine access, the AST conformance walk, and the lazy stub. `CompleterRegistration` and friends become public .NET types under the `CompleterActions` namespace, so `-is [CompleterActions.CompleterRegistration]` works in any scope and the dotted PSTypeName stops being a workaround. The conformance walk drops from about 20 ms per script to well under 1 ms, which reopens decision 5 of the 2.0 roadmap: the grammar can run at import again without touching the ratio.
 - **Version-gated engine access** (breaking). Inside the compiled layer, the engine cmdlets are the primary path and reflection is the path for engines that predate them. The import-time probe stays and names the engine version in its message. Nothing in the public surface changes; the failure mode does.
-- **Remove the deprecated surface** (breaking). `Get-CompleterRegistration`, `Register-CompleterRegistration`, `Unregister-CompleterRegistration`, the three exported legacy wrappers, and the `-ManagedOnly` and `-DiscoveredOnly` translations go. The module exports eight functions and no aliases. The PS_Completers tests and tools still call the old names, so that repo migrates first.
+- **Remove the deprecated surface** (breaking). `Get-CompleterRegistration`, `Register-CompleterRegistration`, `Unregister-CompleterRegistration`, the three exported legacy wrappers, and the `-ManagedOnly` and `-DiscoveredOnly` translations go. The module exports ten functions and no aliases: the eight of 2.0 plus Reset-Completer and Test-CompleterSet from 2.1.0. The PS_Completers tests and tools still call the old names, so that repo migrates first.
 - **Minimum engine 7.4 LTS** (breaking). `PowerShellVersion = '7.4'` in the manifest, matching the CI matrix that has been the real support statement since 1.3.0.
 - **Migration guide** (docs). `about_CompleterActions_Migration` rewritten for 2.x to 3.0: the removed names, the public types, the engine floor.
 - **Release candidate** (release). Tag `v3.0.0-rc1` first; promote to `v3.0.0` only after the candidate has soaked without a defect; a defect means rc2.
@@ -86,7 +86,7 @@ The breaking surface is short and every item was promised or implied by 2.0. Shi
 Exit criteria:
 
 ```powershell
-Get-Command -Module CompleterActions | Measure-Object     # 8 functions, 0 aliases
+Get-Command -Module CompleterActions | Measure-Object     # 10 functions, 0 aliases (8 from 2.0 plus Reset-Completer and Test-CompleterSet)
 Get-Completer | Select-Object -First 1 | ForEach-Object { $_ -is [CompleterActions.CompleterRegistration] }   # True from the prompt, outside the module
 Get-CompleterRegistration                                 # command not found
 Find-PSResource CompleterActions -Repository PSGallery -Prerelease   # 3.0.0-rc1 listed; 3.0.0 stable only after the candidate soaks
