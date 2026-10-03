@@ -30,13 +30,28 @@ function ConvertTo-CompleterCleanHelpText
     $clean = [regex]::Replace($clean, '\e\][^\a\e]*(?:\a|\e\\)', '')
     $clean = [regex]::Replace($clean, '\e[@-_]', '')
 
-    $overstrike = [regex]::new('[^\x08]\x08')
-    while ($overstrike.IsMatch($clean))
+    # Removing [^\x08]\x08 until stable and then any remaining \x08 is done in
+    # linear time: one regex pass removes the simple overstrikes, then a run of
+    # n backspaces erases up to n characters before it, and the backspaces left
+    # over are dropped. Pair removal gives the same result in any order.
+    $clean = [regex]::Replace($clean, '[^\x08]\x08', '')
+    $backspaceRuns = [regex]::Matches($clean, '\x08+')
+    if ($backspaceRuns.Count -gt 0)
     {
-        $clean = $overstrike.Replace($clean, '')
+        $builder = [System.Text.StringBuilder]::new($clean.Length)
+        $start = 0
+        foreach ($run in $backspaceRuns)
+        {
+            $null = $builder.Append($clean.Substring($start, $run.Index - $start))
+            $builder.Length -= [System.Math]::Min($run.Length, $builder.Length)
+            $start = $run.Index + $run.Length
+        }
+
+        $null = $builder.Append($clean.Substring($start))
+        $clean = $builder.ToString()
     }
 
-    $clean = $clean.Replace([string] [char] 0x08, '').Replace("`r`n", "`n")
+    $clean = $clean.Replace("`r`n", "`n")
 
     $lines = $clean.Split("`n")
     for ($index = 0; $index -lt $lines.Length; $index++)

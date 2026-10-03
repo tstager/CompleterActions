@@ -59,7 +59,7 @@ function ConvertFrom-CompleterHelpOutput
                 28591
             }
 
-            $text = [System.Text.Encoding]::GetEncoding($codePage).GetString($Bytes)
+            $text = [System.Text.Encoding]::GetEncoding($codePage).GetString($Bytes, $offset, $Bytes.Length - $offset)
         }
     }
 
