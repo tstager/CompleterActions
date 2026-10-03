@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.2.0-preview1] - 2026-10-03
+
 ### Added
 
 - **`New-CompleterScript`.** Writes a native completer script skeleton
@@ -650,7 +652,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.2.0-preview1...HEAD
+[2.2.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0-preview1
 [2.1.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0
 [2.1.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0-preview1
 [2.0.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0-rc1...v2.0.0
