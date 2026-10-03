@@ -42,7 +42,7 @@ BeforeAll {
 }
 
 Describe 'Help text decoding, cleaning, and parsing' {
-    BeforeEach {
+    BeforeAll {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
         Import-Module -Name $script:ManifestPath -Force | Out-Null
     }
@@ -102,6 +102,15 @@ Describe 'Help text decoding, cleaning, and parsing' {
         )
 
         ConvertTo-TestCleanHelpText -Text $Text | Should -BeExactly $Expected
+    }
+
+    It 'cleans a long nested backspace run in linear time' {
+        $text = ('a' * 20000) + ([string] [char] 0x08 * 20000) + 'build'
+        $elapsed = [System.Diagnostics.Stopwatch]::StartNew()
+
+        ConvertTo-TestCleanHelpText -Text $text | Should -BeExactly 'build'
+        $elapsed.Stop()
+        $elapsed.Elapsed.TotalSeconds | Should -BeLessThan 5
     }
 
     It 'matches the header <Line>' -TestCases @(
@@ -239,5 +248,8 @@ Describe 'Help text decoding, cleaning, and parsing' {
 
         ConvertFrom-TestHelpText -Text $text | Should -BeNullOrEmpty
         ConvertFrom-TestHelpText -Text '' | Should -BeNullOrEmpty
+
+        $prose = "Options:`n    --one-file-system`n        example, in the command`n`n            rg --one-file-system /foo/bar`n`n        ripgrep  will search both paths"
+        ConvertFrom-TestHelpText -Text $prose | Should -BeNullOrEmpty
     }
 }
