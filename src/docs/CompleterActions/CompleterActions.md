@@ -32,6 +32,10 @@ Imports self-contained completer scripts into registration input objects.
 
 Validates a completer set file and registers every script it lists.
 
+### [New-CompleterScript](New-CompleterScript.md)
+
+Writes a completer script skeleton for a native command that passes Test-CompleterScript as written.
+
 ### [Register-Completer](Register-Completer.md)
 
 Registers a managed PowerShell argument completer.

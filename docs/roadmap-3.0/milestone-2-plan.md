@@ -61,7 +61,7 @@ Every fact below was read from the file named, or checked by running the command
 6. **One module resolver for both commands.** New private `Resolve-CompleterSetModule -Name <string>` implements §3 "Resolution" steps 1 to 6 with `[System.IO.Directory]::EnumerateDirectories` and `Import-PowerShellDataFile`, never `Get-Module`. It returns `@{ Name; Version; ModuleBase; ManifestPath; Manifest; SetPath }`, where `Name` is the installed folder's spelling, `ModuleBase` is `[System.IO.Path]::GetFullPath` of the chosen folder, and `Version` is the display text (`ModuleVersion`, plus `-<Prerelease>` when set). On failure it throws the bare §3 reason text, which `Import-CompleterSet` and `Test-CompleterSet` wrap with their own prefix. The wildcard check runs in each caller before resolution, because its text names the caller.
 7. **Containment is a static-phase problem.** `Resolve-CompleterSetEntry` gains optional `-ModuleName <string>` and `-ModuleBase <string>`. When `-ModuleBase` is given, the resolved path is tested right after `GetFullPath` and before the existence check, as a new first branch of the existing `if`/`elseif`/`else` chain: compare with `ModuleBase` plus a trailing separator, `OrdinalIgnoreCase` when `$IsWindows -or $IsMacOS`, `Ordinal` on Linux. An outside path adds `@{ Kind = 'OutsideModule'; Message = "the script '<path>' is outside the module '<Name>' at '<ModuleBase>'" }` and is not stat'ed, read, or hashed. The problem then flows through the existing invalid-entry path unchanged. Without the parameters nothing changes, so `-Path`, `-LiteralPath`, and `Test-CompleterSet` (which never passes them) behave as in 2.1.0. Rejected: filtering in `Import-CompleterSet` after the static phase, which would duplicate the invalid-entry report and hash an outside file first.
 8. **`Import-CompleterSet` resolves a list of sets, then runs the 2.1.0 body.** The `process` block first builds `@(@{ SetPath; Module })` for the bound set (`Module = $null` for `-Path` and `-LiteralPath`), resolving every `-Name` before any import (§3). The per-set body is moved, not rewritten. Under `-Name` it adds, in this order, the module verbose line, the trusted-entry warning (counted from the definition's raw entries whose `Trusted` is `[bool] $true`, written after `Import-CompleterSetDefinition` and before entry resolution), and `-ModuleName`/`-ModuleBase` on each `Resolve-CompleterSetEntry` call.
-9. **Package findings are one helper behind an optional parameter.** New private `Get-CompleterSetPackage -SetPath <string> [-Module <psobject>]` returns `@{ Name; ManifestPath; ModuleBase; Manifest }` or `$null`. Under `-Name` it uses the module record. For a path, it lists `*.psd1` in the set folder's parent in ordinal order and takes the first that reads as data and whose `PrivateData.CompleterSet` resolves to the set file; a parent that cannot be listed gives `$null`. New private `Get-CompleterSetPackageFinding -SetDefinition -Package -Entry` builds the three §3 rows. `Get-CompleterSetFinding` gains optional `-Package` and a `List[object]` of resolved entries, filled inside its entry loop; after the loop and before the `UnlistedScript` scan it passes that list to `Get-CompleterSetPackageFinding`. The line 1, column 1 extent is built with `[ScriptExtent]::new($position, $position)` over `[ScriptPosition]::new(<set path>, 1, 1, <line 1 text>)`, so `Get-CompleterSetEntryExtent` is not changed.
+9. **Package findings are one helper behind an optional parameter.** New private `Get-CompleterSetPackage -SetPath <string> [-Module <psobject>]` returns `@{ Name; ManifestPath; ModuleBase; Manifest }` or `$null`. Under `-Name` it uses the module record. For a path, it lists `*.psd1` in the set folder's parent in ordinal order and takes the first that reads as data and whose `PrivateData.CompleterSet` resolves to the set file; a parent that cannot be listed gives `$null`. New private `Get-CompleterSetPackageFinding -SetDefinition -Package -Entry` builds the four §3 rows. `Get-CompleterSetFinding` gains optional `-Package` and a `List[object]` of resolved entries, filled inside its entry loop; after the loop and before the `UnlistedScript` scan it passes that list to `Get-CompleterSetPackageFinding`. The line 1, column 1 extent is built with `[ScriptExtent]::new($position, $position)` over `[ScriptPosition]::new(<set path>, 1, 1, <line 1 text>)`, so `Get-CompleterSetEntryExtent` is not changed.
 10. **Package tests pack everywhere and install only where the store is isolated** (§8 "Package isolation", question 14). Every package test carries `-Skip:(-not (Get-Command Compress-PSResource -ErrorAction Ignore))` with the reason `PSResourceGet 1.1.0 or later is required`. No test matches PSResourceGet's own message text; the preview leg bundles a 1.3.0 preview.
     - **Pack.** `Compress-PSResource -Path <package> -DestinationPath <TestDrive folder> -SkipModuleManifestValidate` builds the `.nupkg` on every leg; it needs no repository and exercises the one-`.psd1` rule.
     - **Register, publish, save.** These run in a child `pwsh -NoProfile` started with a unique repository name, `CaLocal-<8 hex>`, `Unregister-PSResourceRepository -Name <that name>` in `finally`, and an assertion in the test that `Get-PSResourceRepository` names are the same before and after. The child runs `Register-PSResourceRepository -Name <name> -Uri <TestDrive repo> -Trusted`, `Publish-PSResource -Path <package> -Repository <name> -SkipModuleManifestValidate -SkipDependenciesCheck`, and `Save-PSResource -Name <package name> -Repository <name> -Path <TestDrive modules> -SkipDependencyCheck`. All three skip flags are required: without them every fixture that requires CompleterActions 2.2.0 fails on a machine without 2.2.0, which is every machine until the release. The child runs:
@@ -102,8 +102,8 @@ Not departures: the empty `-CommandName` element is not tested, because binding 
 
 These rules go verbatim into every implementer and validator prompt. Reviewers check each one.
 
-- **Documents.** Implementers never edit `docs/roadmap-3.0.md` (its criteria, its status lines, or anything else), `docs/roadmap-3.0/milestone-2-spec.md`, or `docs/roadmap-3.0/milestone-2-plan.md`, and never restate a roadmap exit criterion anywhere: not in the docs, the CHANGELOG, the pull request, or a commit message. A spec or plan defect is reported to the orchestrator, not fixed. The milestone 1 retrospective recorded an agent restating a criterion without sign-off. Gate, in every package review: `git diff main -- docs/roadmap-3.0.md docs/roadmap-3.0/milestone-2-spec.md docs/roadmap-3.0/milestone-2-plan.md` prints nothing. The gate is meaningful only because this plan and the spec are committed to main before the branch is cut (fact "This plan and the spec are untracked"). §6's "Roadmap edits the owner would make" and the release status lines are the owner's.
-- **Worktrees and merges.** Each package runs in its own git worktree, on its own branch `m2/<wp>` (for example `m2/wp4a`) cut from `feat/milestone-2-authoring-distribution` after the packages it depends on are merged there. The orchestrator merges into the feature branch, each when it is accepted, in this order: WP1, WP3, WP5, WP2 code, WP2 corpus, WP4a, WP6, WP4b, WP7. WP8 and WP9 commit their validation files on the feature branch itself. After each merge the orchestrator discards both sides of any conflict in `build/` and in `src/docs/CompleterActions/CompleterActions/CompleterActions-Help.xml` (`git checkout --ours -- build src/docs/CompleterActions/CompleterActions/CompleterActions-Help.xml`), re-runs `pwsh -NoProfile -Command "Invoke-Build -Task build"`, and commits the result as `chore(build): rebuild after merging <wp>`. A conflict anywhere else goes back to the later package. WP1 owns `src/Bootstrap.ps1`; no other package edits it.
+- **Documents.** Implementers never edit `docs/roadmap-3.0.md` (its criteria, its status lines, or anything else), `docs/roadmap-3.0/milestone-2-spec.md`, or `docs/roadmap-3.0/milestone-2-plan.md`, and never restate a roadmap exit criterion anywhere: not in the docs, the CHANGELOG, the pull request, or a commit message. A spec or plan defect is reported to the orchestrator, not fixed. The one exception is WP12, which the owner authorised to edit the spec and this plan (WP12's "Documents" line). The milestone 1 retrospective recorded an agent restating a criterion without sign-off. Gate, in every package review: `git diff main -- docs/roadmap-3.0.md` prints nothing. The spec and plan diff is covered by the WP12 item of the verification checklist, which is meaningful only because this plan and the spec are committed to main before the branch is cut (fact "This plan and the spec are untracked"). §6's "Roadmap edits the owner would make" and the release status lines are the owner's.
+- **Worktrees and merges.** Each package runs in its own git worktree, on its own branch `m2/<wp>` (for example `m2/wp4a`) cut from `feat/milestone-2-authoring-distribution` after the packages it depends on are merged there. The orchestrator merges into the feature branch, each when it is accepted, in this order: WP1, WP3, WP5, WP2 code, WP2 corpus, WP4a, WP6, WP4b, WP7. WP8 and WP9 commit their validation files on the feature branch itself. After each merge the orchestrator discards both sides of any conflict in `build/` and in `src/docs/CompleterActions/CompleterActions/CompleterActions-Help.xml` (`git checkout --ours -- build src/docs/CompleterActions/CompleterActions/CompleterActions-Help.xml`), re-runs `pwsh -NoProfile -Command "Invoke-Build -Task build"`, and commits the result as `chore(build): rebuild after merging <wp>`. A conflict anywhere else goes back to the later package. WP1 owns `src/Bootstrap.ps1`; no other package edits it. The build script takes the module name from its folder leaf, so a worktree must be reached through a junction named `CompleterActions`, and `git -c core.longpaths=true worktree add` is needed under the scratchpad.
 - **Run steps.** Invoke-Build, PSScriptAnalyzer, and Pester are three separate processes, in this order. Never run Pester in the same process as Invoke-Build or PSScriptAnalyzer: both register completers, and that breaks the paging tests.
   1. `pwsh -NoProfile -Command "Invoke-Build -Task build"`. The build comes first locally because the tracked-build test compares a fresh build with the committed `build/` (CI can lint and test first only because its `build/` is already committed).
   2. `pwsh -NoProfile -Command "Invoke-ScriptAnalyzer -Path ./src -Recurse -Settings ./PSScriptAnalyzerSettings.psd1; Invoke-ScriptAnalyzer -Path ./tests -Recurse -Settings ./PSScriptAnalyzerSettings.psd1"` prints nothing. These are CI's two Lint calls; a single call over both paths is not equivalent. `./tests` includes the `.ps1` files under `tests/Fixtures/`.
@@ -441,11 +441,12 @@ Files:
 - the regenerated help XML and `build/`.
 
 Change:
-- **Rows.** The three §3 rows with their texts, severities, and positions.
+- **Rows.** The four §3 rows with their texts, severities, and positions.
   - Row 1 runs per entry in set order, when `[System.IO.Path]::IsPathFullyQualified(<declared path>)` or the resolved path is outside `ModuleBase` (the choice 7 comparison).
   - Row 2 gives one finding per other `.psd1` in `ModuleBase`, in ordinal order of file name.
-  - Row 3 is satisfied by a `RequiredModules` element that is a hashtable whose `ModuleName` is `CompleterActions` and whose `ModuleVersion` or `RequiredVersion`, compared as `[version]`, is 2.2.0 or later. A bare string or a lower version warns.
-- **Order.** The `PackageLayout` findings come after every entry's findings and before `UnlistedScript`: row 1 in entry order, then row 2, then row 3.
+  - Row 3, the set-file name row, was inserted by WP12 before the warning.
+  - Row 4 is satisfied by a `RequiredModules` element that is a hashtable whose `ModuleName` is `CompleterActions` and whose `ModuleVersion` or `RequiredVersion`, compared as `[version]`, is 2.2.0 or later. A bare string or a lower version warns.
+- **Order.** The `PackageLayout` findings come after every entry's findings and before `UnlistedScript`: row 1 in entry order, then row 2, then row 3 (the set-file name, WP12), then row 4.
 - **Plain sets.** No manifest declares a plain set, so it never calls the package finding helper, and its findings, order, and texts are 2.1.0's.
 
 Tests:
@@ -549,7 +550,7 @@ Checks:
 - **Check 17.** In the scratch clone, prototype WP10 step 1 uncommitted: the manifest at `package/PS_Completers.psd1`, a staging script, and the package gate in `tests/Completers.Tests.ps1`. Then:
   - `Test-CompleterSet -LiteralPath <staging>\PS_Completers\completers\ps_completers.psd1` returns nothing;
   - the clone's Pester run passes with its previous count plus one, under the stamped build;
-  - the staged folder, published and saved under WSL with the XDG redirect, gives `Import-CompleterSet -Name PS_Completers` with the same `Pending` count and `Key` list as `-LiteralPath <scratch>\PS_Completers\ps_completers.psd1` in a second process (173 entries and 362 targets at `2c590c6`, appendix B; the assertion is equality). Attach the result as `milestone-2-check17-import-name.csv`.
+  - the staged folder, published and saved under WSL with the XDG redirect, gives `Import-CompleterSet -Name PS_Completers` with the same `Pending` count and `Key` list as `-LiteralPath <scratch>\PS_Completers\ps_completers.psd1` (the clone's root copy, not the staged one) in a second process (173 entries and 362 targets at `2c590c6`, appendix B; the assertion is equality). Attach the result as `milestone-2-check17-import-name.csv`.
 
   The prototypes are handed to the owner as WP10's starting point.
 - **Check 19, live.** A `Get-PSReadLineKeyHandler -Bound -Unbound` snapshot is identical before and after `New-CompleterScript` (with a probe), `Import-CompleterSet -Name`, and `Test-CompleterSet -Name`.
@@ -568,20 +569,20 @@ Done when: `milestone-2-runtime.md` and both CSV files are committed on the bran
 Owns §3 "PS_Completers as the reference package". Described here, NOT made by an implementer agent; the owner makes it in the §3 "Order":
 
 1. After `2.2.0-preview1` is on PSGallery, on a PS_Completers branch:
-   - add `package/PS_Completers.psd1`, shaped as §3, with `PrivateData.CompleterSet = 'completers/ps_completers.psd1'`, `RequiredModules` CompleterActions 2.2.0, and empty export lists;
-   - add a staging tool (for example `tools/Build-Package.ps1`) that builds `<staging>/PS_Completers/` with the manifest, `LICENSE`, and `README.md` at its root and `ps_completers.psd1` with every `*_completer` folder under `completers/`, leaving out `tests`, `tools`, `.github`, `docs`, `package`, and `.claude`;
-   - add the package gate to `tests/Completers.Tests.ps1`: stage into `$TestDrive`, then assert that `Test-CompleterSet -LiteralPath <staging>/PS_Completers/completers/ps_completers.psd1` is empty, importing CompleterActions with `-MinimumVersion 2.2.0`, which the preview satisfies because its `ModuleVersion` is 2.2.0.
+   - add `package/PS_Completers.psd1`, shaped as §3, with `PrivateData.CompleterSet = 'completers/completers.psd1'`, `RequiredModules` CompleterActions 2.2.0, and empty export lists;
+   - add a staging tool (for example `tools/Build-Package.ps1`) that builds `<staging>/PS_Completers/` with the manifest, `LICENSE`, and `README.md` at its root and, under `completers/`, `ps_completers.psd1` copied byte for byte as `completers.psd1` with every `*_completer` folder, leaving out `tests`, `tools`, `.github`, `docs`, `package`, and `.claude`. The set moves to `completers/completers.psd1` in the package because its base name must differ from the module name (§3, WP12);
+   - add the package gate to `tests/Completers.Tests.ps1`: stage into `$TestDrive`, then assert that `Test-CompleterSet -LiteralPath <staging>/PS_Completers/completers/completers.psd1` is empty, importing CompleterActions with `-MinimumVersion 2.2.0`, which the preview satisfies because its `ModuleVersion` is 2.2.0.
 
    The CI there installs with `-Prerelease`, so a green branch is part of the soak. WP9's check 17 prototypes are the starting point.
 2. Any time before the publish: `Find-PSResource PS_Completers -Repository PSGallery` still finds nothing (question 11).
 3. After `2.2.0` stable is on PSGallery: merge the branch, stage, and publish with the owner's key (checklist below). Then add the `README.md` install section (§3 step 4).
 4. Optionally switch the profile line to `Import-CompleterSet -Name PS_Completers` on machines that install the package.
 
-Nothing in the set, its paths, or the files that name it changes (§3 "What does not change").
+Nothing in the set, its paths, or the files that name it changes in the repository (§3 "What does not change"); only the staged copy is named `completers.psd1`.
 
 **Owner checklist for the publish (step 3).** Each item is checked off in order; an agent may prepare the commands but never runs the publish or holds the key.
 1. The PS_Completers branch CI is green with the preview installed by `-Prerelease`, and its run log shows `2.2.0-preview1` installed.
-2. `Test-CompleterSet -LiteralPath <staging>/PS_Completers/completers/ps_completers.psd1` prints nothing, under 2.2.0 stable.
+2. `Test-CompleterSet -LiteralPath <staging>/PS_Completers/completers/completers.psd1` prints nothing, under 2.2.0 stable.
 3. `Find-PSResource PS_Completers -Repository PSGallery` returns nothing.
 4. Dry run: `Compress-PSResource -Path <staging>/PS_Completers -DestinationPath <scratch>` succeeds, and the `.nupkg` holds the manifest at its root and `completers/` with the set and every `*_completer` folder, and no `tests`, `tools`, `.github`, `docs`, `package`, or `.claude`. Then `Publish-PSResource -Path <staging>/PS_Completers -Repository PSGallery -ApiKey <key>`.
 5. On a clean session, run the roadmap's exit criterion 2 line exactly as `docs/roadmap-3.0.md` line 71 states it:
@@ -595,6 +596,33 @@ Nothing in the set, its paths, or the files that name it changes (§3 "What does
 ### WP11 Pull request and release 2.2.0 (owner-run, agent-assisted)
 
 A release procedure, not an implementer package: no `It` blocks and no source change beyond the release commits. The owner runs it; an agent may prepare each command, run the checks, and draft the pull request body and release notes, and stops at every step marked as the owner's. Steps are in "Release recipe for 2.2.0" below. The documents rule applies: the pull request body and the commits report results and never restate an exit criterion.
+
+### WP12 Follow-up decisions after WP9 (owner ruling 2026-10-03)
+
+Goal: three fixes the owner decided on 2026-10-03 after WP9's findings, made on the feature branch itself, after WP9 and before WP11.
+- **Set-file name rule.** WP9 row 5 found that PSResourceGet 1.2.0 `Save-PSResource` reads a `.psd1` whose base name equals the module name, case-insensitively, as the manifest, even in a subfolder. `Test-CompleterSet` gains a `PackageLayout` Error for a set file whose base name equals the module name (§3 row 3; the `RequiredModules` warning, WP6's row 3, is row 4 since). It fires only for a set a manifest declares. `Import-CompleterSet -Name` is unchanged. WP10 stages the PS_Completers set as `completers/completers.psd1`.
+- **Empty stem.** `_.exe` and `__.cmd` match the §2 pattern but give an empty stem. `New-CompleterScript` rejects them in step 1 with `The command name '<name>' has no letter or digit outside its suffix, so no function name can be derived from it.`
+- **Line break in `-HelpArgument`.** A CR or LF would end the line 2 comment. Step 1 rejects it with `-HelpArgument must not contain a line break.`
+
+Both rejections are wrapped in `Failed to create completer script.` and happen before `ShouldProcess` and before any probe.
+
+Documents: the owner authorised this package, and only it, to edit the spec (§2 target list, stem, step 1, and `-HelpArgument`; §3 package layout, row 3, and the PS_Completers section; §8 checks 11, 15, and 17; §9 questions 7 and 8), this plan (internal design choice 9, the Documents and worktree rules, WP6's rows and order, WP9's check 17, WP10, this section, the traceability table, and the verification checklist), and one line of `validation/milestone-2-benchmark.md`. `docs/roadmap-3.0.md` stays untouched.
+
+Files:
+- `src/Private/ConvertTo-CompleterTargetName.ps1` (the spec pattern, then the empty-stem check) and `src/Public/New-CompleterScript.ps1` (the `-HelpArgument` check), with `src/docs/CompleterActions/New-CompleterScript.md`;
+- `src/Private/Get-CompleterSetPackageFinding.ps1` (row 3), `src/Public/Test-CompleterSet.ps1`, and `src/docs/CompleterActions/Test-CompleterSet.md`;
+- `en-US/about_Completer_Sets.help.txt` (the rule and its reason, and the examples renamed to `completers.psd1`) and `CHANGELOG.md`;
+- `tests/CompleterScaffold.Tests.ps1` and `tests/CompleterSetPackage.Tests.ps1`;
+- the regenerated help XML and `build/`.
+
+Tests:
+- `rejects the command name <Name>, whose stem would be empty` (`_.exe`, `__.cmd`, `_+.COM`) and the `_.exe` and `__.cmd` cases of `fails <Case> with its section 2 text wrapped in Failed to create completer script`, which also assert that nothing is written;
+- `writes Complete-A for the name _a, whose letter is outside any suffix`;
+- `fails a -HelpArgument that holds <Case>, before anything runs or is written` (CR, LF, CR LF; the counting runner shim records no run);
+- `applies the set-file name rule to the module <ModuleName> through -<Source>` (`Completers` and `completers` fire, `CaFixtureSet` does not, through `-LiteralPath` and `-Name`, on every leg);
+- the mutation `a manifest renamed to the set file's base name` in `reports <Mutation> and nothing after reverting it`, and row 3 in `writes PackageLayout findings after the entry findings and before UnlistedScript`.
+
+Done when: the three run steps pass, the branch keeps one distinct trailer line, and `git diff main -- docs/roadmap-3.0.md` prints nothing.
 
 ## Order and parallelism
 
@@ -625,7 +653,8 @@ WP1 feeds WP2 corpus (the runner) and WP4a; WP2 code feeds WP2 corpus as well as
 
 Before the pull request:
 
-- [ ] This plan and the spec were committed to main before the branch was cut, and `git diff main -- docs/roadmap-3.0.md docs/roadmap-3.0/milestone-2-spec.md docs/roadmap-3.0/milestone-2-plan.md` prints nothing.
+- [ ] This plan and the spec were committed to main before the branch was cut, and `git diff main -- docs/roadmap-3.0.md docs/roadmap-3.0/milestone-2-spec.md docs/roadmap-3.0/milestone-2-plan.md` prints nothing, apart from the WP12 edits of the next item.
+- [ ] WP12: its tests pass on every leg; `git diff main -- docs/roadmap-3.0.md` prints nothing; and `git log main..HEAD --format=%s -- docs/roadmap-3.0/milestone-2-spec.md docs/roadmap-3.0/milestone-2-plan.md` prints only `docs(roadmap): record the WP12 follow-up decisions in the milestone 2 spec and plan` and `docs(roadmap): align the milestone 2 spec and plan wording with the WP12 rows`.
 - [ ] `pwsh -NoProfile -Command "Invoke-Build -Task build"` succeeds in its own process, first; `build/` and both help XML files are committed.
 - [ ] The two `Invoke-ScriptAnalyzer` calls of the rules print nothing, in a process separate from Pester.
 - [ ] `pwsh -NoProfile -Command '$ErrorActionPreference="Stop"; Invoke-Pester -Path ./tests -CI'` passes in a new process, including the tracked-build test. The count is reported, not gated (see the estimate).
@@ -646,11 +675,11 @@ Before the pull request:
 | 8 Probe mechanics | WP4a Pester, every leg; WP1 runner tests; WP4b end to end |
 | 9 Probe decisions | WP1 Pester (PE reader); WP4a Pester (`/?` rule, start failures) |
 | 10 Probe safety | WP1 resolution tests; WP4a (refused applications run nothing); WP4b end to end, `-WhatIf` in a child process |
-| 11 Files, errors, pipeline input | WP4b Pester; WP3 write tests |
+| 11 Files, errors, pipeline input | WP4b Pester; WP3 write tests; WP12 Pester (empty-stem names, `-HelpArgument` line breaks) |
 | 12 Self-check | WP4b Pester; WP3 unit tests |
 | 13 Resolution rule | WP5 Pester |
 | 14 Package rules for `-Name` | WP5 Pester |
-| 15 `Test-CompleterSet` package checks | WP6 Pester (cross-drive case on Windows CI only) |
+| 15 `Test-CompleterSet` package checks | WP6 Pester (cross-drive case on Windows CI only); WP12 Pester (set-file name row) |
 | 16 Plain sets untouched | WP6 (drift file unchanged and passing); WP9 scratch clone |
 | 17 PS_Completers as a package | WP9 scratch clone (prototype of WP10 step 1); release recipe step 3 (real preview build) |
 | 18 Help content | WP7 Pester; WP9 from the build |
@@ -684,6 +713,7 @@ Every behaviour statement lands in exactly one package. "Verified by" packages o
 | §3 `Test-CompleterSet -Name` and `PackageLayout` | WP6 | WP9 |
 | §3 `Export-CompleterSet` and the package layout (no change) | none (nothing to build) | existing tests, WP6 (row 1 on another drive) |
 | §3 PS_Completers as the reference package | WP10 (owner) | WP9 (check 17 prototype) |
+| §2 empty-stem and `-HelpArgument` line-break rejections; §3 set-file name rule (row 3) | WP12 | |
 | §4 Documentation, including `.github/copilot-instructions.md` | WP7 | |
 | §5 Performance | WP8 | |
 | §6 Release | WP11 | |

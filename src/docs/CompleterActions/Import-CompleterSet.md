@@ -31,6 +31,13 @@ Import-CompleterSet -LiteralPath <string[]> [-SkipInvalid] [-Force] [-WhatIf] [-
  [<CommonParameters>]
 ```
 
+### Name
+
+```PowerShell
+Import-CompleterSet -Name <string[]> [-SkipInvalid] [-Force] [-WhatIf] [-Confirm]
+ [<CommonParameters>]
+```
+
 ## DESCRIPTION
 
 Reads a completer set, a `.psd1` data file written by `Export-CompleterSet` or
@@ -87,6 +94,21 @@ completer were registered. `-Force` replaces existing registrations for the
 set's targets and retries `Failed` ones; `Reset-Completer` retries them without
 re-importing the set.
 
+With `-Name` the set comes from an installed completer set package: a module
+whose manifest names its set file in `PrivateData.CompleterSet`, as
+`'<folder>/<file>.psd1'` in a folder directly below the module folder, which
+holds the manifest as its only `.psd1`. The module is found the way
+`Import-Module` finds it, without loading it: the first `$env:PSModulePath` root
+that has the module wins, and within it the highest version, which is used
+even when its set is broken. The manifest is read as data, so the package's
+`RootModule`, `ScriptsToProcess`, `NestedModules`, and `RequiredModules` never
+load or run. Every name is resolved before any set is imported, and the set is
+then imported as `-LiteralPath` imports it, with two rules for packages. An
+entry whose script resolves outside the module folder is an invalid entry. A
+set with trusted entries writes one warning per name that counts them.
+Installing a completer set package and importing it by name is a decision to
+run its scripts: each one runs at its first tab, under its entry's trust tier.
+
 ## EXAMPLES
 
 ### EXAMPLE 1
@@ -115,6 +137,16 @@ Import-CompleterSet -Path ~\Completers\completers.psd1 -WhatIf
 
 Runs the full validation and reports what would be registered without changing
 the session.
+
+### EXAMPLE 4
+
+```PowerShell
+Import-CompleterSet -Name PS_Completers
+```
+
+Registers every completer script in the set of the installed `PS_Completers`
+package. After `Install-PSResource PS_Completers` this is the one line a profile
+needs, with no path.
 
 ## PARAMETERS
 
@@ -179,6 +211,29 @@ ParameterSets:
   IsRequired: true
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: true
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -Name
+
+The names of installed completer set modules. Each name is taken literally: a
+name containing `*`, `?`, `[`, or `]` fails the call before any name is
+resolved. The parameter takes no pipeline input.
+
+```yaml
+Type: System.String[]
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: Name
+  Position: Named
+  IsRequired: true
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []

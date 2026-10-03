@@ -964,11 +964,31 @@ completer were registered. -Force replaces existing registrations for the
 set's targets and retries Failed ones; Reset-Completer retries them without
 re-importing the set.
 
+With -Name the set comes from an installed completer set package: a module
+whose manifest names its set file in PrivateData.CompleterSet, as
+'<folder>/<file>.psd1' in a folder directly below the module folder, which
+holds the manifest as its only .psd1. The module is found the way
+Import-Module finds it, without loading it: the first $env:PSModulePath root
+that has the module wins, and within it the highest version, which is used
+even when its set is broken. The manifest is read as data, so the package's
+RootModule, ScriptsToProcess, NestedModules, and RequiredModules never load or
+run. Every name is resolved before any set is imported, and the set is then
+imported as -LiteralPath imports it, with two rules for packages. An entry
+whose script resolves outside the module folder is an invalid entry. A set
+with trusted entries writes one warning per name that counts them. Installing
+a completer set package and importing it by name is a decision to run its
+scripts: each one runs at its first tab, under its entry's trust tier.
+
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
 
 .PARAMETER LiteralPath
 The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Name
+The names of installed completer set modules. Each name is taken literally: a
+name containing *, ?, [, or ] fails the call before any name is resolved. The
+parameter takes no pipeline input.
 
 .PARAMETER SkipInvalid
 Writes each invalid entry as a warning and registers the valid entries instead
@@ -995,6 +1015,13 @@ PS> Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid -Force
 
 Registers the valid entries, warns about the rest, and replaces any existing
 registration for the same targets.
+
+.EXAMPLE
+PS> Import-CompleterSet -Name PS_Completers
+
+Registers every completer script in the set of the installed PS_Completers
+package. After Install-PSResource PS_Completers this is the one line a profile
+needs, with no path.
 #>
 function Import-CompleterSet
 <#
@@ -1013,6 +1040,10 @@ function Import-CompleterSet
         [Alias('PSPath')]
         [ValidateNotNullOrEmpty()]
         [string[]] $LiteralPath,
+
+        [Parameter(Mandatory, ParameterSetName = 'Name')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Name,
 
         [Parameter()]
         [switch] $SkipInvalid,
@@ -1033,7 +1064,7 @@ function Import-CompleterSet
                         (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
                     }
                 }
-                else
+                elseif ($PSCmdlet.ParameterSetName -eq 'Path')
                 {
                     foreach ($pathItem in $Path)
                     {
@@ -1042,16 +1073,63 @@ function Import-CompleterSet
                 }
             )
 
-            foreach ($setPath in $resolvedPaths)
+            $sets = @(
+                if ($PSCmdlet.ParameterSetName -eq 'Name')
+                {
+                    foreach ($nameItem in $Name)
+                    {
+                        if ($nameItem -match '[*?\[\]]')
+                        {
+                            throw "Import-CompleterSet -Name does not accept wildcards. Received '$nameItem'."
+                        }
+                    }
+
+                    foreach ($nameItem in $Name)
+                    {
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        @{ SetPath = $setModule.SetPath; Module = $setModule }
+                    }
+                }
+                else
+                {
+                    foreach ($resolvedPath in $resolvedPaths)
+                    {
+                        @{ SetPath = $resolvedPath; Module = $null }
+                    }
+                }
+            )
+
+            foreach ($set in $sets)
             {
+                $setPath = $set.SetPath
+                $setModule = $set.Module
+                $moduleParameters = @{}
+
+                if ($null -ne $setModule)
+                {
+                    Write-Verbose -Message "Completer set module '$($setModule.Name)' $($setModule.Version) at '$($setModule.ModuleBase)': '$setPath'."
+                    $moduleParameters = @{ ModuleName = $setModule.Name; ModuleBase = $setModule.ModuleBase }
+                }
+
                 $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
+
+                if ($null -ne $setModule)
+                {
+                    $trustedEntryCount = @($setDefinition.Entries.Where({ $_ -is [System.Collections.IDictionary] -and $_.Contains('Trusted') -and $_['Trusted'] -is [bool] -and $_['Trusted'] })).Count
+
+                    if ($trustedEntryCount -gt 0)
+                    {
+                        Write-Warning -Message "The completer set module '$($setModule.Name)' $($setModule.Version) declares $trustedEntryCount trusted completer scripts, which run without the strict grammar check at first tab."
+                    }
+                }
+
                 $snapshot = Get-CompleterRegistrationSnapshot
                 $entryIndex = 0
                 $staticEntries = @(
                     foreach ($rawEntry in $setDefinition.Entries)
                     {
                         $entryIndex++
-                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory
+                        Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $setDefinition.Directory @moduleParameters
                     }
                 )
                 $entries = @(Resolve-CompleterSetRegistration -Entry $staticEntries -Snapshot $snapshot -Force:$Force)
@@ -1115,6 +1193,304 @@ function Import-CompleterSet
         catch
         {
             throw "Failed to import completer set. $($_.Exception.Message)"
+        }
+    }
+}
+<#
+.SYNOPSIS
+Writes a completer script skeleton for a native command that passes Test-CompleterScript as written.
+
+.DESCRIPTION
+Writes a native completer script for one or more command names: a guarded,
+literal-only table of subcommands, a Complete-<Stem> function that offers them
+in the first argument position, and one bare Register-ArgumentCompleter call
+that names every target. The file passes Test-CompleterScript and imports with
+Import-CompleterScript and Register-Completer -Lazy before the author edits it.
+
+The first -CommandName value is the primary name: it names the functions and
+the state variable, and it is the one probed. Every name must be a bare command
+name. The target list follows the -CommandName order, and a name that does not
+end in .exe, .cmd, .bat, .ps1, or .com is followed by the same name with .exe
+appended, so -CommandName rg registers 'rg' and 'rg.exe'.
+
+The subcommand table is seeded in one of three ways. By default the command
+runs the primary name's help and parses its commands section. -HelpText parses
+help text the author already captured and runs nothing. -NoProbe runs nothing
+and writes an empty table.
+
+The probe runs only an application that Get-Command resolves; a function,
+alias, cmdlet, or script of that name is never run. On Windows it runs only
+a .exe whose PE header marks a console program, so GUI programs, shims such as
+npm.cmd, and app execution aliases are refused with a warning. The program
+runs with the help argument alone, standard input closed, the temporary
+directory as its working directory, and NO_COLOR set, under a 5-second limit.
+Without -HelpArgument the probe passes --help; on Windows, when --help ran to
+completion, gave no subcommand, and printed fewer than five non-blank lines,
+/? runs once and its result is used. A run that does not exit in time, or that
+leaves a process holding its output, is stopped and its output is not used.
+-WhatIf and -Confirm name the program before anything runs.
+
+Before anything is resolved, probed, or written, every -CommandName value,
+-HelpArgument, and the -Path are checked: a name must keep a letter or digit
+outside a trailing .exe, .cmd, .bat, .ps1, or .com, -HelpArgument must not
+contain a line break, the path must end in .ps1, must not be a directory, and
+its folder must exist, and the file must not exist unless -Force is given. The
+script is written to a temporary file beside the target, checked with the
+strict grammar Test-CompleterScript applies, and moved into place only when it
+conforms and registers exactly the target list; otherwise nothing is written.
+The file is UTF-8 without a byte-order mark, with the platform newline and a
+final newline.
+
+Every failure is a terminating error that begins 'Failed to create completer
+script.', and a failed call leaves nothing at the path.
+
+.PARAMETER CommandName
+The native command names. The first is the primary name: it names the
+functions and state, and it is the one probed.
+
+.PARAMETER Path
+The .ps1 file to write. A relative path is resolved against the current
+location. The parent directory must exist.
+
+.PARAMETER HelpArgument
+The one argument the probe passes. When omitted the probe passes --help and,
+on Windows, may fall back to /?. It must not contain a line break, because
+line 2 of the script names it in a comment.
+
+.PARAMETER HelpText
+Help text the author already captured. Lines are accumulated across pipeline
+input, joined with LF, cleaned, and parsed; nothing is run.
+winget --help | New-CompleterScript winget .\winget_completer.ps1 binds here.
+
+.PARAMETER NoProbe
+Runs nothing and writes an empty subcommand table.
+
+.PARAMETER Force
+Overwrites an existing file.
+
+.PARAMETER PassThru
+Returns the written file as System.IO.FileInfo, so it pipes into
+Test-CompleterScript and Import-CompleterScript. Without -PassThru the
+command returns nothing.
+
+.INPUTS
+System.String
+Help text lines, bound to -HelpText.
+
+.OUTPUTS
+System.IO.FileInfo
+When -PassThru is used, returns the written script file.
+
+.EXAMPLE
+PS> New-CompleterScript -CommandName cargo -Path .\cargo_completer\cargo_completer.ps1 -PassThru | Test-CompleterScript
+
+Writes the cargo skeleton seeded from 'cargo --help' and checks it; the
+pipeline is empty.
+
+.EXAMPLE
+PS> winget --help | New-CompleterScript -CommandName winget -Path .\winget_completer\winget_completer.ps1
+
+Seeds the table from help the author ran, for a command the probe will not
+run.
+
+.EXAMPLE
+PS> New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -Force
+
+Writes an empty skeleton without running anything, replacing an existing file.
+#>
+function New-CompleterScript
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Probe', ConfirmImpact = 'Low')]
+    [OutputType([System.IO.FileInfo])]
+    param(
+        [Parameter(Mandatory, Position = 0)]
+        [string[]] $CommandName,
+
+        [Parameter(Mandatory, Position = 1)]
+        [string] $Path,
+
+        [Parameter(ParameterSetName = 'Probe')]
+        [string] $HelpArgument,
+
+        [Parameter(Mandatory, ParameterSetName = 'HelpText', ValueFromPipeline)]
+        [AllowEmptyString()]
+        [AllowEmptyCollection()]
+        [string[]] $HelpText,
+
+        [Parameter(Mandatory, ParameterSetName = 'NoProbe')]
+        [switch] $NoProbe,
+
+        [Parameter()]
+        [switch] $Force,
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        try
+        {
+            $targetNames = @(ConvertTo-CompleterTargetName -CommandName $CommandName)
+
+            # Line 2 of the script names the argument in a comment, which a line break would end.
+            if ($HelpArgument.IndexOfAny([char[]] "`r`n") -ge 0)
+            {
+                throw '-HelpArgument must not contain a line break.'
+            }
+
+            $outputPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
+
+            if ([System.IO.Path]::GetExtension($outputPath) -ne '.ps1')
+            {
+                throw "Completer scripts must be .ps1 files. Received '$outputPath'."
+            }
+
+            if (Test-Path -LiteralPath $outputPath -PathType Container)
+            {
+                throw "Completer scripts must be file paths. '$outputPath' is a directory."
+            }
+
+            $outputDirectory = Split-Path -Path $outputPath -Parent
+
+            if (-not (Test-Path -LiteralPath $outputDirectory -PathType Container))
+            {
+                throw "The directory '$outputDirectory' does not exist."
+            }
+
+            if (-not $Force -and (Test-Path -LiteralPath $outputPath))
+            {
+                throw "The file '$outputPath' already exists. Use -Force to overwrite it."
+            }
+        }
+        catch
+        {
+            # ThrowTerminatingError, unlike throw, is not silenced by -ErrorAction
+            # SilentlyContinue or Ignore, so a failed check never lets end write.
+            $exception = [System.InvalidOperationException]::new("Failed to create completer script. $($_.Exception.Message)", $_.Exception)
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new($exception, 'NewCompleterScriptFailed', [System.Management.Automation.ErrorCategory]::InvalidOperation, $Path))
+        }
+
+        $helpLines = [System.Collections.Generic.List[string]]::new()
+    }
+
+    process
+    {
+        if ($PSCmdlet.ParameterSetName -eq 'HelpText')
+        {
+            foreach ($helpLine in $HelpText)
+            {
+                $helpLines.Add($helpLine)
+            }
+        }
+    }
+
+    end
+    {
+        try
+        {
+            $primaryName = $CommandName[0]
+            $application = $null
+            $action = 'Create completer script without running a program'
+
+            if ($PSCmdlet.ParameterSetName -eq 'Probe')
+            {
+                $application = Resolve-CompleterHelpProbeApplication -Name $primaryName
+
+                if ($application.CanRun)
+                {
+                    Write-Verbose -Message "Resolved '$primaryName' to the application '$($application.Path)'."
+
+                    if ($PSBoundParameters.ContainsKey('HelpArgument'))
+                    {
+                        $action = "Create completer script, running '$($application.Path) $HelpArgument' to read its help"
+                    }
+                    elseif ($IsWindows)
+                    {
+                        $action = "Create completer script, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
+                    }
+                    else
+                    {
+                        $action = "Create completer script, running '$($application.Path) --help' to read its help"
+                    }
+                }
+                else
+                {
+                    Write-Verbose -Message "The probe will not run '$primaryName'. $($application.Warning)"
+                }
+            }
+
+            if (-not $PSCmdlet.ShouldProcess($outputPath, $action))
+            {
+                return
+            }
+
+            # The call was confirmed once; the write that follows must not ask again.
+            $ConfirmPreference = 'None'
+
+            $subcommands = @()
+            $skeletonParameters = @{}
+
+            switch ($PSCmdlet.ParameterSetName)
+            {
+                'Probe'
+                {
+                    $probeParameters = @{
+                        Application    = $application
+                        TimeoutSeconds = $script:CompleterHelpProbeTimeoutSeconds
+                    }
+
+                    if ($PSBoundParameters.ContainsKey('HelpArgument'))
+                    {
+                        $probeParameters['HelpArgument'] = $HelpArgument
+                    }
+
+                    $probe = Get-CompleterHelpSubcommand @probeParameters
+
+                    foreach ($warning in $probe.Warnings)
+                    {
+                        Write-Warning -Message $warning
+                    }
+
+                    foreach ($verboseLine in $probe.VerboseLines)
+                    {
+                        Write-Verbose -Message $verboseLine
+                    }
+
+                    $subcommands = @($probe.Subcommands)
+
+                    if ($subcommands.Count -gt 0)
+                    {
+                        $skeletonParameters['SeedKind'] = 'Probe'
+                        $skeletonParameters['ProbeArgument'] = $probe.Argument
+                    }
+                }
+
+                'HelpText'
+                {
+                    $subcommands = @(ConvertFrom-CompleterHelpText -Text (ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")))
+                    $skeletonParameters['SeedKind'] = 'HelpText'
+                }
+            }
+
+            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands @skeletonParameters
+
+            $file = Save-CompleterScriptFile -Line $lines -LiteralPath $outputPath -ExpectedTarget $targetNames -Force:$Force -Verbose:$false
+
+            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands."
+
+            if ($PassThru)
+            {
+                $file
+            }
+        }
+        catch
+        {
+            $exception = [System.InvalidOperationException]::new("Failed to create completer script. $($_.Exception.Message)", $_.Exception)
+            $PSCmdlet.ThrowTerminatingError([System.Management.Automation.ErrorRecord]::new($exception, 'NewCompleterScriptFailed', [System.Management.Automation.ErrorCategory]::InvalidOperation, $Path))
         }
     }
 }
@@ -2104,27 +2480,71 @@ or Warning when the set still imports but is stale or slower:
 - HashMismatch (Warning): the script changed since the Hash was written.
 - MissingHash (Warning): the entry has no Hash.
 - InvalidHash (Warning): the Hash is not 'SHA256:' and 64 hexadecimal digits.
+- PackageLayout (Error or Warning): the set belongs to a completer set
+  package that breaks the package layout. Error when the package would fail
+  to publish, install, or import, and Warning when it installs but a clean
+  machine is missing a piece, as listed below.
 - UnlistedScript (Warning): a file under the set's directory matches -Filter
   and no entry lists it.
 
-Findings come in set order, each entry's in the order above, and the
-UnlistedScript findings follow, sorted by path. Path is the set file for
-every finding, because the fix is always made in the set, usually by
-regenerating it with Export-CompleterSet.
+Findings come in set order, each entry's in the order above, then the
+PackageLayout findings, and the UnlistedScript findings follow, sorted by
+path. Path is the set file for every finding, because the fix is always made
+in the set, usually by regenerating it with Export-CompleterSet; a finding
+about the manifest or the module folder names the file in Message and points
+at line 1, column 1 of the set.
 
-Every -Path or -LiteralPath value is resolved before any set is tested. The
-sets are then tested in the order given, and each set's findings are written
-before the next set is read. A set that cannot be read, such as one without
-Version = 1, stops the call with a terminating error after the findings of
-the earlier sets. A folder under a set's directory that cannot be read also
-stops the call with a terminating error, after that set's entry findings,
-because the scan for unlisted scripts would be incomplete.
+A set is a package set when its module manifest is known: through -Name, or,
+for -Path and -LiteralPath, when the folder above the set file's folder holds
+a .psd1 that reads as data and whose PrivateData.CompleterSet resolves to the
+set file, as in a staged package before it is published. When more than
+one .psd1 there declares the set, the first in ordinal order of file name is
+the manifest. A .psd1 that is not data declares nothing, and a folder that
+cannot be listed holds no manifest. A set that no manifest declares gets no
+PackageLayout finding. A package set is checked for four things, reported
+in this order:
+
+- Error, one per entry in set order, at the entry's Path: the Path is fully
+  qualified, or resolves outside the module folder, so an installed copy of
+  the package does not contain the script. A fully qualified path is an
+  error even inside the module folder, because it names the source tree, not
+  the installed copy.
+- Error, one per file in ordinal order of file name: the module folder holds
+  a .psd1 other than the manifest, so Publish-PSResource can take the wrong
+  file as the manifest.
+- Error: the set file's base name equals the module name, compared
+  case-insensitively, so PSResourceGet can take the set as the module
+  manifest when it saves or installs the package, even from a subfolder.
+- Warning: RequiredModules does not list CompleterActions as a hashtable
+  with a ModuleVersion or RequiredVersion of 2.2.0 or later, so installing
+  the package does not install Import-CompleterSet -Name.
+
+A RootModule in the manifest is not a finding.
+
+With -Name the set comes from an installed completer set package, found
+exactly as Import-CompleterSet -Name finds it: the first $env:PSModulePath
+root that has the module wins, and within it the highest version. The
+manifest is read as data, so nothing in the package runs. Each name is taken
+literally, and a name that does not resolve fails the call.
+
+Every -Path, -LiteralPath, or -Name value is resolved before any set is
+tested. The sets are then tested in the order given, and each set's findings
+are written before the next set is read. A set that cannot be read, such as
+one without Version = 1, stops the call with a terminating error after the
+findings of the earlier sets. A folder under a set's directory that cannot be
+read also stops the call with a terminating error, after that set's entry
+findings, because the scan for unlisted scripts would be incomplete.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
 
 .PARAMETER LiteralPath
 The literal path to a completer set file. Wildcards are not expanded.
+
+.PARAMETER Name
+The names of installed completer set modules. Each name is taken literally: a
+name containing *, ?, [, or ] fails the call before any name is resolved. The
+parameter takes no pipeline input.
 
 .PARAMETER Filter
 The file-name pattern of the scan for scripts that no entry lists. The scan
@@ -2146,6 +2566,12 @@ script the set does not list, or nothing when the set is current.
 PS> Test-CompleterSet -LiteralPath .\completers.psd1 | Where-Object Severity -eq Error
 
 Lists only the drift that would make Import-CompleterSet reject the set.
+
+.EXAMPLE
+PS> Test-CompleterSet -Name PS_Completers
+
+Checks the installed PS_Completers package's set against its scripts and the
+package layout, by the same name the profile's Import-CompleterSet line uses.
 #>
 function Test-CompleterSet
 <#
@@ -2165,6 +2591,10 @@ function Test-CompleterSet
         [ValidateNotNullOrEmpty()]
         [string[]] $LiteralPath,
 
+        [Parameter(Mandatory, ParameterSetName = 'Name')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Name,
+
         [Parameter()]
         [ValidateNotNullOrEmpty()]
         [string] $Filter = '*_completer.ps1'
@@ -2174,27 +2604,54 @@ function Test-CompleterSet
     {
         try
         {
-            $resolvedPaths = @(
-                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+            $sets = @(
+                if ($PSCmdlet.ParameterSetName -eq 'Name')
+                {
+                    foreach ($nameItem in $Name)
+                    {
+                        if ($nameItem -match '[*?\[\]]')
+                        {
+                            throw "Test-CompleterSet -Name does not accept wildcards. Received '$nameItem'."
+                        }
+                    }
+
+                    foreach ($nameItem in $Name)
+                    {
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        @{ SetPath = $setModule.SetPath; Module = $setModule }
+                    }
+                }
+                elseif ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
                 {
                     foreach ($literalPathItem in $LiteralPath)
                     {
-                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                        @{ SetPath = (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName; Module = $null }
                     }
                 }
                 else
                 {
                     foreach ($pathItem in $Path)
                     {
-                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                        foreach ($resolvedPath in @(Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath))
+                        {
+                            @{ SetPath = $resolvedPath; Module = $null }
+                        }
                     }
                 }
             )
 
-            foreach ($setPath in $resolvedPaths)
+            foreach ($set in $sets)
             {
-                $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath
-                Get-CompleterSetFinding -SetDefinition $setDefinition -Filter $Filter
+                $setDefinition = Import-CompleterSetDefinition -LiteralPath $set.SetPath
+                $findingParameters = @{ SetDefinition = $setDefinition; Filter = $Filter }
+                $package = Get-CompleterSetPackage -SetPath $setDefinition.Path -Module $set.Module
+
+                if ($null -ne $package)
+                {
+                    $findingParameters['Package'] = $package
+                }
+
+                Get-CompleterSetFinding @findingParameters
             }
         }
         catch
@@ -2954,6 +3411,457 @@ function Assert-CompleterScriptConformance
 }
 <#
 .SYNOPSIS
+Decodes the bytes a help probe captured into text.
+
+.DESCRIPTION
+Applies the help decoding steps in order. Bytes that start with the UTF-16 LE
+byte-order mark FF FE, or that contain U+0000 when decoded leniently as UTF-8,
+are decoded as UTF-16 LE. Otherwise the bytes are decoded as strict UTF-8,
+after skipping a UTF-8 byte-order mark. When strict UTF-8 fails, Windows
+decodes with the OEM code page of the current culture and Linux and macOS
+decode with Latin-1 (code page 28591). A leading U+FEFF left by any decoder is
+removed last. The text is not cleaned; ConvertTo-CompleterCleanHelpText does
+that.
+
+.PARAMETER Bytes
+The captured bytes of one output stream.
+
+.OUTPUTS
+System.String
+#>
+function ConvertFrom-CompleterHelpOutput
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [byte[]] $Bytes
+    )
+
+    if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE)
+    {
+        $text = [System.Text.Encoding]::Unicode.GetString($Bytes)
+    }
+    elseif ([System.Text.Encoding]::UTF8.GetString($Bytes).Contains([char] 0))
+    {
+        $text = [System.Text.Encoding]::Unicode.GetString($Bytes)
+    }
+    else
+    {
+        $offset = 0
+        if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF)
+        {
+            $offset = 3
+        }
+
+        try
+        {
+            $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($Bytes, $offset, $Bytes.Length - $offset)
+        }
+        catch [System.Text.DecoderFallbackException]
+        {
+            $codePage = if ($IsWindows)
+            {
+                [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage
+            }
+            else
+            {
+                28591
+            }
+
+            $text = [System.Text.Encoding]::GetEncoding($codePage).GetString($Bytes, $offset, $Bytes.Length - $offset)
+        }
+    }
+
+    if ($text.Length -gt 0 -and $text[0] -eq [char] 0xFEFF)
+    {
+        $text = $text.Substring(1)
+    }
+
+    $text
+}
+<#
+.SYNOPSIS
+Parses the subcommand table out of cleaned help text.
+
+.DESCRIPTION
+Reads the text line by line with fixed rules. A section header is a whole line
+of one to six words, optionally wrapped in angle brackets and followed by a
+colon, one of which is command, commands, subcommand, or subcommands. After a
+header, blank and underline lines are skipped and the first entry fixes the
+section's indentation; any other line before the first entry ends the
+section. Entries at that indentation are kept; deeper lines are
+continuations and other non-entry lines are skipped. A blank line, a header,
+or a shallower entry ends the section. Names keep help order and are
+de-duplicated case-insensitively. Control, format, and line and paragraph
+separator characters in a description become spaces, whitespace runs
+collapse, and an empty description becomes the name.
+
+.PARAMETER Text
+Help text already cleaned by ConvertTo-CompleterCleanHelpText.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+#>
+function ConvertFrom-CompleterHelpText
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Text
+    )
+
+    $headerPattern = [regex]::new('^\s*<?(?<words>[A-Za-z(),]+(?: [A-Za-z(),]+){0,5})>?:?\s*$')
+    $entryPattern = [regex]::new('^(?<indent>[ \t]*)(?<name>/?[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)\*?(?:,\s*[A-Za-z0-9][A-Za-z0-9._-]*)*(?<sep>\s*:\s+|-{2,}| - |\t| {2,})(?<desc>.*)$')
+    $underlinePattern = [regex]::new('^\s*(?:=+|-+)\s*$')
+    $headerWords = [System.Collections.Generic.HashSet[string]]::new(
+        [string[]] @('command', 'commands', 'subcommand', 'subcommands'),
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    $inSection = $false
+    $sectionIndent = -1
+
+    foreach ($line in $Text.Split("`n"))
+    {
+        $header = $headerPattern.Match($line)
+        if ($header.Success)
+        {
+            $isHeader = $false
+            foreach ($word in $header.Groups['words'].Value.Split(' '))
+            {
+                if ($headerWords.Contains($word.Trim('(', ')', ',')))
+                {
+                    $isHeader = $true
+                    break
+                }
+            }
+
+            if ($isHeader)
+            {
+                $inSection = $true
+                $sectionIndent = -1
+                continue
+            }
+        }
+
+        if (-not $inSection)
+        {
+            continue
+        }
+
+        if ([string]::IsNullOrWhiteSpace($line))
+        {
+            if ($sectionIndent -ge 0)
+            {
+                $inSection = $false
+            }
+
+            continue
+        }
+
+        if ($sectionIndent -lt 0)
+        {
+            if ($underlinePattern.IsMatch($line))
+            {
+                continue
+            }
+
+            $entry = $entryPattern.Match($line)
+            if (-not $entry.Success)
+            {
+                $inSection = $false
+                continue
+            }
+
+            $sectionIndent = $entry.Groups['indent'].Length
+        }
+        else
+        {
+            $indent = $line.Length - $line.TrimStart(' ', "`t").Length
+            if ($indent -gt $sectionIndent)
+            {
+                continue
+            }
+
+            $entry = $entryPattern.Match($line)
+            if (-not $entry.Success)
+            {
+                continue
+            }
+
+            if ($indent -lt $sectionIndent)
+            {
+                $inSection = $false
+                continue
+            }
+        }
+
+        $name = $entry.Groups['name'].Value
+        if (-not $seen.Add($name))
+        {
+            continue
+        }
+
+        $description = [regex]::Replace($entry.Groups['desc'].Value, '[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]', ' ')
+        $description = [regex]::Replace($description, '\s+', ' ').Trim()
+        if ($description.Length -eq 0)
+        {
+            $description = $name
+        }
+
+        [pscustomobject] [ordered] @{
+            Name        = $name
+            Description = $description
+        }
+    }
+}
+<#
+.SYNOPSIS
+Removes terminal formatting from help text.
+
+.DESCRIPTION
+Applies the help cleaning rules in order: CSI sequences, OSC sequences such as
+titles and OSC 8 hyperlinks (only the link text remains), any remaining
+two-character escape, backspace overstrikes, and carriage returns. CR LF
+becomes LF, and then each line keeps only the text after its last remaining
+CR, which removes progress lines. The probe output and -HelpText both go
+through this cleaner before parsing. The result uses LF line endings.
+
+.PARAMETER Text
+The decoded help text.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterCleanHelpText
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Text
+    )
+
+    $clean = [regex]::Replace($Text, '\e\[[0-9;?]*[ -/]*[@-~]', '')
+    $clean = [regex]::Replace($clean, '\e\][^\a\e]*(?:\a|\e\\)', '')
+    $clean = [regex]::Replace($clean, '\e[@-_]', '')
+
+    # Removing [^\x08]\x08 until stable and then any remaining \x08 is done in
+    # linear time: one regex pass removes the simple overstrikes, then a run of
+    # n backspaces erases up to n characters before it, and the backspaces left
+    # over are dropped. Pair removal gives the same result in any order.
+    $clean = [regex]::Replace($clean, '[^\x08]\x08', '')
+    $backspaceRuns = [regex]::Matches($clean, '\x08+')
+    if ($backspaceRuns.Count -gt 0)
+    {
+        $builder = [System.Text.StringBuilder]::new($clean.Length)
+        $start = 0
+        foreach ($run in $backspaceRuns)
+        {
+            $null = $builder.Append($clean.Substring($start, $run.Index - $start))
+            $builder.Length -= [System.Math]::Min($run.Length, $builder.Length)
+            $start = $run.Index + $run.Length
+        }
+
+        $null = $builder.Append($clean.Substring($start))
+        $clean = $builder.ToString()
+    }
+
+    $clean = $clean.Replace("`r`n", "`n")
+
+    $lines = $clean.Split("`n")
+    for ($index = 0; $index -lt $lines.Length; $index++)
+    {
+        $lastReturn = $lines[$index].LastIndexOf("`r")
+        if ($lastReturn -ge 0)
+        {
+            $lines[$index] = $lines[$index].Substring($lastReturn + 1)
+        }
+    }
+
+    $lines -join "`n"
+}
+<#
+.SYNOPSIS
+Derives the stem that names a generated completer script's state and function.
+
+.DESCRIPTION
+Drops one trailing .exe, .cmd, .bat, .ps1, or .com (compared
+case-insensitively) from the primary command name, splits the rest on every
+character that is not an ASCII letter or digit, upper-cases the first
+character of each part with the invariant culture, and joins the parts. 'rg'
+and 'rg.exe' give 'Rg', 'oh-my-posh' gives 'OhMyPosh', 'DSC' stays 'DSC', and
+'7z' gives '7z'. The script names $script:<Stem>CompletionCatalog and
+Complete-<Stem> after it.
+
+.PARAMETER Name
+The primary command name, already checked by ConvertTo-CompleterTargetName.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterScriptStem
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name
+    )
+
+    $baseName = $Name
+
+    foreach ($suffix in '.exe', '.cmd', '.bat', '.ps1', '.com')
+    {
+        if ($baseName.EndsWith($suffix, [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            $baseName = $baseName.Substring(0, $baseName.Length - $suffix.Length)
+            break
+        }
+    }
+
+    $parts = [System.Text.RegularExpressions.Regex]::Split($baseName, '[^A-Za-z0-9]+') | Where-Object { $_.Length -gt 0 }
+
+    -join @($parts | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) })
+}
+<#
+.SYNOPSIS
+Escapes text for a single-quoted PowerShell string literal.
+
+.DESCRIPTION
+Doubles every character PowerShell's tokenizer accepts as a single-quote
+delimiter: U+0027, U+2018, U+2019, U+201A, and U+201B. Help text such as
+"don't" written with a typographic apostrophe would otherwise end the string.
+Every other character is kept as is. The result goes between two U+0027
+quotes.
+
+.PARAMETER Value
+The text to escape.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterSingleQuotedText
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Value
+    )
+
+    $escaped = $Value
+
+    foreach ($quote in [char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B)
+    {
+        $escaped = $escaped.Replace([string] $quote, [string] $quote + $quote)
+    }
+
+    $escaped
+}
+<#
+.SYNOPSIS
+Builds the native target list a generated completer script registers.
+
+.DESCRIPTION
+Checks every command name before building anything, and throws for the first
+name that is not a bare command name: at least one ASCII letter or digit, no
+path separators, spaces, quotes, or wildcard characters, no leading '-' or
+'.', and no trailing '.' or '-'. A name that passes but whose stem would be
+empty, such as '_.exe', whose only letters are its suffix, is then refused
+with its own reason, so no function name is ever derived from an empty stem.
+The list then follows the -CommandName order.
+Each name is written as given, and a name that does not end in .exe, .cmd,
+.bat, .ps1, or .com is followed by the same name with .exe appended. Names are
+de-duplicated case-insensitively, keeping the first spelling, so 'rg' and
+'rg', 'rg.exe' give the same list, and no bare name is derived from a suffixed
+one.
+
+.PARAMETER CommandName
+The command names, primary name first.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterTargetName
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName
+    )
+
+    # The spec's pattern, with \z in place of $ so a trailing newline does not match.
+    $commandNamePattern = '^(?=.*[A-Za-z0-9])[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
+
+    foreach ($commandNameItem in $CommandName)
+    {
+        if (-not [System.Text.RegularExpressions.Regex]::IsMatch($commandNameItem, $commandNamePattern))
+        {
+            throw "'$commandNameItem' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters."
+        }
+
+        if ([string]::IsNullOrEmpty((ConvertTo-CompleterScriptStem -Name $commandNameItem)))
+        {
+            throw "The command name '$commandNameItem' has no letter or digit outside its suffix, so no function name can be derived from it."
+        }
+    }
+
+    $suffixes = '.exe', '.cmd', '.bat', '.ps1', '.com'
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $targetNames = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($commandNameItem in $CommandName)
+    {
+        $names = @($commandNameItem)
+        $hasSuffix = @($suffixes | Where-Object { $commandNameItem.EndsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+
+        if (-not $hasSuffix)
+        {
+            $names += '{0}.exe' -f $commandNameItem
+        }
+
+        foreach ($name in $names)
+        {
+            if ($seen.Add($name))
+            {
+                $targetNames.Add($name)
+            }
+        }
+    }
+
+    $targetNames.ToArray()
+}
+<#
+.SYNOPSIS
 Finds managed completer registrations from module state.
 
 .DESCRIPTION
@@ -3299,6 +4207,236 @@ function Get-CompleterActionState
     }
 
     return $script:CompleterActionState
+}
+<#
+.SYNOPSIS
+Reads a subcommand table by running a program's help.
+
+.DESCRIPTION
+Decides what the help probe runs and turns each run's outcome into a table,
+warnings, and verbose lines.
+
+An application whose CanRun is false runs nothing; its Warning is returned.
+Otherwise the program runs once with -HelpArgument, or with --help when
+-HelpArgument is not given. On Windows, without -HelpArgument, /? runs once
+more only when the --help run exited, yielded no subcommand, and its cleaned
+text has fewer than five non-blank lines; the /? result is then used. No /?
+runs after a timeout, a start failure, or held output, so one call returns at
+most one warning.
+
+A run that timed out, whose output a descendant held, or that failed to start
+gives its warning and an empty table, and adds no probe verbose line, because
+the line's exit code, characters, and subcommands describe a run that exited.
+For a run that exited, the text is standard output, or standard error when
+standard output is empty or whitespace after decoding; the exit code decides
+nothing. The text is decoded, cleaned, and parsed with the help text helpers,
+and the run adds one probe verbose line.
+
+Warnings and verbose lines are returned as data; this helper writes no
+stream.
+
+.PARAMETER Application
+The record Resolve-CompleterHelpProbeApplication returned for the primary
+name.
+
+.PARAMETER HelpArgument
+The one argument to pass. When omitted the probe passes --help, and on
+Windows may fall back to /?.
+
+.PARAMETER TimeoutSeconds
+The deadline for each run, in seconds.
+
+.OUTPUTS
+CompleterActions.CompleterHelpSubcommandResult
+Returns a record with Subcommands (the parsed rows, in help order), Argument
+(the argument of the last run that exited, whose result was used, or null
+when no run exited; a /? run that does not exit leaves it at --help),
+Warnings, and VerboseLines.
+#>
+function Get-CompleterHelpSubcommand
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [psobject] $Application,
+
+        [Parameter()]
+        [string] $HelpArgument,
+
+        [Parameter(Mandatory)]
+        [double] $TimeoutSeconds
+    )
+
+    $subcommands = @()
+    $argument = $null
+    $warnings = [System.Collections.Generic.List[string]]::new()
+    $verboseLines = [System.Collections.Generic.List[string]]::new()
+
+    if (-not $Application.CanRun)
+    {
+        $warnings.Add($Application.Warning)
+    }
+    else
+    {
+        $hasHelpArgument = $PSBoundParameters.ContainsKey('HelpArgument')
+        $runArgument = if ($hasHelpArgument) { $HelpArgument } else { '--help' }
+        $limit = $TimeoutSeconds.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+
+        while ($true)
+        {
+            $result = Invoke-CompleterHelpProcess -FilePath $Application.Path -ArgumentList @($runArgument) -TimeoutSeconds $TimeoutSeconds
+
+            switch ($result.Status)
+            {
+                'TimedOut'
+                {
+                    $warnings.Add("'$($Application.Name) $runArgument' did not exit within $limit seconds and was stopped, so its help was not used.")
+                }
+                'HeldOutput'
+                {
+                    $warnings.Add("'$($Application.Name) $runArgument' exited but left a process holding its output, so its help was not used.")
+                }
+                'StartFailed'
+                {
+                    $warnings.Add("'$($Application.Path)' was not run: $($result.StartError). Pass captured help with -HelpText.")
+                }
+            }
+
+            if ($result.Status -ne 'Exited')
+            {
+                break
+            }
+
+            $text = ConvertFrom-CompleterHelpOutput -Bytes $result.StandardOutput
+            if ([string]::IsNullOrWhiteSpace($text))
+            {
+                $text = ConvertFrom-CompleterHelpOutput -Bytes $result.StandardError
+            }
+
+            $cleanText = ConvertTo-CompleterCleanHelpText -Text $text
+            $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+            $argument = $runArgument
+            $verboseLines.Add("Probed '$($Application.Path) $argument': exit $($result.ExitCode), $($text.Length) characters, $($subcommands.Count) subcommands, $($result.ElapsedMilliseconds) ms.")
+
+            $tryFallback = $IsWindows -and -not $hasHelpArgument -and $argument -eq '--help' -and $subcommands.Count -eq 0
+            if (-not $tryFallback)
+            {
+                break
+            }
+
+            $nonBlankLines = @($cleanText.Split("`n") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+            if ($nonBlankLines -ge 5)
+            {
+                break
+            }
+
+            $runArgument = '/?'
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName   = 'CompleterActions.CompleterHelpSubcommandResult'
+        Subcommands  = $subcommands
+        Argument     = $argument
+        Warnings     = $warnings.ToArray()
+        VerboseLines = $verboseLines.ToArray()
+    }
+}
+<#
+.SYNOPSIS
+Reads the Subsystem field of a Windows program's PE header.
+
+.DESCRIPTION
+Opens the file with File.OpenRead, reads at most its first 4096 bytes, and
+returns the optional header's Subsystem value: 2 for a Windows GUI program, 3
+for a Windows console program, and other values for other images. No process
+is started to inspect the file.
+
+The reader checks the MZ signature, follows e_lfanew (the Int32 at 0x3C) to
+the PE\0\0 signature, checks the optional-header magic (0x10B for PE32, 0x20B
+for PE32+), and reads Subsystem as the UInt16 at e_lfanew + 24 + 68, an offset
+that is the same in PE32 and PE32+. A file too short for that, a wrong
+signature or magic, and any failure to open or read the file, such as an app
+execution alias or a file another handle holds exclusively, return null. The
+reader never throws.
+
+.PARAMETER LiteralPath
+The full path of the file to read.
+
+.OUTPUTS
+System.Int32
+Returns the Subsystem value, or null when the header cannot be read.
+#>
+function Get-CompleterPESubsystem
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([int])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $buffer = [byte[]]::new(4096)
+    $count = 0
+
+    try
+    {
+        $stream = [System.IO.File]::OpenRead($LiteralPath)
+        try
+        {
+            while ($count -lt $buffer.Length)
+            {
+                $read = $stream.Read($buffer, $count, $buffer.Length - $count)
+                if ($read -eq 0)
+                {
+                    break
+                }
+
+                $count += $read
+            }
+        }
+        finally
+        {
+            $stream.Dispose()
+        }
+    }
+    catch
+    {
+        Write-Debug -Message "The program header of '$LiteralPath' could not be read. $($_.Exception.Message)"
+        return $null
+    }
+
+    if ($count -lt 0x40 -or $buffer[0] -ne 0x4D -or $buffer[1] -ne 0x5A)
+    {
+        return $null
+    }
+
+    $peOffset = [System.BitConverter]::ToInt32($buffer, 0x3C)
+    if ($peOffset -lt 0 -or ([long] $peOffset + 94) -gt $count)
+    {
+        return $null
+    }
+
+    if ($buffer[$peOffset] -ne 0x50 -or $buffer[$peOffset + 1] -ne 0x45 -or $buffer[$peOffset + 2] -ne 0 -or $buffer[$peOffset + 3] -ne 0)
+    {
+        return $null
+    }
+
+    $magic = [System.BitConverter]::ToUInt16($buffer, $peOffset + 24)
+    if ($magic -ne 0x10B -and $magic -ne 0x20B)
+    {
+        return $null
+    }
+
+    [int] [System.BitConverter]::ToUInt16($buffer, $peOffset + 24 + 68)
 }
 <#
 .SYNOPSIS
@@ -3717,6 +4855,156 @@ function Get-CompleterScriptParseResult
 }
 <#
 .SYNOPSIS
+Composes the lines of a generated native completer script.
+
+.DESCRIPTION
+Returns the skeleton New-CompleterScript writes, one string per line and
+without line endings: the two comment lines, Set-StrictMode, one guarded
+literal-only state block holding the subcommand table, a Complete-<Stem>
+completion function that offers the table in the first argument position, and
+one bare script-scope Register-ArgumentCompleter call with a literal
+-CommandName list. Every string literal is single-quoted with its quote
+characters doubled. The
+output names no date, version, or machine path, so the same input always gives
+the same lines. The generated code uses four-space indentation and opening
+braces on the same line, because it belongs to the author's repository.
+
+.PARAMETER Name
+The primary command name, as given. Line 1 names it, and so does line 2 of a
+probe-seeded script.
+
+.PARAMETER Stem
+The stem from ConvertTo-CompleterScriptStem.
+
+.PARAMETER Target
+The target list from ConvertTo-CompleterTargetName.
+
+.PARAMETER Subcommand
+The subcommand rows, each with a Name and a Description, in help order. An
+empty list writes an empty table and the skeleton line 2.
+
+.PARAMETER SeedKind
+Where a non-empty table came from: Probe or HelpText. It picks line 2.
+
+.PARAMETER ProbeArgument
+The argument whose output seeded the table. Required with -SeedKind Probe. It
+must not contain a line break, which would end the line 2 comment.
+
+.OUTPUTS
+System.String
+#>
+function Get-CompleterScriptSkeleton
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Stem,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Target,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Subcommand,
+
+        [Parameter()]
+        [ValidateSet('Probe', 'HelpText')]
+        [string] $SeedKind,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [ValidatePattern('\A[^\r\n]*\z')]
+        [string] $ProbeArgument
+    )
+
+    $catalogName = '{0}CompletionCatalog' -f $Stem
+    $functionName = 'Complete-{0}' -f $Stem
+
+    if ($Subcommand.Count -eq 0)
+    {
+        $sourceLine = '# Native completer skeleton: add subcommands to the table and options to {0}.' -f $functionName
+    }
+    elseif ($SeedKind -eq 'Probe' -and $PSBoundParameters.ContainsKey('ProbeArgument'))
+    {
+        $sourceLine = "# Help-seeded native completer: the subcommand table was read from '{0} {1}' when the script was generated." -f $Name, $ProbeArgument
+    }
+    elseif ($SeedKind -eq 'HelpText')
+    {
+        $sourceLine = '# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.'
+    }
+    else
+    {
+        throw 'A non-empty subcommand table needs -SeedKind HelpText, or -SeedKind Probe with -ProbeArgument.'
+    }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add(('# {0} tab completion for PowerShell' -f $Name))
+    $lines.Add($sourceLine)
+    $lines.Add('')
+    $lines.Add('Set-StrictMode -Version 2.0')
+    $lines.Add('')
+    $lines.Add(('if (-not (Get-Variable -Name {0} -Scope Script -ErrorAction Ignore)) {{' -f $catalogName))
+    $lines.Add(('    $script:{0} = @{{' -f $catalogName))
+
+    if ($Subcommand.Count -eq 0)
+    {
+        $lines.Add('        Subcommands = @()')
+    }
+    else
+    {
+        $lines.Add('        Subcommands = @(')
+
+        foreach ($row in $Subcommand)
+        {
+            $lines.Add(("            @{{ Name = '{0}'; Description = '{1}' }}" -f (ConvertTo-CompleterSingleQuotedText -Value ([string] $row.Name)), (ConvertTo-CompleterSingleQuotedText -Value ([string] $row.Description))))
+        }
+
+        $lines.Add('        )')
+    }
+
+    $lines.Add('    }')
+    $lines.Add('}')
+    $lines.Add('')
+    $lines.Add(('function {0} {{' -f $functionName))
+    $lines.Add('    param(')
+    $lines.Add('        [string]$wordToComplete,')
+    $lines.Add('        [System.Management.Automation.Language.CommandAst]$commandAst,')
+    $lines.Add('        [int]$cursorPosition')
+    $lines.Add('    )')
+    $lines.Add('')
+    $lines.Add('    # Offer subcommands in the first argument position only; extend this function for options and values.')
+    $lines.Add('    $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })')
+    $lines.Add('    if ($precedingElements.Count -gt 1) {')
+    $lines.Add('        return')
+    $lines.Add('    }')
+    $lines.Add('')
+    $lines.Add(('    foreach ($subcommand in $script:{0}.Subcommands) {{' -f $catalogName))
+    $lines.Add('        if ($subcommand.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {')
+    $lines.Add("            [System.Management.Automation.CompletionResult]::new(`$subcommand.Name, `$subcommand.Name, 'ParameterValue', `$subcommand.Description)")
+    $lines.Add('        }')
+    $lines.Add('    }')
+    $lines.Add('}')
+    $lines.Add('')
+    $lines.Add(('Register-ArgumentCompleter -Native -CommandName {0} -ScriptBlock {{' -f (@($Target | ForEach-Object { "'{0}'" -f (ConvertTo-CompleterSingleQuotedText -Value $_) }) -join ', ')))
+    $lines.Add('    param($wordToComplete, $commandAst, $cursorPosition)')
+    $lines.Add('')
+    $lines.Add(('    {0} -wordToComplete $wordToComplete -commandAst $commandAst -cursorPosition $cursorPosition' -f $functionName))
+    $lines.Add('}')
+
+    $lines.ToArray()
+}
+<#
+.SYNOPSIS
 Derives the completer targets a strict-tier script registers without executing it.
 
 .DESCRIPTION
@@ -4030,6 +5318,10 @@ under the set's directory that matches -Filter and that no entry lists, hidden
 files included, is an UnlistedScript finding, compared case-insensitively on Windows and
 case-sensitively elsewhere.
 
+With Package, the set is a package set, and Get-CompleterSetPackageFinding
+adds its PackageLayout findings after every entry's findings and before the
+UnlistedScript findings. Without it the findings are exactly the plain set's.
+
 Nothing here reads or writes the session's registrations or runs a script.
 
 .PARAMETER SetDefinition
@@ -4039,12 +5331,17 @@ returned for the set.
 .PARAMETER Filter
 The file-name pattern of the unlisted-script scan.
 
+.PARAMETER Package
+The record Get-CompleterSetPackage returned for the set, when a module
+manifest declares it.
+
 .OUTPUTS
 CompleterActions.CompleterScriptFinding
 Returns the findings in set order, each entry's in the order MissingScript,
 InvalidEntry, UnreadableTargets, TargetMismatch, DuplicateTarget,
-HashMismatch, MissingHash, InvalidHash, followed by the UnlistedScript
-findings sorted by path. Path is the set file for every finding.
+HashMismatch, MissingHash, InvalidHash, then, for a package set, the
+PackageLayout findings, followed by the UnlistedScript findings sorted by
+path. Path is the set file for every finding.
 #>
 function Get-CompleterSetFinding
 <#
@@ -4060,7 +5357,10 @@ function Get-CompleterSetFinding
 
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $Filter
+        [string] $Filter,
+
+        [Parameter()]
+        [psobject] $Package
     )
 
     $regenerateHint = 'Regenerate the set with Export-CompleterSet.'
@@ -4077,12 +5377,14 @@ function Get-CompleterSetFinding
     $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
     $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
     $claimedTargets = @{}
+    $resolvedEntries = [System.Collections.Generic.List[object]]::new()
     $entryIndex = 0
 
     foreach ($rawEntry in $SetDefinition.Entries)
     {
         $entryIndex++
         $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
+        $resolvedEntries.Add($entry)
         $entryExtent = $extents.Entries[$entryIndex - 1]
         $findings = [System.Collections.Generic.List[object]]::new()
 
@@ -4148,6 +5450,11 @@ function Get-CompleterSetFinding
         $findings
     }
 
+    if ($null -ne $Package)
+    {
+        Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
+    }
+
     $unlistedScripts = @(
         Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
             Where-Object { -not $listedPaths.Contains($_.FullName) } |
@@ -4157,6 +5464,267 @@ function Get-CompleterSetFinding
     foreach ($unlistedScript in $unlistedScripts)
     {
         New-CompleterScriptFinding -Path $setPath -Extent $extents.EntriesExtent -Construct 'UnlistedScript' -Severity Warning -Message "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it." -Hint $regenerateHint
+    }
+}
+<#
+.SYNOPSIS
+Finds the module manifest that declares a completer set, if any.
+
+.DESCRIPTION
+Decides whether a completer set is a package set, one whose module manifest
+is known, so Test-CompleterSet can check the package layout.
+
+With Module, as Test-CompleterSet -Name gives it, the manifest is the one
+Resolve-CompleterSetModule chose. Without it, the candidates are the .psd1
+files in the folder above the set file's folder, taken in ordinal order of
+file name. The first that Import-PowerShellDataFile reads as data and whose
+PrivateData.CompleterSet resolves to the set file is the manifest, so a
+staged package is recognised before it is published, whatever its folder is
+called. A .psd1 that is not data does not declare the set, and a folder that
+cannot be listed holds no manifest. Paths are compared case-insensitively on
+Windows and macOS and case-sensitively on Linux.
+
+Nothing is imported or run: manifests are read as data only.
+
+.PARAMETER SetPath
+The full path of the completer set file.
+
+.PARAMETER Module
+The record Resolve-CompleterSetModule returned for the set.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns Name, ManifestPath, ModuleBase (the folder that holds the manifest),
+and Manifest (the manifest's data), or nothing when no manifest declares the
+set.
+#>
+function Get-CompleterSetPackage
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $SetPath,
+
+        [Parameter()]
+        [psobject] $Module
+    )
+
+    if ($null -ne $Module)
+    {
+        return [pscustomobject] [ordered] @{
+            Name         = $Module.Name
+            ManifestPath = $Module.ManifestPath
+            ModuleBase   = $Module.ModuleBase
+            Manifest     = $Module.Manifest
+        }
+    }
+
+    $setDirectory = [System.IO.Path]::GetDirectoryName($SetPath)
+    $moduleBase = if ([string]::IsNullOrEmpty($setDirectory)) { $null } else { [System.IO.Path]::GetDirectoryName($setDirectory) }
+
+    if ([string]::IsNullOrEmpty($moduleBase))
+    {
+        return
+    }
+
+    try
+    {
+        $fileNames = [string[]] @(
+            foreach ($file in [System.IO.Directory]::EnumerateFiles($moduleBase))
+            {
+                if ([string]::Equals([System.IO.Path]::GetExtension($file), '.psd1', [System.StringComparison]::OrdinalIgnoreCase))
+                {
+                    [System.IO.Path]::GetFileName($file)
+                }
+            }
+        )
+    }
+    catch
+    {
+        return
+    }
+
+    [System.Array]::Sort($fileNames, [System.StringComparer]::Ordinal)
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+
+    foreach ($fileName in $fileNames)
+    {
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, $fileName)
+
+        try
+        {
+            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+        }
+        catch
+        {
+            continue
+        }
+
+        $privateData = $manifest['PrivateData']
+        $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
+
+        if ($declaredSet -isnot [string] -or [string]::IsNullOrWhiteSpace($declaredSet) -or [System.IO.Path]::IsPathRooted($declaredSet))
+        {
+            continue
+        }
+
+        $declaredSetPath = [System.IO.Path]::GetFullPath($declaredSet.Replace('\', '/'), $moduleBase)
+
+        if ([string]::Equals($declaredSetPath, $SetPath, $pathComparison))
+        {
+            return [pscustomobject] [ordered] @{
+                Name         = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                ManifestPath = $manifestPath
+                ModuleBase   = $moduleBase
+                Manifest     = $manifest
+            }
+        }
+    }
+}
+<#
+.SYNOPSIS
+Checks a package set against the package layout and returns its PackageLayout findings.
+
+.DESCRIPTION
+Runs the four package-layout checks for a completer set whose module
+manifest Get-CompleterSetPackage found, in this order:
+
+- Error, per entry in set order: the entry's Path is fully qualified, or it
+  resolves outside the module folder. The folder is compared with a trailing
+  separator, case-insensitively on Windows and macOS and case-sensitively on
+  Linux. The finding points at the entry's Path value.
+- Error, per other .psd1 in the module folder in ordinal order of file name:
+  Publish-PSResource can take that file as the manifest. The message names
+  the module folder by its full path and the two files by name. The finding
+  points at line 1, column 1 of the set.
+- Error: the set file's base name equals the module name, compared
+  case-insensitively on every platform, so PSResourceGet can take the set as
+  the module manifest when it saves or installs the package. The message
+  names the set file and the module. The finding points at line 1, column 1
+  of the set.
+- Warning: RequiredModules has no hashtable whose ModuleName is
+  CompleterActions and whose ModuleVersion or RequiredVersion is 2.2.0 or
+  later. The message and hint name the manifest by its full path. The
+  finding points at line 1, column 1 of the set.
+
+Path is the set file for every finding. Nothing is imported or run.
+
+.PARAMETER SetDefinition
+The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
+returned for the set.
+
+.PARAMETER Package
+The record Get-CompleterSetPackage returned for the set.
+
+.PARAMETER Entry
+The set's entries as Resolve-CompleterSetEntry returned them, in set order.
+
+.OUTPUTS
+CompleterActions.CompleterScriptFinding
+Returns the PackageLayout findings in the order above, or nothing.
+#>
+function Get-CompleterSetPackageFinding
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType('CompleterActions.CompleterScriptFinding')]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $SetDefinition,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Package,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Entry
+    )
+
+    $setPath = $SetDefinition.Path
+    $moduleBase = $Package.ModuleBase
+    $manifestPath = $Package.ManifestPath
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $moduleBasePrefix = $moduleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $lineOne = [string] (Get-Content -LiteralPath $setPath -TotalCount 1)
+    $positionOne = [System.Management.Automation.Language.ScriptPosition]::new($setPath, 1, 1, $lineOne)
+    $extentOne = [System.Management.Automation.Language.ScriptExtent]::new($positionOne, $positionOne)
+
+    foreach ($setEntry in $Entry)
+    {
+        if ([string]::IsNullOrWhiteSpace($setEntry.DeclaredPath))
+        {
+            continue
+        }
+
+        if ([System.IO.Path]::IsPathFullyQualified($setEntry.DeclaredPath) -or -not $setEntry.Path.StartsWith($moduleBasePrefix, $pathComparison))
+        {
+            $entryExtent = $extents.Entries[$setEntry.Index - 1]
+            $pathExtent = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryExtent.Extent }
+            New-CompleterScriptFinding -Path $setPath -Extent $pathExtent -Construct 'PackageLayout' -Message "Entry $($setEntry.Index) ('$($setEntry.DeclaredPath)'): the script is outside the module folder, so an installed copy of the package does not contain it." -Hint 'Move the script under the folder that holds the set file, then regenerate the set with Export-CompleterSet.'
+        }
+    }
+
+    $otherManifestNames = [string[]] @(
+        foreach ($file in [System.IO.Directory]::EnumerateFiles($moduleBase))
+        {
+            if ([string]::Equals([System.IO.Path]::GetExtension($file), '.psd1', [System.StringComparison]::OrdinalIgnoreCase) -and
+                -not [string]::Equals($file, $manifestPath, $pathComparison))
+            {
+                [System.IO.Path]::GetFileName($file)
+            }
+        }
+    )
+    [System.Array]::Sort($otherManifestNames, [System.StringComparer]::Ordinal)
+
+    $manifestName = [System.IO.Path]::GetFileName($manifestPath)
+
+    foreach ($otherManifestName in $otherManifestNames)
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The module folder '$moduleBase' holds '$otherManifestName' beside the module manifest '$manifestName', so Publish-PSResource can take the wrong file as the manifest." -Hint 'Keep the module manifest as the only .psd1 in the module folder; move the set into a subfolder and update PrivateData.CompleterSet.'
+    }
+
+    $setName = [System.IO.Path]::GetFileName($setPath)
+
+    if ([string]::Equals([System.IO.Path]::GetFileNameWithoutExtension($setPath), $Package.Name, [System.StringComparison]::OrdinalIgnoreCase))
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The set file '$setName' has the base name of the module '$($Package.Name)', so PSResourceGet can take it as the module manifest when it saves or installs the package." -Hint 'Rename the set file so its base name differs from the module name, for example to completers.psd1, and update PrivateData.CompleterSet.'
+    }
+
+    $minimumVersion = [version] '2.2.0'
+    $requiresCompleterActions = $false
+
+    foreach ($requiredModule in @($Package.Manifest['RequiredModules']))
+    {
+        if ($requiredModule -isnot [System.Collections.IDictionary] -or
+            -not [string]::Equals([string] $requiredModule['ModuleName'], 'CompleterActions', [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            continue
+        }
+
+        foreach ($versionKey in 'ModuleVersion', 'RequiredVersion')
+        {
+            $requiredVersion = $null
+
+            if ([version]::TryParse([string] $requiredModule[$versionKey], [ref] $requiredVersion) -and $requiredVersion -ge $minimumVersion)
+            {
+                $requiresCompleterActions = $true
+            }
+        }
+    }
+
+    if (-not $requiresCompleterActions)
+    {
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Severity Warning -Message "The module manifest '$manifestPath' does not require CompleterActions 2.2.0 or later, so installing the package does not install Import-CompleterSet -Name." -Hint "Add @{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' } to RequiredModules in '$manifestPath'."
     }
 }
 <#
@@ -4373,6 +5941,263 @@ function Import-CompleterSetDefinition
         Directory  = $file.DirectoryName
         Version    = 1
         Entries    = $entries
+    }
+}
+<#
+.SYNOPSIS
+Runs a program once to read its help, under one deadline.
+
+.DESCRIPTION
+Starts the program with UseShellExecute off, no window, the arguments in
+ArgumentList so no shell parses them, standard input redirected and closed at
+once, the temporary directory as the working directory, and the session's
+environment plus NO_COLOR=1.
+
+Standard output and standard error are read concurrently as bytes, one
+ReadAsync per stream at a time. Each stream keeps its first 1 MiB (1048576
+bytes) and keeps draining after that, discarding the rest, so a chatty
+program never blocks on a full pipe. The reads are polled from this thread
+with Task.WaitAny and a timeout, so no callback runs PowerShell code and no
+wait is unbounded.
+
+One deadline, fixed at start, covers the process and both reads. A process
+still running at the deadline is killed with its descendants (Kill($true)),
+waited for up to 1 second, and its output is dropped: TimedOut. When the
+process has exited, the reads get until 1 second later or the deadline,
+whichever is earlier; a read still open then means a descendant holds the
+pipe, so the streams are closed, Kill($true) is attempted, and the output is
+dropped: HeldOutput. An exception from Process.Start gives StartFailed with
+the exception's message. Otherwise the result is Exited, with both streams'
+bytes and the exit code; the exit code decides nothing here.
+
+This helper writes no warning or verbose stream; its caller turns the status
+into messages.
+
+.PARAMETER FilePath
+The full path of the program to run.
+
+.PARAMETER ArgumentList
+The arguments, each passed as one argument without shell parsing.
+
+.PARAMETER TimeoutSeconds
+The deadline in seconds, measured from the start of the run.
+
+.OUTPUTS
+CompleterActions.CompleterHelpProcessResult
+Returns a record with Status (Exited, TimedOut, HeldOutput, or StartFailed),
+ExitCode (null unless Exited), StandardOutput and StandardError (byte arrays,
+empty unless Exited), ElapsedMilliseconds, ProcessId (null for StartFailed),
+and StartError (the Process.Start exception message, or null).
+#>
+function Invoke-CompleterHelpProcess
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $FilePath,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [AllowEmptyString()]
+        [string[]] $ArgumentList,
+
+        [Parameter(Mandatory)]
+        [ValidateRange(0.001, 3600)]
+        [double] $TimeoutSeconds
+    )
+
+    $streamCap = 1048576
+    $readSize = 65536
+    $pollMilliseconds = 50
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new($FilePath)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.WorkingDirectory = [System.IO.Path]::GetTempPath()
+    $startInfo.Environment['NO_COLOR'] = '1'
+    foreach ($argument in $ArgumentList)
+    {
+        $startInfo.ArgumentList.Add($argument)
+    }
+
+    $status = $null
+    $exitCode = $null
+    $processId = $null
+    $startError = $null
+    $readers = @()
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $deadline = $TimeoutSeconds * 1000
+
+    try
+    {
+        try
+        {
+            $null = $process.Start()
+        }
+        catch
+        {
+            $exception = $_.Exception
+            if ($exception -is [System.Management.Automation.MethodInvocationException] -and $null -ne $exception.InnerException)
+            {
+                $exception = $exception.InnerException
+            }
+
+            $status = 'StartFailed'
+            $startError = $exception.Message
+        }
+
+        if ($null -eq $status)
+        {
+            $processId = $process.Id
+            $process.StandardInput.Close()
+
+            $readers = @(
+                foreach ($stream in @($process.StandardOutput.BaseStream, $process.StandardError.BaseStream))
+                {
+                    $buffer = [byte[]]::new($readSize)
+                    [pscustomobject] @{
+                        Stream = $stream
+                        Buffer = $buffer
+                        Data   = [System.IO.MemoryStream]::new()
+                        Task   = $stream.ReadAsync($buffer, 0, $readSize)
+                        Done   = $false
+                    }
+                }
+            )
+
+            $readDeadline = $deadline
+            $exitSeen = $false
+            while ($true)
+            {
+                $pending = @($readers | Where-Object { -not $_.Done })
+                if ($pending.Count -eq 0)
+                {
+                    break
+                }
+
+                $now = $stopwatch.Elapsed.TotalMilliseconds
+                if (-not $exitSeen -and $process.HasExited)
+                {
+                    $exitSeen = $true
+                    $readDeadline = [System.Math]::Min($now + 1000, $deadline)
+                }
+
+                if ($now -ge $readDeadline)
+                {
+                    $status = if ($exitSeen) { 'HeldOutput' } else { 'TimedOut' }
+                    break
+                }
+
+                $wait = [int] [System.Math]::Ceiling([System.Math]::Min($readDeadline - $now, $pollMilliseconds))
+                $tasks = [System.Threading.Tasks.Task[]] @($pending | ForEach-Object { $_.Task })
+                $null = [System.Threading.Tasks.Task]::WaitAny($tasks, $wait)
+
+                foreach ($reader in $pending)
+                {
+                    if (-not $reader.Task.IsCompleted)
+                    {
+                        continue
+                    }
+
+                    $read = 0
+                    if ($reader.Task.Status -eq [System.Threading.Tasks.TaskStatus]::RanToCompletion)
+                    {
+                        $read = $reader.Task.Result
+                    }
+
+                    if ($read -le 0)
+                    {
+                        $reader.Done = $true
+                        continue
+                    }
+
+                    $keep = [System.Math]::Min($read, $streamCap - $reader.Data.Length)
+                    if ($keep -gt 0)
+                    {
+                        $reader.Data.Write($reader.Buffer, 0, $keep)
+                    }
+
+                    $reader.Task = $reader.Stream.ReadAsync($reader.Buffer, 0, $readSize)
+                }
+            }
+
+            if ($null -eq $status)
+            {
+                $remaining = [int] [System.Math]::Max(0, [System.Math]::Ceiling($deadline - $stopwatch.Elapsed.TotalMilliseconds))
+                if ($process.WaitForExit($remaining))
+                {
+                    $status = 'Exited'
+                    $exitCode = $process.ExitCode
+                }
+                else
+                {
+                    $status = 'TimedOut'
+                }
+            }
+
+            if ($status -eq 'HeldOutput')
+            {
+                foreach ($reader in $readers)
+                {
+                    $reader.Stream.Dispose()
+                }
+            }
+
+            if ($status -ne 'Exited')
+            {
+                try
+                {
+                    $process.Kill($true)
+                }
+                catch
+                {
+                    Write-Debug -Message "Stopping process $processId failed. $($_.Exception.Message)"
+                }
+
+                if ($status -eq 'TimedOut')
+                {
+                    $null = $process.WaitForExit(1000)
+                }
+            }
+        }
+    }
+    finally
+    {
+        foreach ($reader in $readers)
+        {
+            $reader.Stream.Dispose()
+        }
+
+        $process.Dispose()
+    }
+
+    $standardOutput = [byte[]]::new(0)
+    $standardError = [byte[]]::new(0)
+    if ($status -eq 'Exited')
+    {
+        $standardOutput = $readers[0].Data.ToArray()
+        $standardError = $readers[1].Data.ToArray()
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName          = 'CompleterActions.CompleterHelpProcessResult'
+        Status              = $status
+        ExitCode            = $exitCode
+        StandardOutput      = $standardOutput
+        StandardError       = $standardError
+        ElapsedMilliseconds = [long] $stopwatch.ElapsedMilliseconds
+        ProcessId           = $processId
+        StartError          = $startError
     }
 }
 <#
@@ -5211,6 +7036,103 @@ function Remove-RuntimeCompleterRegistration
 }
 <#
 .SYNOPSIS
+Resolves the program a help probe would run and decides whether it may run.
+
+.DESCRIPTION
+Resolves the name with Get-Command -CommandType Application and takes the
+first match, so a function, alias, cmdlet, or script of that name is never
+chosen. The name is escaped with [WildcardPattern]::Escape, so it is matched
+literally: a name with *, ?, or brackets never resolves some other program.
+-ErrorAction Ignore keeps a missing command from throwing under
+$ErrorActionPreference = 'Stop'. Nothing is run.
+
+On Windows the resolved file may run only when it is a .exe whose PE header
+reads as Subsystem 3 (Windows CUI). Any other file gets a reason: a GUI
+program (Subsystem 2), another subsystem, an unreadable header, no file
+extension, or an extension that only runs through cmd.exe. On Linux and macOS
+every resolved application may run.
+
+The warning text is returned as data; this helper writes no stream.
+
+.PARAMETER Name
+The command name to resolve, as the author gave it.
+
+.OUTPUTS
+CompleterActions.CompleterHelpProbeApplication
+Returns a record with Name (as given), Path (the resolved file, or null when
+nothing was found), CanRun, and Warning (the not-found or not-run text, or
+null when the application may run).
+#>
+function Resolve-CompleterHelpProbeApplication
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name
+    )
+
+    $application = Get-Command -Name ([WildcardPattern]::Escape($Name)) -CommandType Application -ErrorAction Ignore | Select-Object -First 1
+
+    $path = $null
+    $warning = $null
+    if ($null -eq $application)
+    {
+        $warning = "The command '$Name' was not found as an application, so the subcommand table is empty. Pass captured help with -HelpText, or fill the table by hand."
+    }
+    else
+    {
+        $path = $application.Path
+        if ($IsWindows)
+        {
+            $extension = [System.IO.Path]::GetExtension($path)
+            $reason = $null
+            if ([string]::Equals($extension, '.exe', [System.StringComparison]::OrdinalIgnoreCase))
+            {
+                $subsystem = Get-CompleterPESubsystem -LiteralPath $path
+                if ($null -eq $subsystem)
+                {
+                    $reason = 'its program header could not be read'
+                }
+                elseif ($subsystem -eq 2)
+                {
+                    $reason = 'it is a Windows GUI program'
+                }
+                elseif ($subsystem -ne 3)
+                {
+                    $reason = "it is not a Windows console program (subsystem $subsystem)"
+                }
+            }
+            elseif ($extension.Length -eq 0)
+            {
+                $reason = 'it has no file extension'
+            }
+            else
+            {
+                $reason = "it is a $($extension.ToLowerInvariant()) file, which only runs through cmd.exe"
+            }
+
+            if ($null -ne $reason)
+            {
+                $warning = "'$path' was not run: $reason. Run '$Name --help' yourself and pass the text with -HelpText."
+            }
+        }
+    }
+
+    [pscustomobject] [ordered] @{
+        PSTypeName = 'CompleterActions.CompleterHelpProbeApplication'
+        Name       = $Name
+        Path       = $path
+        CanRun     = $null -ne $path -and $null -eq $warning
+        Warning    = $warning
+    }
+}
+<#
+.SYNOPSIS
 Resolves a pipeline input object into a completer target definition.
 
 .DESCRIPTION
@@ -5846,9 +7768,16 @@ different Hash, or a script that cannot be read for its hash, falls through
 to the parse, so such an entry gets exactly the problems it would get with
 no Hash at all. A trusted entry's Hash is ignored and its script is not read.
 
+When ModuleBase is given, as Import-CompleterSet -Name gives it, the
+resolved path must lie inside that folder, compared with a trailing separator
+and with the platform's case rule (case-insensitive on Windows and macOS,
+case-sensitive on Linux). An entry outside it gets the OutsideModule problem
+and no existence, extension, hash, or parse check, so its file is never
+opened.
+
 Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
-MissingScript, UnreadableTargets, or TargetMismatch; Message is the text
-Import-CompleterSet reports.
+MissingScript, OutsideModule, UnreadableTargets, or TargetMismatch; Message
+is the text Import-CompleterSet reports.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -5864,6 +7793,12 @@ Disables the fast path, so every strict entry whose script is usable is
 parsed once, and records the script's actual hash and parse-derived targets
 for drift checks. A trusted entry's script is read for its hash but still not
 parsed.
+
+.PARAMETER ModuleName
+The installed module folder's name, used in the OutsideModule problem.
+
+.PARAMETER ModuleBase
+The full path of the module folder the entry's script must stay inside.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
@@ -5901,10 +7836,25 @@ function Resolve-CompleterSetEntry
         [string] $SetDirectory,
 
         [Parameter()]
-        [switch] $Verify
+        [switch] $Verify,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ModuleName,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $ModuleBase
     )
 
     $problems = [System.Collections.Generic.List[hashtable]]::new()
+    $moduleBasePrefix = $null
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+
+    if ($PSBoundParameters.ContainsKey('ModuleBase'))
+    {
+        $moduleBasePrefix = $ModuleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    }
     $declaredPath = $null
     $resolvedPath = $null
     $hasHash = $false
@@ -5939,7 +7889,11 @@ function Resolve-CompleterSetEntry
             $declaredPath = [string] $Entry['Path']
             $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if (-not [System.IO.File]::Exists($resolvedPath))
+            if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+            {
+                $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+            }
+            elseif (-not [System.IO.File]::Exists($resolvedPath))
             {
                 $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
             }
@@ -6150,6 +8104,225 @@ function Resolve-CompleterSetEntry
     }
 
     $record
+}
+<#
+.SYNOPSIS
+Finds an installed completer set module by name and returns its set file.
+
+.DESCRIPTION
+Follows the module lookup without calling Get-Module. The roots of
+$env:PSModulePath are walked in order, split on the platform's path separator,
+skipping empty and missing entries. In each root the module folders are the
+subdirectories whose name equals Name case-insensitively, on every platform,
+and within a module folder the manifest is the .psd1 whose base name equals
+the folder's name case-insensitively.
+
+The candidates in a root are every version subfolder that parses as a version
+and equals its manifest's ModuleVersion, and the unversioned layout, the
+manifest directly in the module folder. The first root with a candidate wins;
+within it the highest version wins, and the unversioned layout is used only
+when the root has no versioned candidate. The chosen module is never replaced
+by a lower version, even when its set declaration is broken.
+
+Manifests are read with Import-PowerShellDataFile, as data only, so nothing in
+the package runs. PrivateData.CompleterSet must name a .psd1 file in a folder
+directly below ModuleBase, with / or \ as the separator, and the file must
+exist. A failure throws the bare reason; the caller adds its own prefix.
+
+.PARAMETER Name
+The module name, taken literally.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns Name (the installed module folder's spelling), Version (ModuleVersion,
+followed by -<Prerelease> when PrivateData.PSData.Prerelease is set),
+ModuleBase (the full path of the version folder, or of the module folder for
+the unversioned layout), ManifestPath, Manifest (the manifest's data), and
+SetPath (the full path of the set file).
+#>
+function Resolve-CompleterSetModule
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name
+    )
+
+    $sortOrdinal = {
+        param([string[]] $Value)
+
+        $sorted = [string[]] @($Value)
+        [System.Array]::Sort($sorted, [System.StringComparer]::Ordinal)
+        $sorted
+    }
+
+    $findManifest = {
+        param([string] $Folder, [string] $ModuleName)
+
+        $manifestPaths = @(
+            foreach ($file in [System.IO.Directory]::EnumerateFiles($Folder, '*.psd1'))
+            {
+                if ([string]::Equals([System.IO.Path]::GetExtension($file), '.psd1', [System.StringComparison]::OrdinalIgnoreCase) -and
+                    [string]::Equals([System.IO.Path]::GetFileNameWithoutExtension($file), $ModuleName, [System.StringComparison]::OrdinalIgnoreCase))
+                {
+                    $file
+                }
+            }
+        )
+
+        if ($manifestPaths.Count -gt 0)
+        {
+            @(& $sortOrdinal $manifestPaths)[0]
+        }
+    }
+
+    $chosen = $null
+
+    foreach ($root in ([string] $env:PSModulePath).Split([System.IO.Path]::PathSeparator))
+    {
+        if ([string]::IsNullOrWhiteSpace($root) -or -not [System.IO.Directory]::Exists($root))
+        {
+            continue
+        }
+
+        $moduleFolders = @(
+            foreach ($directory in [System.IO.Directory]::EnumerateDirectories($root))
+            {
+                if ([string]::Equals([System.IO.Path]::GetFileName($directory), $Name, [System.StringComparison]::OrdinalIgnoreCase))
+                {
+                    $directory
+                }
+            }
+        )
+
+        if ($moduleFolders.Count -eq 0)
+        {
+            continue
+        }
+
+        $moduleFolders = @(& $sortOrdinal $moduleFolders)
+        $order = 0
+        $versionFolders = @(
+            foreach ($moduleFolder in $moduleFolders)
+            {
+                foreach ($versionFolder in @(& $sortOrdinal @([System.IO.Directory]::EnumerateDirectories($moduleFolder))))
+                {
+                    $folderVersion = $null
+
+                    if ([version]::TryParse([System.IO.Path]::GetFileName($versionFolder), [ref] $folderVersion))
+                    {
+                        $order++
+                        [pscustomobject] @{ ModuleFolder = $moduleFolder; Folder = $versionFolder; FolderVersion = $folderVersion; Order = $order }
+                    }
+                }
+            }
+        )
+
+        foreach ($versionFolder in @($versionFolders | Sort-Object -Property @{ Expression = 'FolderVersion'; Descending = $true }, @{ Expression = 'Order'; Descending = $false }))
+        {
+            $moduleName = [System.IO.Path]::GetFileName($versionFolder.ModuleFolder)
+            $manifestPath = & $findManifest $versionFolder.Folder $moduleName
+
+            if ($null -eq $manifestPath)
+            {
+                continue
+            }
+
+            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+            $manifestVersion = $null
+
+            if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion) -and $manifestVersion -eq $versionFolder.FolderVersion)
+            {
+                $chosen = @{ Name = $moduleName; ModuleBase = $versionFolder.Folder; ManifestPath = $manifestPath; Manifest = $manifest }
+                break
+            }
+        }
+
+        if ($null -eq $chosen)
+        {
+            foreach ($moduleFolder in $moduleFolders)
+            {
+                $moduleName = [System.IO.Path]::GetFileName($moduleFolder)
+                $manifestPath = & $findManifest $moduleFolder $moduleName
+
+                if ($null -ne $manifestPath)
+                {
+                    $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+                    $chosen = @{ Name = $moduleName; ModuleBase = $moduleFolder; ManifestPath = $manifestPath; Manifest = $manifest }
+                    break
+                }
+            }
+        }
+
+        if ($null -ne $chosen)
+        {
+            break
+        }
+    }
+
+    if ($null -eq $chosen)
+    {
+        throw "No installed module named '$Name' was found in `$env:PSModulePath. Install it with Install-PSResource $Name."
+    }
+
+    $moduleName = $chosen.Name
+    $moduleBase = [System.IO.Path]::GetFullPath($chosen.ModuleBase)
+    $manifest = $chosen.Manifest
+    $privateData = $manifest['PrivateData']
+    $version = [string] $manifest['ModuleVersion']
+
+    if ($privateData -is [System.Collections.IDictionary] -and $privateData['PSData'] -is [System.Collections.IDictionary])
+    {
+        $prerelease = [string] $privateData['PSData']['Prerelease']
+
+        if (-not [string]::IsNullOrEmpty($prerelease))
+        {
+            $version = '{0}-{1}' -f $version, $prerelease
+        }
+    }
+
+    $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
+
+    if ($null -eq $declaredSet)
+    {
+        throw "The module '$moduleName' $version at '$moduleBase' does not declare a completer set. A completer set module names its set file in PrivateData.CompleterSet."
+    }
+
+    $segments = @(
+        if ($declaredSet -is [string] -and -not [System.IO.Path]::IsPathRooted($declaredSet))
+        {
+            $declaredSet.Replace('\', '/').Split('/')
+        }
+    )
+    $isValidDeclaration = $segments.Count -eq 2 -and
+        @($segments.Where({ [string]::IsNullOrWhiteSpace($_) -or $_ -eq '.' -or $_ -eq '..' -or [System.IO.Path]::IsPathRooted($_) })).Count -eq 0 -and
+        [System.IO.Path]::GetExtension($segments[1]) -eq '.psd1'
+
+    if (-not $isValidDeclaration)
+    {
+        throw "The module '$moduleName' $version declares the completer set '$declaredSet', which must be a .psd1 file in a folder directly below '$moduleBase'."
+    }
+
+    $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+
+    if (-not [System.IO.File]::Exists($setPath))
+    {
+        throw "The completer set '$setPath' declared by the module '$moduleName' $version does not exist."
+    }
+
+    [pscustomobject] [ordered] @{
+        Name         = $moduleName
+        Version      = $version
+        ModuleBase   = $moduleBase
+        ManifestPath = [System.IO.Path]::GetFullPath($chosen.ManifestPath)
+        Manifest     = $manifest
+        SetPath      = $setPath
+    }
 }
 <#
 .SYNOPSIS
@@ -6517,6 +8690,129 @@ function Resolve-CompleterTargetList
             }
 
             break
+        }
+    }
+}
+<#
+.SYNOPSIS
+Writes a generated completer script after checking the bytes it installs.
+
+.DESCRIPTION
+Writes the lines to '<path>.<8 hex>.tmp' in the target folder with
+Set-Content -Encoding utf8 (UTF-8 without a byte-order mark, the platform
+newline, and a final newline). It then checks that file the way
+Test-CompleterScript does, parse errors included, and derives its targets the
+way Register-Completer -Lazy does. Any finding, or derived targets that differ
+from -ExpectedTarget in order or spelling, throws the self-check text. A
+checked file is moved into place with File.Move, overwriting only under
+-Force; without -Force, a file that appeared at the path before the move makes
+the call fail with the already-exists text and stay unchanged. The temporary
+file never survives the call.
+
+.PARAMETER Line
+The script's lines, without line endings.
+
+.PARAMETER LiteralPath
+The .ps1 file to write. A relative path is resolved against the current
+PowerShell location. The caller checks that the folder exists and that the
+path is not a directory (New-CompleterScript step 1); the helper reports
+neither case in its own words.
+
+.PARAMETER ExpectedTarget
+The target list the script must register, in order.
+
+.PARAMETER Force
+Overwrites an existing file at the path.
+
+.OUTPUTS
+System.IO.FileInfo
+#>
+function Save-CompleterScriptFile
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([System.IO.FileInfo])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [AllowEmptyString()]
+        [string[]] $Line,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ExpectedTarget,
+
+        [Parameter()]
+        [switch] $Force
+    )
+
+    # Set-Content resolves against the PowerShell location, File.Move against the process directory.
+    $LiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($LiteralPath))
+    $temporaryPath = '{0}.{1}.tmp' -f $LiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+
+    try
+    {
+        Set-Content -LiteralPath $temporaryPath -Value $Line -Encoding utf8 -ErrorAction Stop
+
+        $detail = $null
+        $finding = @(Get-CompleterScriptFinding -LiteralPath $temporaryPath) | Select-Object -First 1
+
+        if ($null -ne $finding)
+        {
+            $detail = $finding.Message
+        }
+        else
+        {
+            try
+            {
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $temporaryPath | Where-Object IsNative | ForEach-Object { [string] $_.CommandName })
+            }
+            catch
+            {
+                $derivedTargets = $null
+                $detail = $_.Exception.Message
+            }
+
+            if ($null -ne $derivedTargets -and -not [System.Linq.Enumerable]::SequenceEqual([string[]] $derivedTargets, [string[]] $ExpectedTarget))
+            {
+                $derivedList = @($derivedTargets | ForEach-Object { "'{0}'" -f (ConvertTo-CompleterSingleQuotedText -Value $_) }) -join ', '
+                $expectedList = @($ExpectedTarget | ForEach-Object { "'{0}'" -f (ConvertTo-CompleterSingleQuotedText -Value $_) }) -join ', '
+                $detail = 'The script registers {0}, not {1}.' -f $derivedList, $expectedList
+            }
+        }
+
+        if ($null -ne $detail)
+        {
+            throw "New-CompleterScript did not produce a conforming script, so nothing was written. This is a defect in CompleterActions; report it at https://github.com/tstager/CompleterActions/issues with the command line you ran. $detail"
+        }
+
+        try
+        {
+            [System.IO.File]::Move($temporaryPath, $LiteralPath, [bool] $Force)
+        }
+        catch [System.IO.IOException]
+        {
+            if (-not $Force -and (Test-Path -LiteralPath $LiteralPath))
+            {
+                throw "The file '$LiteralPath' already exists. Use -Force to overwrite it."
+            }
+
+            throw
+        }
+
+        Get-Item -LiteralPath $LiteralPath
+    }
+    finally
+    {
+        if (Test-Path -LiteralPath $temporaryPath)
+        {
+            Remove-Item -LiteralPath $temporaryPath -Force
         }
     }
 }
@@ -7468,6 +9764,7 @@ Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
 $script:CompleterDeprecationWarningsIssued = [System.Collections.Generic.HashSet[string]]::new()
+$script:CompleterHelpProbeTimeoutSeconds = 5
 New-Alias -Name 'Get-CompleterRegistration' -Value 'Get-CompleterRegistrationLegacy'
 New-Alias -Name 'Register-CompleterRegistration' -Value 'Register-CompleterRegistrationLegacy'
 New-Alias -Name 'Unregister-CompleterRegistration' -Value 'Unregister-CompleterRegistrationLegacy'
