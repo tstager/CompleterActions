@@ -197,6 +197,14 @@ function Invoke-CompleterHelpProcess
                 }
             }
 
+            if ($status -eq 'HeldOutput')
+            {
+                foreach ($reader in $readers)
+                {
+                    $reader.Stream.Dispose()
+                }
+            }
+
             if ($status -ne 'Exited')
             {
                 try

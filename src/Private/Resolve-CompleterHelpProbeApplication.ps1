@@ -5,14 +5,16 @@ Resolves the program a help probe would run and decides whether it may run.
 .DESCRIPTION
 Resolves the name with Get-Command -CommandType Application and takes the
 first match, so a function, alias, cmdlet, or script of that name is never
-chosen. -ErrorAction Ignore keeps a missing command from throwing under
+chosen. The name is escaped with [WildcardPattern]::Escape, so it is matched
+literally: a name with *, ?, or brackets never resolves some other program.
+-ErrorAction Ignore keeps a missing command from throwing under
 $ErrorActionPreference = 'Stop'. Nothing is run.
 
 On Windows the resolved file may run only when it is a .exe whose PE header
 reads as Subsystem 3 (Windows CUI). Any other file gets a reason: a GUI
-program (Subsystem 2), another subsystem, an unreadable header, or an
-extension that only runs through cmd.exe. On Linux and macOS every resolved
-application may run.
+program (Subsystem 2), another subsystem, an unreadable header, no file
+extension, or an extension that only runs through cmd.exe. On Linux and macOS
+every resolved application may run.
 
 The warning text is returned as data; this helper writes no stream.
 
@@ -35,7 +37,7 @@ function Resolve-CompleterHelpProbeApplication
         [string] $Name
     )
 
-    $application = Get-Command -Name $Name -CommandType Application -ErrorAction Ignore | Select-Object -First 1
+    $application = Get-Command -Name ([WildcardPattern]::Escape($Name)) -CommandType Application -ErrorAction Ignore | Select-Object -First 1
 
     $path = $null
     $warning = $null
@@ -65,6 +67,10 @@ function Resolve-CompleterHelpProbeApplication
                 {
                     $reason = "it is not a Windows console program (subsystem $subsystem)"
                 }
+            }
+            elseif ($extension.Length -eq 0)
+            {
+                $reason = 'it has no file extension'
             }
             else
             {
