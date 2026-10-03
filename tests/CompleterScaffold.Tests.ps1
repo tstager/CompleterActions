@@ -1116,6 +1116,54 @@ switch ($Case)
         @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 0
     }
 
+    It 'leaves nothing at the path for <Case> when the failure is silenced with -ErrorAction <Action>' -TestCases @(
+        @{ Case = 'a non-.ps1 path'; Action = 'SilentlyContinue'; CommandName = 'rg'; Leaf = 'rg_completer.txt' }
+        @{ Case = 'a non-.ps1 path'; Action = 'Ignore'; CommandName = 'rg'; Leaf = 'rg_completer.txt' }
+        @{ Case = 'a missing directory'; Action = 'SilentlyContinue'; CommandName = 'rg'; Leaf = 'missing\rg_completer.ps1' }
+        @{ Case = 'the name a b'; Action = 'SilentlyContinue'; CommandName = 'a b'; Leaf = 'x_completer.ps1' }
+        @{ Case = 'an existing file without -Force'; Action = 'SilentlyContinue'; CommandName = 'rg'; Leaf = 'rg_completer.ps1'; Existing = $true }
+    ) {
+        # A child process, because any enclosing try, Pester's included, makes even
+        # a silenced throw terminate; the call must run as a bare statement.
+        $childPath = Join-Path -Path $TestDrive -ChildPath 'new-completerscript-silenced.ps1'
+        Set-Content -LiteralPath $childPath -Encoding utf8 -Value @'
+param(
+    [string] $ManifestPath,
+    [string] $CommandName,
+    [string] $Target,
+    [string] $Action
+)
+
+Import-Module -Name $ManifestPath -Force
+$Error.Clear()
+New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -ErrorAction $Action
+'ERROR={0}' -f $Error[0].Exception.Message
+'@
+
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath $Leaf.Replace('\', [System.IO.Path]::DirectorySeparatorChar)
+
+        if ($Existing)
+        {
+            Set-Content -LiteralPath $scriptPath -Value 'existing content'
+        }
+
+        $output = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $childPath -ManifestPath $script:ManifestPath -CommandName $CommandName -Target $scriptPath -Action $Action 2>&1 | ForEach-Object { "$_" })
+
+        $errorLines = @($output | Where-Object { $_ -like 'ERROR=*' })
+        $errorLines.Count | Should -Be 1 -Because ($output -join [System.Environment]::NewLine)
+        $errorLines[0] | Should -BeLike 'ERROR=Failed to create completer script. *'
+
+        if ($Existing)
+        {
+            Get-Content -LiteralPath $scriptPath -Raw | Should -BeExactly ('existing content' + [System.Environment]::NewLine)
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 1
+        }
+        else
+        {
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 0
+        }
+    }
+
     It 'returns a FileInfo only with -PassThru' {
         $withoutPassThru = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
         $withPassThru = Join-Path -Path $script:CaseFolder -ChildPath 'fd_completer.ps1'
@@ -1222,6 +1270,11 @@ switch ($Case)
             'New-CompleterScript [-CommandName] <string[]> [-Path] <string> -HelpText <string[]> [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
             'New-CompleterScript [-CommandName] <string[]> [-Path] <string> -NoProbe [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
         )
+    }
+
+    It 'resolves its help with the section 2 synopsis' {
+        # A comment-help line that starts with a dot and a word invalidates the whole help block.
+        (Get-Help -Name 'New-CompleterScript' -Full).Synopsis | Should -BeExactly 'Writes a completer script skeleton for a native command that passes Test-CompleterScript as written.'
     }
 
     It 'declares ConfirmImpact Low, SupportsShouldProcess, and OutputType FileInfo' {
