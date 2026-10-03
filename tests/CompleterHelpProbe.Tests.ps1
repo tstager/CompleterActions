@@ -640,3 +640,616 @@ Describe 'Help probe process helpers' {
         $result.ProcessId | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Probe decisions' {
+    BeforeAll {
+        $script:ProbeHelpText = "Usage: catool <command>`n`nCommands:`n  build    Compile the project`n  test     Run the tests`n"
+
+        # Replaces Invoke-CompleterHelpProcess in module scope with a shim that
+        # records each run. Without -Fake it passes through to the real runner;
+        # -NoProfile then puts -NoProfile -NonInteractive -File in front of the
+        # one probe argument, because a user profile can keep 'pwsh <file>'
+        # from exiting. -Fake replaces the runner with a script block that
+        # returns a result for each argument list.
+        function Install-TestRunnerShim
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only replaces a function in the imported test module.')]
+            [CmdletBinding()]
+            param(
+                [Parameter()]
+                [switch] $NoProfile,
+
+                [Parameter()]
+                [scriptblock] $Fake
+            )
+
+            & (Get-Module -Name 'CompleterActions') {
+                param($NoProfile, $Fake)
+
+                $script:TestProbeRuns = [System.Collections.Generic.List[object]]::new()
+                $script:TestRunnerNoProfile = $NoProfile
+                $script:TestRunnerFake = $Fake
+                $script:TestRunnerOriginal = ${function:Invoke-CompleterHelpProcess}
+
+                function script:Invoke-CompleterHelpProcess
+                {
+                    param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                    if ($null -ne $script:TestRunnerFake)
+                    {
+                        $result = & $script:TestRunnerFake $FilePath $ArgumentList $TimeoutSeconds
+                    }
+                    else
+                    {
+                        $arguments = @($ArgumentList)
+                        if ($script:TestRunnerNoProfile)
+                        {
+                            $arguments = @('-NoProfile', '-NonInteractive', '-File') + $arguments
+                        }
+
+                        $result = & $script:TestRunnerOriginal -FilePath $FilePath -ArgumentList $arguments -TimeoutSeconds $TimeoutSeconds
+                    }
+
+                    $script:TestProbeRuns.Add([pscustomobject] @{
+                            FilePath     = $FilePath
+                            ArgumentList = @($ArgumentList)
+                            Status       = $result.Status
+                            ProcessId    = $result.ProcessId
+                        })
+                    $result
+                }
+            } $NoProfile.IsPresent $Fake
+        }
+
+        function Get-TestProbeRun
+        {
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestProbeRuns.ToArray()
+            }
+        }
+
+        function Invoke-TestHelpSubcommand
+        {
+            param(
+                [Parameter(Mandatory)]
+                [psobject] $Application,
+
+                [Parameter()]
+                [string] $HelpArgument,
+
+                [Parameter()]
+                [double] $TimeoutSeconds = 30
+            )
+
+            $parameters = @{ Application = $Application; TimeoutSeconds = $TimeoutSeconds }
+            if ($PSBoundParameters.ContainsKey('HelpArgument'))
+            {
+                $parameters['HelpArgument'] = $HelpArgument
+            }
+
+            InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Splat = $parameters } -ScriptBlock {
+                param($Splat)
+
+                Get-CompleterHelpSubcommand @Splat
+            }
+        }
+
+        function New-TestApplication
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only builds an application record.')]
+            [CmdletBinding()]
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name
+            )
+
+            [pscustomobject] @{
+                PSTypeName = 'CompleterActions.CompleterHelpProbeApplication'
+                Name       = $Name
+                Path       = Join-Path -Path $TestDrive -ChildPath "$Name.exe"
+                CanRun     = $true
+                Warning    = $null
+            }
+        }
+
+        function New-TestProcessResult
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only builds a runner result.')]
+            [CmdletBinding()]
+            param(
+                [Parameter(Mandatory)]
+                [ValidateSet('Exited', 'TimedOut', 'HeldOutput', 'StartFailed')]
+                [string] $Status,
+
+                [Parameter()]
+                [AllowEmptyString()]
+                [string] $Text = ''
+            )
+
+            [pscustomobject] @{
+                Status              = $Status
+                ExitCode            = if ($Status -eq 'Exited') { 1 } else { $null }
+                StandardOutput      = if ($Status -eq 'Exited') { [System.Text.Encoding]::UTF8.GetBytes($Text) } else { [byte[]]::new(0) }
+                StandardError       = [byte[]]::new(0)
+                ElapsedMilliseconds = [long] 12
+                ProcessId           = if ($Status -eq 'StartFailed') { $null } else { 4242 }
+                StartError          = if ($Status -eq 'StartFailed') { 'the fake program could not be started' } else { $null }
+            }
+        }
+
+        # Writes a pwsh fixture that writes the given bytes to standard output
+        # and standard error, then PaddingLines lines of 99 'x' characters to
+        # standard output, and exits with ExitCode.
+        function Write-TestByteFixture
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name,
+
+                [Parameter()]
+                [byte[]] $StandardOutput = [byte[]]::new(0),
+
+                [Parameter()]
+                [byte[]] $StandardError = [byte[]]::new(0),
+
+                [Parameter()]
+                [int] $PaddingLines = 0,
+
+                [Parameter()]
+                [int] $ExitCode = 0
+            )
+
+            Write-TestFixture -Name $Name -Line @(
+                ('$out = [System.Convert]::FromBase64String(''{0}'')' -f [System.Convert]::ToBase64String($StandardOutput))
+                ('$err = [System.Convert]::FromBase64String(''{0}'')' -f [System.Convert]::ToBase64String($StandardError))
+                '$stdout = [Console]::OpenStandardOutput()'
+                '$stderr = [Console]::OpenStandardError()'
+                '$stdout.Write($out, 0, $out.Length)'
+                '$stderr.Write($err, 0, $err.Length)'
+                '$line = [byte[]]::new(100)'
+                'for ($i = 0; $i -lt 99; $i++) { $line[$i] = 0x78 }'
+                '$line[99] = 0x0A'
+                ('for ($i = 0; $i -lt {0}; $i++) {{ $stdout.Write($line, 0, $line.Length) }}' -f $PaddingLines)
+                '$stdout.Flush()'
+                '$stderr.Flush()'
+                ('exit {0}' -f $ExitCode)
+            )
+        }
+
+        function Resolve-TestPwshApplication
+        {
+            if ($null -eq (Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Ignore))
+            {
+                return $null
+            }
+
+            Resolve-TestProbeApplication -Name 'pwsh'
+        }
+
+        function Get-TestProbeLinePattern
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $Path,
+
+                [Parameter(Mandatory)]
+                [string] $Argument,
+
+                [Parameter(Mandatory)]
+                [string] $ExitCode,
+
+                [Parameter(Mandatory)]
+                [string] $Characters,
+
+                [Parameter(Mandatory)]
+                [string] $Subcommands
+            )
+
+            '^Probed ''{0} {1}'': exit {2}, {3} characters, {4} subcommands, \d+ ms\.$' -f [regex]::Escape($Path), [regex]::Escape($Argument), $ExitCode, $Characters, $Subcommands
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        Import-Module -Name $script:ManifestPath -Force | Out-Null
+    }
+
+    It 'probes pwsh --help once and returns one probe line with exit 0' {
+        $application = Resolve-TestPwshApplication
+        if ($null -eq $application)
+        {
+            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
+            return
+        }
+
+        Install-TestRunnerShim
+        $result = Invoke-TestHelpSubcommand -Application $application
+        $runs = @(Get-TestProbeRun)
+
+        $runs.Count | Should -Be 1
+        $runs[0].ArgumentList | Should -Be @('--help')
+        $result.Argument | Should -BeExactly '--help'
+        $result.Warnings | Should -BeNullOrEmpty
+        $result.VerboseLines.Count | Should -Be 1
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument '--help' -ExitCode '0' -Characters '\d+' -Subcommands '\d+')
+    }
+
+    It 'uses help that a probe writes only to standard error with exit 2' {
+        $application = Resolve-TestPwshApplication
+        if ($null -eq $application)
+        {
+            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
+            return
+        }
+
+        $fixture = Write-TestByteFixture -Name 'stderr-help.ps1' -StandardError ([System.Text.Encoding]::UTF8.GetBytes($script:ProbeHelpText)) -ExitCode 2
+
+        Install-TestRunnerShim -NoProfile
+        $result = Invoke-TestHelpSubcommand -Application $application -HelpArgument $fixture
+
+        $result.Subcommands.Name | Should -Be @('build', 'test')
+        $result.Subcommands.Description | Should -Be @('Compile the project', 'Run the tests')
+        $result.Argument | Should -BeExactly $fixture
+        $result.Warnings | Should -BeNullOrEmpty
+        $result.VerboseLines.Count | Should -Be 1
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '2' -Characters $script:ProbeHelpText.Length -Subcommands '2')
+    }
+
+    It 'decodes UTF-16 LE probe output' {
+        $application = Resolve-TestPwshApplication
+        if ($null -eq $application)
+        {
+            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
+            return
+        }
+
+        $fixture = Write-TestByteFixture -Name 'utf16-help.ps1' -StandardOutput ([System.Text.Encoding]::Unicode.GetBytes($script:ProbeHelpText))
+
+        Install-TestRunnerShim -NoProfile
+        $result = Invoke-TestHelpSubcommand -Application $application -HelpArgument $fixture
+
+        $result.Subcommands.Name | Should -Be @('build', 'test')
+        $result.Subcommands.Description | Should -Be @('Compile the project', 'Run the tests')
+        $result.Warnings | Should -BeNullOrEmpty
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters $script:ProbeHelpText.Length -Subcommands '2')
+    }
+
+    It 'cuts standard output at 1 MiB and still parses the table' {
+        $application = Resolve-TestPwshApplication
+        if ($null -eq $application)
+        {
+            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
+            return
+        }
+
+        $fixture = Write-TestByteFixture -Name 'chatty-help.ps1' -StandardOutput ([System.Text.Encoding]::UTF8.GetBytes($script:ProbeHelpText + "`n")) -PaddingLines 16384
+
+        Install-TestRunnerShim -NoProfile
+        $result = Invoke-TestHelpSubcommand -Application $application -HelpArgument $fixture
+        $runs = @(Get-TestProbeRun)
+
+        $runs.Count | Should -Be 1
+        $runs[0].Status | Should -Be 'Exited'
+        $result.Subcommands.Name | Should -Be @('build', 'test')
+        $result.Warnings | Should -BeNullOrEmpty
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters '1048576' -Subcommands '2')
+    }
+
+    It 'warns did not exit within 0.05 seconds and leaves no direct child running' {
+        $application = Resolve-TestPwshApplication
+        if ($null -eq $application)
+        {
+            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
+            return
+        }
+
+        $fixture = Write-TestFixture -Name 'sleep-help.ps1' -Line @(
+            'Start-Sleep -Seconds 60'
+            'exit 0'
+        )
+
+        Install-TestRunnerShim -NoProfile
+        $result = Invoke-TestHelpSubcommand -Application $application -HelpArgument $fixture -TimeoutSeconds 0.05
+        $runs = @(Get-TestProbeRun)
+
+        $runs.Count | Should -Be 1
+        $runs[0].Status | Should -Be 'TimedOut'
+        $runs[0].ProcessId | Should -BeGreaterThan 0
+        $result.Subcommands.Count | Should -Be 0
+        $result.Warnings | Should -Be @("'pwsh $fixture' did not exit within 0.05 seconds and was stopped, so its help was not used.")
+        Get-Process -Id $runs[0].ProcessId -ErrorAction Ignore | Should -BeNullOrEmpty
+    }
+
+    Context 'Held output' {
+        AfterEach {
+            if ($null -ne $script:DecisionDescendantId)
+            {
+                Stop-Process -Id $script:DecisionDescendantId -Force -ErrorAction Ignore
+                Wait-Process -Id $script:DecisionDescendantId -Timeout 10 -ErrorAction Ignore
+            }
+        }
+
+        It 'returns within 3 seconds with the held-output warning and an empty table' {
+            $script:DecisionDescendantId = $null
+            $directory = New-TestDirectory
+            $idPath = Join-Path -Path $directory -ChildPath 'descendant.txt'
+            $timeoutSeconds = InModuleScope -ModuleName 'CompleterActions' -ScriptBlock { $script:CompleterHelpProbeTimeoutSeconds }
+
+            if ($IsWindows)
+            {
+                $application = Resolve-TestPwshApplication
+                if ($null -eq $application)
+                {
+                    Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
+                    return
+                }
+
+                $fixture = Write-TestFixture -Name 'held-help.ps1' -Line @(
+                    '$descendant = Start-Process -NoNewWindow -FilePath ''ping.exe'' -ArgumentList ''-n'', ''15'', ''127.0.0.1'' -PassThru'
+                    ('Set-Content -LiteralPath ''{0}'' -Value $descendant.Id' -f $idPath)
+                    'exit 0'
+                )
+                $expectedWarning = "'pwsh $fixture' exited but left a process holding its output, so its help was not used."
+
+                Install-TestRunnerShim -NoProfile
+                $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                $result = Invoke-TestHelpSubcommand -Application $application -HelpArgument $fixture -TimeoutSeconds $timeoutSeconds
+                $stopwatch.Stop()
+            }
+            else
+            {
+                Write-TestShellScript -Path (Join-Path -Path $directory -ChildPath 'caheldprobe') -Line '#!/bin/sh', 'sleep 30 &', ('echo $! > ''{0}''' -f $idPath), 'exit 0' -Executable
+                $expectedWarning = "'caheldprobe --help' exited but left a process holding its output, so its help was not used."
+
+                $savedPath = $env:PATH
+                try
+                {
+                    $env:PATH = $directory
+                    $application = Resolve-TestProbeApplication -Name 'caheldprobe'
+                }
+                finally
+                {
+                    $env:PATH = $savedPath
+                }
+
+                Install-TestRunnerShim
+                $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+                $result = Invoke-TestHelpSubcommand -Application $application -TimeoutSeconds $timeoutSeconds
+                $stopwatch.Stop()
+            }
+
+            $script:DecisionDescendantId = [int] (Get-Content -LiteralPath $idPath -TotalCount 1)
+            $runs = @(Get-TestProbeRun)
+
+            $stopwatch.Elapsed.TotalSeconds | Should -BeLessThan 3
+            $runs.Count | Should -Be 1
+            $runs[0].Status | Should -Be 'HeldOutput'
+            $result.Subcommands.Count | Should -Be 0
+            $result.Warnings | Should -Be @($expectedWarning)
+        }
+    }
+
+    It 'applies the /? rule to <Case>' -TestCases @(
+        @{ Case = 'two lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help,/?'; Names = 'build,test'; Argument = '/?'; VerboseLines = 2; Warning = $null }
+        @{ Case = 'five lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "one`ntwo`n`nthree`nfour`nfive`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'a timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'TimedOut'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' did not exit within 5 seconds and was stopped, so its help was not used." }
+        @{ Case = 'a start failure on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'StartFailed'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'<path>' was not run: the fake program could not be started. Pass captured help with -HelpText." }
+        @{ Case = 'held output on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'HeldOutput'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' exited but left a process holding its output, so its help was not used." }
+        @{ Case = 'two lines then a /? timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'TimedOut'; Expected = '--help,/?'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = "'catool /?' did not exit within 5 seconds and was stopped, so its help was not used." }
+        @{ Case = '-HelpArgument given'; Platform = 'Any'; HelpArgument = '-h'; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '-h'; Names = ''; Argument = '-h'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'two lines on Linux and macOS'; Platform = 'Unix'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
+    ) {
+        if ($Platform -eq 'Windows' -and -not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'the /? fallback runs on Windows only'
+            return
+        }
+
+        if ($Platform -eq 'Unix' -and $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'this case asserts the Linux and macOS rule'
+            return
+        }
+
+        $first = New-TestProcessResult -Status $FirstStatus -Text $FirstText
+        $fallback = New-TestProcessResult -Status $FallbackStatus -Text $script:ProbeHelpText
+        Install-TestRunnerShim -Fake ({
+                param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                if ($ArgumentList[0] -eq '/?') { $fallback } else { $first }
+            }.GetNewClosure())
+
+        $application = New-TestApplication -Name 'catool'
+        if ($null -eq $HelpArgument)
+        {
+            $result = Invoke-TestHelpSubcommand -Application $application -TimeoutSeconds 5
+        }
+        else
+        {
+            $result = Invoke-TestHelpSubcommand -Application $application -HelpArgument $HelpArgument -TimeoutSeconds 5
+        }
+
+        $runs = @(Get-TestProbeRun)
+
+        @($runs | ForEach-Object { $_.ArgumentList[0] }) -join ',' | Should -BeExactly $Expected
+        @($runs | Where-Object { $_.FilePath -ne $application.Path }).Count | Should -Be 0
+        @($result.Subcommands | ForEach-Object { $_.Name }) -join ',' | Should -BeExactly $Names
+        $result.Argument | Should -BeExactly $Argument
+        $result.VerboseLines.Count | Should -Be $VerboseLines
+        if ($null -eq $Warning)
+        {
+            $result.Warnings | Should -BeNullOrEmpty
+        }
+        else
+        {
+            $result.Warnings | Should -Be @($Warning.Replace('<path>', $application.Path))
+        }
+    }
+
+    It 'runs an executable shell script and warns was not run for the same file without the execute bit' {
+        if ($IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'execute bits exist on Linux and macOS only'
+            return
+        }
+
+        $directory = New-TestDirectory
+        $scriptPath = Join-Path -Path $directory -ChildPath 'cashellprobe'
+        $lines = @('#!/bin/sh', 'printf ''Commands:\n  build    Compile the project\n  test     Run the tests\n''', 'exit 0')
+
+        # chmod runs with the session's PATH; only resolution uses the scratch PATH.
+        Write-TestShellScript -Path $scriptPath -Line $lines -Executable
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $directory
+            $runnable = Resolve-TestProbeApplication -Name 'cashellprobe'
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        Write-TestShellScript -Path $scriptPath -Line $lines
+        try
+        {
+            $env:PATH = $directory
+            $notExecutable = Resolve-TestProbeApplication -Name 'cashellprobe'
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        $notExecutable.Path | Should -Be $scriptPath
+        $notExecutable.CanRun | Should -BeTrue
+        $notRun = Invoke-TestHelpSubcommand -Application $notExecutable
+
+        Write-TestShellScript -Path $scriptPath -Line $lines -Executable
+        $run = Invoke-TestHelpSubcommand -Application $runnable
+
+        $run.Subcommands.Name | Should -Be @('build', 'test')
+        $run.Warnings | Should -BeNullOrEmpty
+        $notRun.Subcommands.Count | Should -Be 0
+        $notRun.Warnings.Count | Should -Be 1
+        $notRun.Warnings[0] | Should -Match ('^''{0}'' was not run: .+\. Pass captured help with -HelpText\.$' -f [regex]::Escape($scriptPath))
+        $notRun.VerboseLines | Should -BeNullOrEmpty
+    }
+
+    It 'warns was not run for a console header the loader rejects' {
+        if (-not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'the PE loader exists on Windows only'
+            return
+        }
+
+        $directory = New-TestDirectory
+        New-TestPEFile -Path (Join-Path -Path $directory -ChildPath 'carejectedprobe.exe') -Subsystem 3
+
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $directory
+            $application = Resolve-TestProbeApplication -Name 'carejectedprobe'
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        $application.CanRun | Should -BeTrue
+        Install-TestRunnerShim
+        $result = Invoke-TestHelpSubcommand -Application $application
+        $runs = @(Get-TestProbeRun)
+
+        $runs.Count | Should -Be 1
+        $runs[0].Status | Should -Be 'StartFailed'
+        $result.Subcommands.Count | Should -Be 0
+        $result.Warnings.Count | Should -Be 1
+        $result.Warnings[0] | Should -Match ('^''{0}'' was not run: .+\. Pass captured help with -HelpText\.$' -f [regex]::Escape($application.Path))
+        $result.Warnings[0] | Should -Not -Match 'Exception calling'
+        $result.VerboseLines | Should -BeNullOrEmpty
+    }
+
+    It 'runs nothing for <Case> and returns its warning' -TestCases @(
+        @{ Case = 'a command not found'; Build = 'Missing' }
+        @{ Case = 'the patched GUI copy'; Build = 'Gui' }
+        @{ Case = 'a .cmd file'; Build = 'Cmd' }
+    ) {
+        if ($Build -ne 'Missing' -and -not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'the PE and extension checks apply on Windows only'
+            return
+        }
+
+        $directory = New-TestDirectory
+        $markerPath = Join-Path -Path $directory -ChildPath 'marker.txt'
+        switch ($Build)
+        {
+            'Missing'
+            {
+                $name = 'zz_nonexistent_{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8))
+            }
+            'Gui'
+            {
+                $name = 'caguidecision'
+                New-TestPatchedExe -Path (Join-Path -Path $directory -ChildPath "$name.exe") -Subsystem 2
+            }
+            'Cmd'
+            {
+                $name = 'cacmddecision'
+                Set-Content -LiteralPath (Join-Path -Path $directory -ChildPath "$name.cmd") -Value '@echo off', ('echo ran> "{0}"' -f $markerPath) -Encoding ascii
+            }
+        }
+
+        $savedPath = $env:PATH
+        try
+        {
+            if ($Build -ne 'Missing')
+            {
+                $env:PATH = $directory
+            }
+
+            $application = Resolve-TestProbeApplication -Name $name
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        Install-TestRunnerShim
+        $result = Invoke-TestHelpSubcommand -Application $application
+
+        $application.CanRun | Should -BeFalse
+        @(Get-TestProbeRun).Count | Should -Be 0
+        $result.Subcommands.Count | Should -Be 0
+        $result.Argument | Should -BeNullOrEmpty
+        $result.Warnings | Should -Be @($application.Warning)
+        $result.VerboseLines | Should -BeNullOrEmpty
+        Test-Path -LiteralPath $markerPath | Should -BeFalse
+    }
+
+    It 'formats the limit with the invariant culture under a comma-decimal culture' {
+        $timedOut = New-TestProcessResult -Status 'TimedOut'
+        Install-TestRunnerShim -Fake ({
+                param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                $timedOut
+            }.GetNewClosure())
+
+        $savedCulture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+        try
+        {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = [System.Globalization.CultureInfo]::GetCultureInfo('de-DE')
+            $commaText = (0.05).ToString()
+            $result = Invoke-TestHelpSubcommand -Application (New-TestApplication -Name 'catool') -TimeoutSeconds 0.05
+        }
+        finally
+        {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = $savedCulture
+        }
+
+        $commaText | Should -Be '0,05'
+        $result.Warnings | Should -Be @("'catool --help' did not exit within 0.05 seconds and was stopped, so its help was not used.")
+    }
+}
