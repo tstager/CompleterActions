@@ -1616,4 +1616,11 @@ finally
         $setFirst | Should -Be @($setFinding, $altFinding)
         $altFirst | Should -Be @($altFinding, $setFinding)
     }
+
+    It 'reads the help for all three parameter sets' {
+        $help = Get-Help -Name 'Test-CompleterSet' -Full -ErrorAction Stop
+
+        @($help.Syntax.syntaxItem).Count | Should -Be 3
+        @($help.Parameters.parameter).name | Should -Contain 'Name'
+    }
 }
