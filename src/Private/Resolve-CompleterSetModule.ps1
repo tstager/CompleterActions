@@ -178,7 +178,7 @@ function Resolve-CompleterSetModule
 
     $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
 
-    if ($null -eq $declaredSet -or ($declaredSet -is [string] -and $declaredSet.Length -eq 0))
+    if ($null -eq $declaredSet)
     {
         throw "The module '$moduleName' $version at '$moduleBase' does not declare a completer set. A completer set module names its set file in PrivateData.CompleterSet."
     }

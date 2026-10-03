@@ -1056,6 +1056,23 @@ function Import-CompleterSet
     {
         try
         {
+            $resolvedPaths = @(
+                if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+                {
+                    foreach ($literalPathItem in $LiteralPath)
+                    {
+                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                    }
+                }
+                elseif ($PSCmdlet.ParameterSetName -eq 'Path')
+                {
+                    foreach ($pathItem in $Path)
+                    {
+                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                    }
+                }
+            )
+
             $sets = @(
                 if ($PSCmdlet.ParameterSetName -eq 'Name')
                 {
@@ -1073,21 +1090,11 @@ function Import-CompleterSet
                         @{ SetPath = $setModule.SetPath; Module = $setModule }
                     }
                 }
-                elseif ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
-                {
-                    foreach ($literalPathItem in $LiteralPath)
-                    {
-                        @{ SetPath = (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName; Module = $null }
-                    }
-                }
                 else
                 {
-                    foreach ($pathItem in $Path)
+                    foreach ($resolvedPath in $resolvedPaths)
                     {
-                        foreach ($resolvedPath in @(Resolve-Path -Path $pathItem -ErrorAction Stop))
-                        {
-                            @{ SetPath = $resolvedPath.ProviderPath; Module = $null }
-                        }
+                        @{ SetPath = $resolvedPath; Module = $null }
                     }
                 }
             )
@@ -6437,7 +6444,7 @@ function Resolve-CompleterSetModule
 
     $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
 
-    if ($null -eq $declaredSet -or ($declaredSet -is [string] -and $declaredSet.Length -eq 0))
+    if ($null -eq $declaredSet)
     {
         throw "The module '$moduleName' $version at '$moduleBase' does not declare a completer set. A completer set module names its set file in PrivateData.CompleterSet."
     }
