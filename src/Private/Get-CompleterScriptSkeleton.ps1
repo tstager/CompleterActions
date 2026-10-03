@@ -7,8 +7,9 @@ Returns the skeleton New-CompleterScript writes, one string per line and
 without line endings: the two comment lines, Set-StrictMode, one guarded
 literal-only state block holding the subcommand table, a Complete-<Stem>
 completion function that offers the table in the first argument position, and
-one bare script-scope Register-ArgumentCompleter call with a literal -CommandName list.
-Every string literal is single-quoted with its quote characters doubled. The
+one bare script-scope Register-ArgumentCompleter call with a literal
+-CommandName list. Every string literal is single-quoted with its quote
+characters doubled. The
 output names no date, version, or machine path, so the same input always gives
 the same lines. The generated code uses four-space indentation and opening
 braces on the same line, because it belongs to the author's repository.
@@ -31,7 +32,8 @@ empty list writes an empty table and the skeleton line 2.
 Where a non-empty table came from: Probe or HelpText. It picks line 2.
 
 .PARAMETER ProbeArgument
-The argument whose output seeded the table. Required with -SeedKind Probe.
+The argument whose output seeded the table. Required with -SeedKind Probe. It
+must not contain a line break, which would end the line 2 comment.
 
 .OUTPUTS
 System.String
@@ -63,6 +65,7 @@ function Get-CompleterScriptSkeleton
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
+        [ValidatePattern('\A[^\r\n]*\z')]
         [string] $ProbeArgument
     )
 

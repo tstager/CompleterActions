@@ -6,7 +6,9 @@ Builds the native target list a generated completer script registers.
 Checks every command name before building anything, and throws for the first
 name that is not a bare command name: at least one ASCII letter or digit, no
 path separators, spaces, quotes, or wildcard characters, no leading '-' or
-'.', and no trailing '.' or '-'. The list then follows the -CommandName order.
+'.', no trailing '.' or '-', and a letter or digit before any trailing .exe,
+.cmd, .bat, .ps1, or .com, so the stem is never empty. The list then follows
+the -CommandName order.
 Each name is written as given, and a name that does not end in .exe, .cmd,
 .bat, .ps1, or .com is followed by the same name with .exe appended. Names are
 de-duplicated case-insensitively, keeping the first spelling, so 'rg' and
@@ -29,8 +31,9 @@ function ConvertTo-CompleterTargetName
         [string[]] $CommandName
     )
 
-    # The spec's pattern, with \z in place of $ so a trailing newline does not match.
-    $commandNamePattern = '^(?=.*[A-Za-z0-9])[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
+    # The spec's pattern, with \z in place of $ so a trailing newline does not match, and a
+    # lookahead that rejects a name such as '_.exe' whose stem would be empty.
+    $commandNamePattern = '^(?=.*[A-Za-z0-9])(?!(?i:[^A-Za-z0-9]*\.(?:exe|cmd|bat|ps1|com))\z)[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
 
     foreach ($commandNameItem in $CommandName)
     {

@@ -18,7 +18,10 @@ file never survives the call.
 The script's lines, without line endings.
 
 .PARAMETER LiteralPath
-The full path of the .ps1 file to write. Its folder must exist.
+The .ps1 file to write. A relative path is resolved against the current
+PowerShell location. The caller checks that the folder exists and that the
+path is not a directory (New-CompleterScript step 1); the helper reports
+neither case in its own words.
 
 .PARAMETER ExpectedTarget
 The target list the script must register, in order.
@@ -51,6 +54,8 @@ function Save-CompleterScriptFile
         [switch] $Force
     )
 
+    # Set-Content resolves against the PowerShell location, File.Move against the process directory.
+    $LiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($LiteralPath))
     $temporaryPath = '{0}.{1}.tmp' -f $LiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
 
     try
@@ -68,7 +73,7 @@ function Save-CompleterScriptFile
         {
             try
             {
-                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $temporaryPath | ForEach-Object { [string] $_.RuntimeKey })
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $temporaryPath | Where-Object IsNative | ForEach-Object { [string] $_.CommandName })
             }
             catch
             {

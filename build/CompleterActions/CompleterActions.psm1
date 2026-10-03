@@ -3046,7 +3046,9 @@ Builds the native target list a generated completer script registers.
 Checks every command name before building anything, and throws for the first
 name that is not a bare command name: at least one ASCII letter or digit, no
 path separators, spaces, quotes, or wildcard characters, no leading '-' or
-'.', and no trailing '.' or '-'. The list then follows the -CommandName order.
+'.', no trailing '.' or '-', and a letter or digit before any trailing .exe,
+.cmd, .bat, .ps1, or .com, so the stem is never empty. The list then follows
+the -CommandName order.
 Each name is written as given, and a name that does not end in .exe, .cmd,
 .bat, .ps1, or .com is followed by the same name with .exe appended. Names are
 de-duplicated case-insensitively, keeping the first spelling, so 'rg' and
@@ -3072,8 +3074,9 @@ function ConvertTo-CompleterTargetName
         [string[]] $CommandName
     )
 
-    # The spec's pattern, with \z in place of $ so a trailing newline does not match.
-    $commandNamePattern = '^(?=.*[A-Za-z0-9])[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
+    # The spec's pattern, with \z in place of $ so a trailing newline does not match, and a
+    # lookahead that rejects a name such as '_.exe' whose stem would be empty.
+    $commandNamePattern = '^(?=.*[A-Za-z0-9])(?!(?i:[^A-Za-z0-9]*\.(?:exe|cmd|bat|ps1|com))\z)[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
 
     foreach ($commandNameItem in $CommandName)
     {
@@ -3880,8 +3883,9 @@ Returns the skeleton New-CompleterScript writes, one string per line and
 without line endings: the two comment lines, Set-StrictMode, one guarded
 literal-only state block holding the subcommand table, a Complete-<Stem>
 completion function that offers the table in the first argument position, and
-one bare script-scope Register-ArgumentCompleter call with a literal -CommandName list.
-Every string literal is single-quoted with its quote characters doubled. The
+one bare script-scope Register-ArgumentCompleter call with a literal
+-CommandName list. Every string literal is single-quoted with its quote
+characters doubled. The
 output names no date, version, or machine path, so the same input always gives
 the same lines. The generated code uses four-space indentation and opening
 braces on the same line, because it belongs to the author's repository.
@@ -3904,7 +3908,8 @@ empty list writes an empty table and the skeleton line 2.
 Where a non-empty table came from: Probe or HelpText. It picks line 2.
 
 .PARAMETER ProbeArgument
-The argument whose output seeded the table. Required with -SeedKind Probe.
+The argument whose output seeded the table. Required with -SeedKind Probe. It
+must not contain a line break, which would end the line 2 comment.
 
 .OUTPUTS
 System.String
@@ -3939,6 +3944,7 @@ function Get-CompleterScriptSkeleton
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
+        [ValidatePattern('\A[^\r\n]*\z')]
         [string] $ProbeArgument
     )
 
@@ -6843,7 +6849,10 @@ file never survives the call.
 The script's lines, without line endings.
 
 .PARAMETER LiteralPath
-The full path of the .ps1 file to write. Its folder must exist.
+The .ps1 file to write. A relative path is resolved against the current
+PowerShell location. The caller checks that the folder exists and that the
+path is not a directory (New-CompleterScript step 1); the helper reports
+neither case in its own words.
 
 .PARAMETER ExpectedTarget
 The target list the script must register, in order.
@@ -6879,6 +6888,8 @@ function Save-CompleterScriptFile
         [switch] $Force
     )
 
+    # Set-Content resolves against the PowerShell location, File.Move against the process directory.
+    $LiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($LiteralPath))
     $temporaryPath = '{0}.{1}.tmp' -f $LiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
 
     try
@@ -6896,7 +6907,7 @@ function Save-CompleterScriptFile
         {
             try
             {
-                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $temporaryPath | ForEach-Object { [string] $_.RuntimeKey })
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $temporaryPath | Where-Object IsNative | ForEach-Object { [string] $_.CommandName })
             }
             catch
             {
