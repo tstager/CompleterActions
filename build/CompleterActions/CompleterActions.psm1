@@ -2954,6 +2954,165 @@ function Assert-CompleterScriptConformance
 }
 <#
 .SYNOPSIS
+Derives the stem that names a generated completer script's state and function.
+
+.DESCRIPTION
+Drops one trailing .exe, .cmd, .bat, .ps1, or .com (compared
+case-insensitively) from the primary command name, splits the rest on every
+character that is not an ASCII letter or digit, upper-cases the first
+character of each part with the invariant culture, and joins the parts. 'rg'
+and 'rg.exe' give 'Rg', 'oh-my-posh' gives 'OhMyPosh', 'DSC' stays 'DSC', and
+'7z' gives '7z'. The script names $script:<Stem>CompletionCatalog and
+Complete-<Stem> after it.
+
+.PARAMETER Name
+The primary command name, already checked by ConvertTo-CompleterTargetName.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterScriptStem
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name
+    )
+
+    $baseName = $Name
+
+    foreach ($suffix in '.exe', '.cmd', '.bat', '.ps1', '.com')
+    {
+        if ($baseName.EndsWith($suffix, [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            $baseName = $baseName.Substring(0, $baseName.Length - $suffix.Length)
+            break
+        }
+    }
+
+    $parts = [System.Text.RegularExpressions.Regex]::Split($baseName, '[^A-Za-z0-9]+') | Where-Object { $_.Length -gt 0 }
+
+    -join @($parts | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) })
+}
+<#
+.SYNOPSIS
+Escapes text for a single-quoted PowerShell string literal.
+
+.DESCRIPTION
+Doubles every character PowerShell's tokenizer accepts as a single-quote
+delimiter: U+0027, U+2018, U+2019, U+201A, and U+201B. Help text such as
+"don't" written with a typographic apostrophe would otherwise end the string.
+Every other character is kept as is. The result goes between two U+0027
+quotes.
+
+.PARAMETER Value
+The text to escape.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterSingleQuotedText
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Value
+    )
+
+    $escaped = $Value
+
+    foreach ($quote in [char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B)
+    {
+        $escaped = $escaped.Replace([string] $quote, [string] $quote + $quote)
+    }
+
+    $escaped
+}
+<#
+.SYNOPSIS
+Builds the native target list a generated completer script registers.
+
+.DESCRIPTION
+Checks every command name before building anything, and throws for the first
+name that is not a bare command name: at least one ASCII letter or digit, no
+path separators, spaces, quotes, or wildcard characters, no leading '-' or
+'.', no trailing '.' or '-', and a letter or digit before any trailing .exe,
+.cmd, .bat, .ps1, or .com, so the stem is never empty. The list then follows
+the -CommandName order.
+Each name is written as given, and a name that does not end in .exe, .cmd,
+.bat, .ps1, or .com is followed by the same name with .exe appended. Names are
+de-duplicated case-insensitively, keeping the first spelling, so 'rg' and
+'rg', 'rg.exe' give the same list, and no bare name is derived from a suffixed
+one.
+
+.PARAMETER CommandName
+The command names, primary name first.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterTargetName
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $CommandName
+    )
+
+    # The spec's pattern, with \z in place of $ so a trailing newline does not match, and a
+    # lookahead that rejects a name such as '_.exe' whose stem would be empty.
+    $commandNamePattern = '^(?=.*[A-Za-z0-9])(?!(?i:[^A-Za-z0-9]*\.(?:exe|cmd|bat|ps1|com))\z)[A-Za-z0-9_](?:[A-Za-z0-9._+-]*[A-Za-z0-9_+])?\z'
+
+    foreach ($commandNameItem in $CommandName)
+    {
+        if (-not [System.Text.RegularExpressions.Regex]::IsMatch($commandNameItem, $commandNamePattern))
+        {
+            throw "'$commandNameItem' is not a command name New-CompleterScript can register. Use the bare command name, without a path, spaces, quotes, or wildcard characters."
+        }
+    }
+
+    $suffixes = '.exe', '.cmd', '.bat', '.ps1', '.com'
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $targetNames = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($commandNameItem in $CommandName)
+    {
+        $names = @($commandNameItem)
+        $hasSuffix = @($suffixes | Where-Object { $commandNameItem.EndsWith($_, [System.StringComparison]::OrdinalIgnoreCase) }).Count -gt 0
+
+        if (-not $hasSuffix)
+        {
+            $names += '{0}.exe' -f $commandNameItem
+        }
+
+        foreach ($name in $names)
+        {
+            if ($seen.Add($name))
+            {
+                $targetNames.Add($name)
+            }
+        }
+    }
+
+    $targetNames.ToArray()
+}
+<#
+.SYNOPSIS
 Finds managed completer registrations from module state.
 
 .DESCRIPTION
@@ -3806,6 +3965,156 @@ function Get-CompleterScriptParseResult
         Tokens      = @($tokens)
         ParseErrors = @($parseErrors)
     }
+}
+<#
+.SYNOPSIS
+Composes the lines of a generated native completer script.
+
+.DESCRIPTION
+Returns the skeleton New-CompleterScript writes, one string per line and
+without line endings: the two comment lines, Set-StrictMode, one guarded
+literal-only state block holding the subcommand table, a Complete-<Stem>
+completion function that offers the table in the first argument position, and
+one bare script-scope Register-ArgumentCompleter call with a literal
+-CommandName list. Every string literal is single-quoted with its quote
+characters doubled. The
+output names no date, version, or machine path, so the same input always gives
+the same lines. The generated code uses four-space indentation and opening
+braces on the same line, because it belongs to the author's repository.
+
+.PARAMETER Name
+The primary command name, as given. Line 1 names it, and so does line 2 of a
+probe-seeded script.
+
+.PARAMETER Stem
+The stem from ConvertTo-CompleterScriptStem.
+
+.PARAMETER Target
+The target list from ConvertTo-CompleterTargetName.
+
+.PARAMETER Subcommand
+The subcommand rows, each with a Name and a Description, in help order. An
+empty list writes an empty table and the skeleton line 2.
+
+.PARAMETER SeedKind
+Where a non-empty table came from: Probe or HelpText. It picks line 2.
+
+.PARAMETER ProbeArgument
+The argument whose output seeded the table. Required with -SeedKind Probe. It
+must not contain a line break, which would end the line 2 comment.
+
+.OUTPUTS
+System.String
+#>
+function Get-CompleterScriptSkeleton
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Stem,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Target,
+
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $Subcommand,
+
+        [Parameter()]
+        [ValidateSet('Probe', 'HelpText')]
+        [string] $SeedKind,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [ValidatePattern('\A[^\r\n]*\z')]
+        [string] $ProbeArgument
+    )
+
+    $catalogName = '{0}CompletionCatalog' -f $Stem
+    $functionName = 'Complete-{0}' -f $Stem
+
+    if ($Subcommand.Count -eq 0)
+    {
+        $sourceLine = '# Native completer skeleton: add subcommands to the table and options to {0}.' -f $functionName
+    }
+    elseif ($SeedKind -eq 'Probe' -and $PSBoundParameters.ContainsKey('ProbeArgument'))
+    {
+        $sourceLine = "# Help-seeded native completer: the subcommand table was read from '{0} {1}' when the script was generated." -f $Name, $ProbeArgument
+    }
+    elseif ($SeedKind -eq 'HelpText')
+    {
+        $sourceLine = '# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.'
+    }
+    else
+    {
+        throw 'A non-empty subcommand table needs -SeedKind HelpText, or -SeedKind Probe with -ProbeArgument.'
+    }
+
+    $lines = [System.Collections.Generic.List[string]]::new()
+    $lines.Add(('# {0} tab completion for PowerShell' -f $Name))
+    $lines.Add($sourceLine)
+    $lines.Add('')
+    $lines.Add('Set-StrictMode -Version 2.0')
+    $lines.Add('')
+    $lines.Add(('if (-not (Get-Variable -Name {0} -Scope Script -ErrorAction Ignore)) {{' -f $catalogName))
+    $lines.Add(('    $script:{0} = @{{' -f $catalogName))
+
+    if ($Subcommand.Count -eq 0)
+    {
+        $lines.Add('        Subcommands = @()')
+    }
+    else
+    {
+        $lines.Add('        Subcommands = @(')
+
+        foreach ($row in $Subcommand)
+        {
+            $lines.Add(("            @{{ Name = '{0}'; Description = '{1}' }}" -f (ConvertTo-CompleterSingleQuotedText -Value ([string] $row.Name)), (ConvertTo-CompleterSingleQuotedText -Value ([string] $row.Description))))
+        }
+
+        $lines.Add('        )')
+    }
+
+    $lines.Add('    }')
+    $lines.Add('}')
+    $lines.Add('')
+    $lines.Add(('function {0} {{' -f $functionName))
+    $lines.Add('    param(')
+    $lines.Add('        [string]$wordToComplete,')
+    $lines.Add('        [System.Management.Automation.Language.CommandAst]$commandAst,')
+    $lines.Add('        [int]$cursorPosition')
+    $lines.Add('    )')
+    $lines.Add('')
+    $lines.Add('    # Offer subcommands in the first argument position only; extend this function for options and values.')
+    $lines.Add('    $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })')
+    $lines.Add('    if ($precedingElements.Count -gt 1) {')
+    $lines.Add('        return')
+    $lines.Add('    }')
+    $lines.Add('')
+    $lines.Add(('    foreach ($subcommand in $script:{0}.Subcommands) {{' -f $catalogName))
+    $lines.Add('        if ($subcommand.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {')
+    $lines.Add("            [System.Management.Automation.CompletionResult]::new(`$subcommand.Name, `$subcommand.Name, 'ParameterValue', `$subcommand.Description)")
+    $lines.Add('        }')
+    $lines.Add('    }')
+    $lines.Add('}')
+    $lines.Add('')
+    $lines.Add(('Register-ArgumentCompleter -Native -CommandName {0} -ScriptBlock {{' -f (@($Target | ForEach-Object { "'{0}'" -f (ConvertTo-CompleterSingleQuotedText -Value $_) }) -join ', ')))
+    $lines.Add('    param($wordToComplete, $commandAst, $cursorPosition)')
+    $lines.Add('')
+    $lines.Add(('    {0} -wordToComplete $wordToComplete -commandAst $commandAst -cursorPosition $cursorPosition' -f $functionName))
+    $lines.Add('}')
+
+    $lines.ToArray()
 }
 <#
 .SYNOPSIS
@@ -6963,6 +7272,129 @@ function Resolve-CompleterTargetList
             }
 
             break
+        }
+    }
+}
+<#
+.SYNOPSIS
+Writes a generated completer script after checking the bytes it installs.
+
+.DESCRIPTION
+Writes the lines to '<path>.<8 hex>.tmp' in the target folder with
+Set-Content -Encoding utf8 (UTF-8 without a byte-order mark, the platform
+newline, and a final newline). It then checks that file the way
+Test-CompleterScript does, parse errors included, and derives its targets the
+way Register-Completer -Lazy does. Any finding, or derived targets that differ
+from -ExpectedTarget in order or spelling, throws the self-check text. A
+checked file is moved into place with File.Move, overwriting only under
+-Force; without -Force, a file that appeared at the path before the move makes
+the call fail with the already-exists text and stay unchanged. The temporary
+file never survives the call.
+
+.PARAMETER Line
+The script's lines, without line endings.
+
+.PARAMETER LiteralPath
+The .ps1 file to write. A relative path is resolved against the current
+PowerShell location. The caller checks that the folder exists and that the
+path is not a directory (New-CompleterScript step 1); the helper reports
+neither case in its own words.
+
+.PARAMETER ExpectedTarget
+The target list the script must register, in order.
+
+.PARAMETER Force
+Overwrites an existing file at the path.
+
+.OUTPUTS
+System.IO.FileInfo
+#>
+function Save-CompleterScriptFile
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+{
+    [CmdletBinding()]
+    [OutputType([System.IO.FileInfo])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [AllowEmptyString()]
+        [string[]] $Line,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $ExpectedTarget,
+
+        [Parameter()]
+        [switch] $Force
+    )
+
+    # Set-Content resolves against the PowerShell location, File.Move against the process directory.
+    $LiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($LiteralPath))
+    $temporaryPath = '{0}.{1}.tmp' -f $LiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+
+    try
+    {
+        Set-Content -LiteralPath $temporaryPath -Value $Line -Encoding utf8 -ErrorAction Stop
+
+        $detail = $null
+        $finding = @(Get-CompleterScriptFinding -LiteralPath $temporaryPath) | Select-Object -First 1
+
+        if ($null -ne $finding)
+        {
+            $detail = $finding.Message
+        }
+        else
+        {
+            try
+            {
+                $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $temporaryPath | Where-Object IsNative | ForEach-Object { [string] $_.CommandName })
+            }
+            catch
+            {
+                $derivedTargets = $null
+                $detail = $_.Exception.Message
+            }
+
+            if ($null -ne $derivedTargets -and -not [System.Linq.Enumerable]::SequenceEqual([string[]] $derivedTargets, [string[]] $ExpectedTarget))
+            {
+                $derivedList = @($derivedTargets | ForEach-Object { "'{0}'" -f (ConvertTo-CompleterSingleQuotedText -Value $_) }) -join ', '
+                $expectedList = @($ExpectedTarget | ForEach-Object { "'{0}'" -f (ConvertTo-CompleterSingleQuotedText -Value $_) }) -join ', '
+                $detail = 'The script registers {0}, not {1}.' -f $derivedList, $expectedList
+            }
+        }
+
+        if ($null -ne $detail)
+        {
+            throw "New-CompleterScript did not produce a conforming script, so nothing was written. This is a defect in CompleterActions; report it at https://github.com/tstager/CompleterActions/issues with the command line you ran. $detail"
+        }
+
+        try
+        {
+            [System.IO.File]::Move($temporaryPath, $LiteralPath, [bool] $Force)
+        }
+        catch [System.IO.IOException]
+        {
+            if (-not $Force -and (Test-Path -LiteralPath $LiteralPath))
+            {
+                throw "The file '$LiteralPath' already exists. Use -Force to overwrite it."
+            }
+
+            throw
+        }
+
+        Get-Item -LiteralPath $LiteralPath
+    }
+    finally
+    {
+        if (Test-Path -LiteralPath $temporaryPath)
+        {
+            Remove-Item -LiteralPath $temporaryPath -Force
         }
     }
 }
