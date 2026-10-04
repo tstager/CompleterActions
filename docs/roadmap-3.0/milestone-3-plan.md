@@ -6,7 +6,7 @@ Spec: `docs/roadmap-3.0/milestone-3-spec.md` (draft, 2026-10-03). Section number
 Roadmap: `docs/roadmap-3.0.md`, milestone 3, locked decisions 4, 5, and 6. Ships first as `v3.0.0-rc1` (PSGallery prerelease label `rc1`), then as `v3.0.0` from the same code once the candidate has soaked (decision 6, §10).
 Branch: `feat/milestone-3-compiled-core` from main, after this plan and the spec are committed to main.
 
-The plan implements §1 to §11 as written. It treats every open question in §13 as answered by its recommendation until the owner answers it; "Owner decisions by gate" says when each answer is due and which package changes if it goes against the recommendation.
+The plan implements §1 to §11 as written. The owner accepted every §13 recommendation on 2026-10-04, so each question is settled as recommended; "Owner decisions by gate" says when each answer is due and which package changes if it goes against the recommendation.
 
 The engine-cmdlet path (§13 question 1) is out of scope. If the owner answers against the recommendation, it becomes its own package, WPA, after WP3 and before WP7: a `CmdletEngine` path inside `src/Core/Engine/`, the detection rule and verbose line of the milestone 2 spec's appendix A, a cmdlet double under `tests/Fixtures/EngineCmdletDouble/`, and checks A1 to A3 of that appendix.
 
