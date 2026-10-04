@@ -191,7 +191,7 @@ task build clean, compile, external_help, {
 
         CompatiblePSEditions = @($sourceManifestData.CompatiblePSEditions)
         PowerShellVersion    = $sourceManifestData.PowerShellVersion
-        Copyright           = $resolvedCopyright
+        Copyright            = $resolvedCopyright
         Path                 = Join-Path -Path $modulePath -ChildPath "$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
         AliasesToExport      = @($sourceManifestData.AliasesToExport)
