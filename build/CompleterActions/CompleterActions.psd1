@@ -70,13 +70,10 @@ FormatsToProcess = 'CompleterActions.Format.ps1xml'
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = 'Export-CompleterSet', 'Get-Completer', 
-               'Get-CompleterRegistrationLegacy', 'Import-CompleterScript', 
+FunctionsToExport = 'Export-CompleterSet', 'Get-Completer', 'Import-CompleterScript', 
                'Import-CompleterSet', 'New-CompleterScript', 'Register-Completer', 
-               'Register-CompleterRegistrationLegacy', 'Reset-Completer', 
-               'Test-CompleterRegistration', 'Test-CompleterScript', 
-               'Test-CompleterSet', 'Unregister-Completer', 
-               'Unregister-CompleterRegistrationLegacy'
+               'Reset-Completer', 'Test-CompleterRegistration', 
+               'Test-CompleterScript', 'Test-CompleterSet', 'Unregister-Completer'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -85,8 +82,7 @@ CmdletsToExport = @()
 # VariablesToExport = @()
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
-AliasesToExport = 'Get-CompleterRegistration', 'Register-CompleterRegistration', 
-               'Unregister-CompleterRegistration'
+AliasesToExport = @()
 
 # DSC resources to export from this module
 # DscResourcesToExport = @()

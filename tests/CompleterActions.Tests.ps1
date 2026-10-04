@@ -776,8 +776,7 @@ Describe 'Completer registration public API' {
     }
 
     It 'binds every piped object to the InputObject set of <Command>' -TestCases @(
-        @{ Command = 'Get-Completer' },
-        @{ Command = 'Get-CompleterRegistrationLegacy' }
+        @{ Command = 'Get-Completer' }
     ) {
         param($Command)
 
@@ -1565,5 +1564,123 @@ else
 
         $state['Registrations'].Count | Should -Be 0
         Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'Removed surface' {
+    BeforeAll {
+        $script:RemovedSurfaceRepoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $script:RemovedSurfaceManifestPath = Join-Path -Path $script:RemovedSurfaceRepoRoot -ChildPath 'CompleterActions.psd1'
+
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        Import-Module -Name $script:RemovedSurfaceManifestPath -Force | Out-Null
+    }
+
+    AfterAll {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'exports exactly the eleven functions and no alias' {
+        $expected = @(
+            'Export-CompleterSet',
+            'Get-Completer',
+            'Import-CompleterScript',
+            'Import-CompleterSet',
+            'New-CompleterScript',
+            'Register-Completer',
+            'Reset-Completer',
+            'Test-CompleterRegistration',
+            'Test-CompleterScript',
+            'Test-CompleterSet',
+            'Unregister-Completer'
+        )
+        $manifestData = Import-PowerShellDataFile -Path $script:RemovedSurfaceManifestPath
+        $commands = @(Get-Command -Module 'CompleterActions')
+
+        @($manifestData.FunctionsToExport) | Should -Be $expected
+        $manifestData.ContainsKey('AliasesToExport') | Should -BeTrue
+        @($manifestData.AliasesToExport).Count | Should -Be 0
+        $commands.Count | Should -Be 11
+        @($commands | Where-Object CommandType -ne 'Function') | Should -BeNullOrEmpty
+        @($commands.Name | Sort-Object) | Should -Be @($manifestData.FunctionsToExport)
+    }
+
+    It 'fails <Name> with CommandNotFoundException' -TestCases @(
+        @{ Name = 'Get-CompleterRegistration' },
+        @{ Name = 'Register-CompleterRegistration' },
+        @{ Name = 'Unregister-CompleterRegistration' },
+        @{ Name = 'Get-CompleterRegistrationLegacy' },
+        @{ Name = 'Register-CompleterRegistrationLegacy' },
+        @{ Name = 'Unregister-CompleterRegistrationLegacy' }
+    ) {
+        param($Name)
+
+        # An installed 2.x CompleterActions on PSModulePath still exports these names and command discovery would
+        # autoload it. Discovery ignores a local autoloading preference, so the global one is off for the call.
+        $previousPreference = Get-Variable -Name 'PSModuleAutoLoadingPreference' -Scope Global -ErrorAction Ignore
+        $thrown = $null
+        Set-Variable -Name 'PSModuleAutoLoadingPreference' -Scope Global -Value 'None'
+
+        try
+        {
+            & $Name
+        }
+        catch
+        {
+            $thrown = $_
+        }
+        finally
+        {
+            if ($previousPreference)
+            {
+                Set-Variable -Name 'PSModuleAutoLoadingPreference' -Scope Global -Value $previousPreference.Value
+            }
+            else
+            {
+                Remove-Variable -Name 'PSModuleAutoLoadingPreference' -Scope Global
+            }
+        }
+
+        $thrown | Should -Not -BeNullOrEmpty -Because "$Name must no longer resolve"
+        $thrown.Exception | Should -BeOfType ([System.Management.Automation.CommandNotFoundException])
+        $thrown.Exception.Message | Should -BeLike "The term '$Name' is not recognized*"
+    }
+
+    It 'has no deprecated name left in the sources' {
+        $repoRoot = $script:RemovedSurfaceRepoRoot
+        $files = @(
+            Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'src') -Filter '*.ps1' -File -Recurse
+            Get-Item -LiteralPath @(
+                (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psm1'),
+                (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'),
+                (Join-Path -Path $repoRoot -ChildPath 'README.md'),
+                (Join-Path -Path $repoRoot -ChildPath '.github/copilot-instructions.md')
+            )
+            Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'en-US') -Filter '*.txt' -File
+            Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'src/docs/CompleterActions') -Filter '*.md' -File
+        )
+        # The migration guide maps every old name; README keeps one history sentence about the removal.
+        $allowed = @{
+            'en-US/about_CompleterActions_Migration.help.txt' = '*'
+            'README.md'                                       = '3.0 removed the 1.x names *'
+        }
+
+        $unexpected = @(
+            $files |
+                Select-String -Pattern 'CompleterRegistrationLegacy|Write-CompleterDeprecationWarning|CompleterDeprecationWarningsIssued|ManagedOnly|DiscoveredOnly' |
+                ForEach-Object {
+                    $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $_.Path).Replace('\', '/')
+                    if (-not ($allowed.ContainsKey($relativePath) -and $_.Line -like $allowed[$relativePath]))
+                    {
+                        '{0}:{1}: {2}' -f $relativePath, $_.LineNumber, $_.Line.Trim()
+                    }
+                }
+        )
+
+        $unexpected | Should -BeNullOrEmpty
+        foreach ($removedFile in 'src/Public/Get-CompleterRegistrationLegacy.ps1', 'src/Public/Register-CompleterRegistrationLegacy.ps1', 'src/Public/Unregister-CompleterRegistrationLegacy.ps1', 'src/Private/Write-CompleterDeprecationWarning.ps1', 'tests/CompleterDeprecation.Tests.ps1')
+        {
+            Join-Path -Path $repoRoot -ChildPath $removedFile | Should -Not -Exist
+        }
     }
 }
