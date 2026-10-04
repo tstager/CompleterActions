@@ -53,15 +53,17 @@ the script is not parsed, strict entries must name their targets with literal
 parsed script and compared against any `Targets` the entry declares, no target
 may be listed by two entries of the set, and without `-Force` no target may
 already carry a managed or runtime registration for a different completer. An
-entry that repeats a registration the session already has is reused. The
-strict import grammar does not run here; it runs when a script loads.
-Validating a strict entry parses its script once and registration reuses the
-targets that validation derived, so a set import parses each strict script
-once, unless its `Hash` matches, and walks none of them; run
-`Test-CompleterScript` over the repository to find grammar findings ahead of
-time. When one or more entries are invalid the command throws a single error
-that lists every problem and registers nothing. With `-SkipInvalid` each
-problem is written as a warning instead and the valid entries register.
+entry that repeats a registration the session already has is reused.
+Validating a strict entry parses its script once and runs the strict import
+grammar on that parse, and registration reuses the targets that validation
+derived, so a set import parses and walks each strict script once, unless its
+`Hash` matches, in which case the grammar first runs when the script loads. A
+script that fails the grammar is an invalid entry whose message names the
+first finding; run `Test-CompleterScript` over the repository to see every
+finding ahead of time. When one or more entries are invalid the command
+throws a single error that lists every problem and registers nothing. With
+`-SkipInvalid` each problem is written as a warning instead and the valid
+entries register.
 
 A strict entry that declares `Targets` and carries a `Hash`, as
 `Export-CompleterSet` writes it, is not parsed when the `Hash` matches the

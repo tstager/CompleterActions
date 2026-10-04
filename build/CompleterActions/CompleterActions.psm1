@@ -743,15 +743,17 @@ Register-ArgumentCompleter arguments so the targets can be derived from the
 parsed script and compared against any Targets the entry declares, no target
 may be listed by two entries of the set, and without -Force no target may
 already carry a managed or runtime registration for a different completer. An
-entry that repeats a registration the session already has is reused. The
-strict import grammar does not run here; it runs when a script loads.
-Validating a strict entry parses its script once and registration reuses the
-targets that validation derived, so a set import parses each strict script
-once, unless its Hash matches, and walks none of them; run
-Test-CompleterScript over the repository to find grammar findings ahead of
-time. When one or more entries are invalid the command throws a single error
-that lists every problem and registers nothing. With -SkipInvalid each
-problem is written as a warning instead and the valid entries register.
+entry that repeats a registration the session already has is reused.
+Validating a strict entry parses its script once and runs the strict import
+grammar on that parse, and registration reuses the targets that validation
+derived, so a set import parses and walks each strict script once, unless its
+Hash matches, in which case the grammar first runs when the script loads. A
+script that fails the grammar is an invalid entry whose message names the
+first finding; run Test-CompleterScript over the repository to see every
+finding ahead of time. When one or more entries are invalid the command
+throws a single error that lists every problem and registers nothing. With
+-SkipInvalid each problem is written as a warning instead and the valid
+entries register.
 
 A strict entry that declares Targets and carries a Hash, as
 Export-CompleterSet writes it, is not parsed when the Hash matches the
@@ -7438,20 +7440,25 @@ set file's directory rather than the current location. Trusted defaults to
 false. Trusted entries must declare Targets because the script is not parsed.
 Strict entries must register their targets with literal arguments so the
 targets can be derived from the parsed script and, when the entry also
-declares Targets, the two lists must match; the strict import grammar itself
-runs when the script loads. A strict script is parsed at most once here and
-the targets it yields are the ones the import registers. The script is never
-executed.
+declares Targets, the two lists must match. Without -Verify the strict import
+grammar runs on the same parse once the targets are derived from it, so a
+script that does not parse or whose targets cannot be read gets only the
+UnreadableTargets problem, and a script that fails the grammar gets the
+NonConforming problem, built from its first Error finding, ahead of any
+TargetMismatch for the same entry; the grammar runs again when the script
+loads. A strict script is parsed at most once here and the targets it yields
+are the ones the import registers. The script is never executed.
 
-The fast path skips that parse. When a strict entry has no problem so far,
-declares Targets, and carries a Hash whose form Test-CompleterSetHashFormat
-recognises, the script's text is hashed and compared with it. On a match the
-declared Targets are used as they are, in declared order and de-duplicated by
-Key with the first occurrence kept, because the export that wrote the Hash
-derived those targets from the same text. An absent, unrecognised, or
-different Hash, or a script that cannot be read for its hash, falls through
-to the parse, so such an entry gets exactly the problems it would get with
-no Hash at all. A trusted entry's Hash is ignored and its script is not read.
+The fast path skips that parse and the grammar. When a strict entry has no
+problem so far, declares Targets, and carries a Hash whose form
+Test-CompleterSetHashFormat recognises, the script's text is hashed and
+compared with it. On a match the declared Targets are used as they are, in
+declared order and de-duplicated by Key with the first occurrence kept,
+because the export that wrote the Hash derived those targets from the same
+text. An absent, unrecognised, or different Hash, or a script that cannot be
+read for its hash, falls through to the parse, so such an entry gets exactly
+the problems it would get with no Hash at all. A trusted entry's Hash is
+ignored and its script is not read.
 
 When ModuleBase is given, as Import-CompleterSet -Name gives it, the
 resolved path must lie inside that folder, compared with a trailing separator
@@ -7461,8 +7468,8 @@ and no existence, extension, hash, or parse check, so its file is never
 opened.
 
 Each problem is a hashtable with Kind and Message. Kind is InvalidEntry,
-MissingScript, OutsideModule, UnreadableTargets, or TargetMismatch; Message
-is the text Import-CompleterSet reports.
+MissingScript, OutsideModule, UnreadableTargets, NonConforming, or
+TargetMismatch; Message is the text Import-CompleterSet reports.
 
 .PARAMETER Entry
 The raw entry value from the set file's Entries array.
@@ -7474,10 +7481,10 @@ The one-based position of the entry in the set file, used in messages.
 The directory that relative entry paths resolve against.
 
 .PARAMETER Verify
-Disables the fast path, so every strict entry whose script is usable is
-parsed once, and records the script's actual hash and parse-derived targets
-for drift checks. A trusted entry's script is read for its hash but still not
-parsed.
+Disables the fast path and the grammar, so every strict entry whose script is
+usable is parsed once and never walked, and records the script's actual hash
+and parse-derived targets for drift checks. A trusted entry's script is read
+for its hash but still not parsed.
 
 .PARAMETER ModuleName
 The installed module folder's name, used in the OutsideModule problem.
@@ -7732,6 +7739,16 @@ function Resolve-CompleterSetEntry
                     }
 
                     $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $resolvedPath -ParseResult $parseResult)
+
+                    if (-not $Verify)
+                    {
+                        $grammarFinding = @(Test-CompleterScriptAst -Ast $parseResult.Ast -LiteralPath $resolvedPath | Where-Object -Property Severity -EQ -Value 'Error') | Select-Object -First 1
+
+                        if ($null -ne $grammarFinding)
+                        {
+                            $problems.Add(@{ Kind = 'NonConforming'; Message = "The script does not conform to the strict import grammar: line $($grammarFinding.Line), column $($grammarFinding.Column) ($($grammarFinding.Construct)): $($grammarFinding.Message) Run Test-CompleterScript to work through the findings, or mark the entry Trusted to run it as-is." })
+                        }
+                    }
                 }
                 catch
                 {
