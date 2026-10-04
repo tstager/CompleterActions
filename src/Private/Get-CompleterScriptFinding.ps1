@@ -11,6 +11,11 @@ grammar by Test-CompleterScriptAst. A conforming script produces no output.
 .PARAMETER LiteralPath
 The literal path to the completer script file.
 
+.PARAMETER ParseResult
+A parse result of the script from Get-CompleterScriptParseResult. When it is
+supplied the script is not parsed again, so a caller that also derives the
+script's targets from the same parse reads the file once.
+
 .OUTPUTS
 CompleterActions.CompleterScriptFinding
 #>
@@ -21,14 +26,21 @@ function Get-CompleterScriptFinding
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [psobject] $ParseResult
     )
 
-    $parseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
-
-    if ($parseResult.ParseErrors.Count -gt 0)
+    if (-not $PSBoundParameters.ContainsKey('ParseResult'))
     {
-        foreach ($parseError in $parseResult.ParseErrors)
+        $ParseResult = Get-CompleterScriptParseResult -LiteralPath $LiteralPath
+    }
+
+    if ($ParseResult.ParseErrors.Count -gt 0)
+    {
+        foreach ($parseError in $ParseResult.ParseErrors)
         {
             New-CompleterScriptFinding -Path $LiteralPath -Extent $parseError.Extent -Construct 'ParseError' -Message $parseError.Message -Hint 'Fix the syntax error; the completer shape is only checked once the script parses.'
         }
@@ -36,5 +48,5 @@ function Get-CompleterScriptFinding
         return
     }
 
-    Test-CompleterScriptAst -Ast $parseResult.Ast -LiteralPath $LiteralPath
+    Test-CompleterScriptAst -Ast $ParseResult.Ast -LiteralPath $LiteralPath
 }
