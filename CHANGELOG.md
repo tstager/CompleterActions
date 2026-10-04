@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-10-04
+
+The stable 2.2.0 release. Same code as 2.2.0-preview1, promoted after the
+preview soaked in a profile and in the PS_Completers conformance CI without a
+defect, per roadmap decision 7. The 2.2.0-preview1 section below is the full
+record of the milestone: `New-CompleterScript`, `Import-CompleterSet -Name`,
+`Test-CompleterSet -Name` with the `PackageLayout` findings, and the third
+edition of the author guide.
+
 ## [2.2.0-preview1] - 2026-10-03
 
 ### Added
@@ -652,7 +661,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.2.0-preview1...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0
 [2.2.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0-preview1
 [2.1.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0
 [2.1.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0-preview1
