@@ -3,14 +3,14 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-10-03): milestones 0 and 1 shipped; milestone 2 preview shipped the same day as 2.2.0-preview1 (PR #8, merge 30e39b8, release commit 5a25401); stable 2.2.0 after the soak, then milestone 3.
+Status (2026-10-04): milestones 0, 1, and 2 shipped. Stable 2.2.0 released 2026-10-04 (release commit d5767e9, tag v2.2.0) from the preview1 code, and PS_Completers 1.0.0 published to PSGallery the same day; the milestone 3 spec and plan were accepted 2026-10-04 (docs/roadmap-3.0/milestone-3-spec.md and milestone-3-plan.md), so the next step is the milestone 3 branch.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
 | 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Shipped 2026-10-02, tag v2.1.0, from the preview1 code; preview shipped 2026-09-29, PR #7 (merge ad267e1) |
-| 2 Authoring and distribution | 2.2.0-preview1, then 2.2.0 | Preview shipped 2026-10-03, tag v2.2.0-preview1, PR #8 (merge 30e39b8); stable after soak |
-| 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking |
+| 2 Authoring and distribution | 2.2.0-preview1, then 2.2.0 | Shipped 2026-10-04, tag v2.2.0, from the preview1 code; preview shipped 2026-10-03, PR #8 (merge 30e39b8); PS_Completers 1.0.0 on PSGallery 2026-10-04 |
+| 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Planned, breaking; spec and plan accepted 2026-10-04 |
 
 Three milestones from the 2.0.0 baseline to the next major release. The first two ship on the 2.x line and carry the recommendations that came out of the 2.0 retrospective. The breaking surface is deliberately small: it removes what 2.0 promised to remove, raises the engine floor to what CI has always tested, and moves the engine boundary into typed code.
 
@@ -57,6 +57,8 @@ The first criterion was "under half the 2.0.0 lazy import time". Under the secti
 
 ## Milestone 2: Authoring and distribution (2.2.0, additive)
 
+**Shipped 2026-10-04 as v2.2.0** (release commit d5767e9) from the preview1 code after the soak passed, per decision 7; 615 Pester tests green before the tag. PS_Completers 1.0.0 was published to PSGallery the same day from that repository's new tag-triggered release workflow (tag v1.0.0), requiring CompleterActions 2.2.0 or later, and exit criterion 2 passed by hand in a clean session: `Install-PSResource PS_Completers; Import-CompleterSet -Name PS_Completers` registered 362 Pending records.
+
 **Preview shipped 2026-10-03 as v2.2.0-preview1** (PR #8 merged as 30e39b8, release commit 5a25401, PSGallery prerelease label preview1). Three of the four items landed plus the follow-up decisions of 2026-10-03; engine cmdlet detection is held as an accepted contract (spec Appendix A) because PowerShell PR #26680 has not reached a shipped engine. 615 Pester tests (337 before), eight CI legs green, 17 commands exported (14 functions and 3 aliases). Import-time gate: the unhashed 2.2.0 import is 1.02 of the 2.1.0 import (bound 1.05); the `-Name` lookup costs 14.8 ms over `-LiteralPath` in the plan's order and 14.4 ms pooled over 60 samples, accepted by the owner against the 20 ms bound. Validation records are under docs/roadmap-3.0/validation/.
 
 The 173 scripts are hand-written and live in one personal repo. Make the next script cheaper to write and make a set something other people can install.
@@ -70,7 +72,7 @@ Exit criteria:
 
 ```powershell
 New-CompleterScript -CommandName rg -Path .\rg_completer.ps1 -PassThru | Test-CompleterScript   # empty (restated with -PassThru 2026-10-03; nothing is piped without it)
-Install-PSResource PS_Completers; Import-CompleterSet -Name PS_Completers               # one line, no path (checked by hand after 2.2.0 stable and the owner's PS_Completers publish; it gates marking the milestone shipped, not the release)
+Install-PSResource PS_Completers; Import-CompleterSet -Name PS_Completers               # one line, no path (passed by hand 2026-10-04 against PSGallery after 2.2.0 stable and the PS_Completers 1.0.0 publish: 362 Pending records)
 Get-Command Get-ArgumentCompleter -ErrorAction Ignore                                  # when present, Get-Completer no longer touches reflection (deferred: no shipped engine has the cmdlets; met in the 2.x minor that ships Appendix A)
 ```
 
