@@ -8,7 +8,7 @@ Describe 'Module Manifest Tests' {
         $moduleManifest.Name | Should -Be $moduleName
         $moduleManifest.RootModule | Should -Be 'CompleterActions.psm1'
         $moduleManifest.CompatiblePSEditions | Should -Be @('Core')
-        $moduleManifest.PowerShellVersion | Should -Be '7.0'
+        $moduleManifest.PowerShellVersion | Should -Be '7.4'
         @($moduleManifest.ExportedFormatFiles | ForEach-Object { Split-Path -Path $_ -Leaf }) | Should -Be @('CompleterActions.Format.ps1xml')
     }
 
