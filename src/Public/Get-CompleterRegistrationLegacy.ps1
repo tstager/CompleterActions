@@ -26,7 +26,7 @@ function Get-CompleterRegistrationLegacy
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [CompleterState[]] $State,
+        [CompleterActions.CompleterState[]] $State,
 
         [Parameter()]
         [switch] $ManagedOnly,
@@ -50,11 +50,11 @@ function Get-CompleterRegistrationLegacy
 
         if ($ManagedOnly)
         {
-            $forwardedParameters['State'] = [CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
+            $forwardedParameters['State'] = [CompleterActions.CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
         }
         elseif ($DiscoveredOnly)
         {
-            $forwardedParameters['State'] = [CompleterState[]] @('Discovered', 'Conflicted')
+            $forwardedParameters['State'] = [CompleterActions.CompleterState[]] @('Discovered', 'Conflicted')
         }
 
         $steppablePipeline = { Get-Completer @forwardedParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)

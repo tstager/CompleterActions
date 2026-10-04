@@ -8,7 +8,7 @@ Describe 'Module Manifest Tests' {
         $moduleManifest.Name | Should -Be $moduleName
         $moduleManifest.RootModule | Should -Be 'CompleterActions.psm1'
         $moduleManifest.CompatiblePSEditions | Should -Be @('Core')
-        $moduleManifest.PowerShellVersion | Should -Be '7.0'
+        $moduleManifest.PowerShellVersion | Should -Be '7.4'
         @($moduleManifest.ExportedFormatFiles | ForEach-Object { Split-Path -Path $_ -Leaf }) | Should -Be @('CompleterActions.Format.ps1xml')
     }
 
@@ -109,16 +109,26 @@ Describe 'Module Manifest Tests' {
             Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
         }
 
+        # The child build compiles the assembly itself, so the local compiler output stays out of the staging copy.
+        foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+        {
+            Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
 
         $trackedBuildRoot = Join-Path -Path $repoRoot -ChildPath 'build/CompleterActions'
         $freshBuildRoot = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions'
+
+        Test-Path -LiteralPath (Join-Path -Path $freshBuildRoot -ChildPath 'lib/CompleterActions.Core.dll') -PathType Leaf | Should -BeTrue -Because 'the build places the compiled assembly where RequiredAssemblies finds it'
+
+        # The compiled assembly is not tracked in git, so only the text files are compared.
         $relativePathsUnder = {
             param($root)
 
-            @(Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\', '/') } | Sort-Object)
+            @(Get-ChildItem -LiteralPath $root -Recurse -File | ForEach-Object { $_.FullName.Substring($root.Length + 1).Replace('\', '/') } | Where-Object { $_ -notlike 'lib/*.dll' } | Sort-Object)
         }
         $freshFiles = & $relativePathsUnder $freshBuildRoot
 

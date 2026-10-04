@@ -16,7 +16,7 @@
 `CompleterActions` is a PowerShell 7+ / Core-only module for registering, discovering, querying, and removing PowerShell argument completers in a consistent way.
 
 > [!IMPORTANT]
-> This module targets **PowerShell 7+ / PowerShell Core only**. The manifest declares `CompatiblePSEditions = @('Core')` and `PowerShellVersion = '7.0'`.
+> This module targets **PowerShell 7.4+ / PowerShell Core only**. The manifest declares `CompatiblePSEditions = @('Core')` and `PowerShellVersion = '7.4'`.
 
 ## At a glance
 
@@ -307,23 +307,29 @@ Get-Completer -State Active, Pending, Failed, Stale |
 
 ### Build
 
-The repository uses `Invoke-Build`.
+The repository uses `Invoke-Build` and the dotnet SDK 8.0 or later, which compiles the C# project under `src\Core` into `CompleterActions.Core.dll`.
 
 ```powershell
 Invoke-Build -Task clean
+Invoke-Build -Task compile
 Invoke-Build -Task build
 Invoke-Build -Task external_help
 Invoke-Build -Task Markdown_templates
 Invoke-Build -Task ?
 ```
 
+`compile` builds the assembly and copies it to `lib\CompleterActions.Core.dll`, where the source manifest's `RequiredAssemblies` entry finds it, so `Import-Module .\CompleterActions.psd1` works only after it has run. `build` runs `compile` first and places the assembly at `build\CompleterActions\lib\CompleterActions.Core.dll`. The assembly is not tracked in git; neither are `lib\`, `build\CompleterActions\lib\`, or the project's `bin\` and `obj\` folders. An assembly cannot be unloaded, so a rebuilt `CompleterActions.Core.dll` needs a new `pwsh` process, and a process that has the repository's module imported holds the file open and makes `clean` and `compile` fail on Windows.
+
 ### Tests
 
 The repository uses `Pester`.
 
 ```powershell
+Invoke-Build -Task compile
 Invoke-Pester -Path .\tests
 ```
+
+`Invoke-Build -Task compile` or `Invoke-Build -Task build` must run first: `Import-Module` of the source manifest and `Test-ModuleManifest` both fail without `lib\CompleterActions.Core.dll`.
 
 Run the tests in their own `pwsh -NoProfile` process. Importing PSScriptAnalyzer into the same session registers an argument completer that changes the discovered registration order the paging tests assert on. The tests also compare the tracked `build\CompleterActions` package against the sources, so run them before `Invoke-Build -Task build`, which regenerates that package.
 

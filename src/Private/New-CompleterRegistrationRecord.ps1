@@ -78,7 +78,7 @@ function New-CompleterRegistrationRecord
         [System.Management.Automation.PSModuleInfo] $ImportModule,
 
         [Parameter()]
-        [CompleterState] $State = 'Active',
+        [CompleterActions.CompleterState] $State = 'Active',
 
         [Parameter()]
         [string] $ScriptPath,
@@ -98,7 +98,7 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [CompleterRegistration]::new()
+    $registration = [CompleterActions.CompleterRegistration]::new()
     $registration.Key = [string] $Target.Key
     $registration.RegistrationKey = [string] $Target.Key
     $registration.RuntimeKey = [string] $Target.RuntimeKey

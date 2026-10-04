@@ -662,7 +662,7 @@ Describe 'Completer registration public API' {
 
         $parameters.ContainsKey('ManagedOnly') | Should -BeFalse
         $parameters.ContainsKey('DiscoveredOnly') | Should -BeFalse
-        $parameters['State'].ParameterType.FullName | Should -Be 'CompleterState[]'
+        $parameters['State'].ParameterType.FullName | Should -Be 'CompleterActions.CompleterState[]'
         @($parameters['State'].ParameterSets.Keys) | Should -Be @('__AllParameterSets')
     }
 
