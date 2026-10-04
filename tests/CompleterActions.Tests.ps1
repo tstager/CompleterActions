@@ -1659,7 +1659,7 @@ Describe 'Removed surface' {
             Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'en-US') -Filter '*.txt' -File
             Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'src/docs/CompleterActions') -Filter '*.md' -File
         )
-        $allowed = @('README.md', 'en-US/about_CompleterActions_Migration.help.txt')
+        $allowed = @('en-US/about_CompleterActions_Migration.help.txt')
 
         $unexpected = @(
             $files |
