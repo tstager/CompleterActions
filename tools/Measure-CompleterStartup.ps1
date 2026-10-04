@@ -43,11 +43,18 @@ build/CompleterActions next to this script's tools folder. It must write a
 Hash for every entry it exports, so a 2.0.0 package is rejected.
 
 .PARAMETER BaselineModulePath
-The CompleterActions package to compare against, normally 2.0.0. When it is
-given, a Baseline leg imports the no-Hash copy of the set with this package
-and every row gets a RatioToBaseline. Extract the package from the tag without
-a worktree, with git archive v2.0.0 build | tar -x -C <folder>, and pass
-<folder>/build/CompleterActions.
+The CompleterActions package to compare against, normally the previous
+release. When it is given, a Baseline leg imports the no-Hash copy of the set
+with this package and every row gets a RatioToBaseline. A 2.x package is all
+text, so git archive works for a 2.x tag: extract it without a worktree, with
+git archive v2.2.0 build | tar -x -C <folder>, and pass
+<folder>/build/CompleterActions. From 3.0 on the tracked build folder holds no
+compiled assembly, so git archive of a 3.x tag does not yield an importable
+module. Take a 3.x baseline from the gallery, with Save-PSResource -Name
+CompleterActions -Version <version> -Repository PSGallery -Path <folder>, and
+pass <folder>/CompleterActions/<version>, which is the release build byte for
+byte; or check out the tag, run Invoke-Build -Task build there, and pass that
+checkout's build/CompleterActions.
 
 .EXAMPLE
 PS> .\tools\Measure-CompleterStartup.ps1
@@ -56,11 +63,18 @@ Measures the default completer repository with ten samples per leg and no
 Baseline leg, so RatioToBaseline is empty on every row.
 
 .EXAMPLE
-PS> $baseline = New-Item -ItemType Directory -Path (Join-Path -Path $env:TEMP -ChildPath 'CompleterActions-2.0.0')
-PS> git archive v2.0.0 build | tar -x -C $baseline.FullName
+PS> $baseline = New-Item -ItemType Directory -Path (Join-Path -Path $env:TEMP -ChildPath 'CompleterActions-2.2.0')
+PS> git archive v2.2.0 build | tar -x -C $baseline.FullName
 PS> .\tools\Measure-CompleterStartup.ps1 -BaselineModulePath (Join-Path -Path $baseline.FullName -ChildPath 'build/CompleterActions')
 
-Extracts the 2.0.0 package from its tag and measures all four legs against it.
+Extracts the 2.2.0 package from its tag and measures all four legs against it.
+This works for a 2.x tag only, because a 2.x package is all text. For a 3.x
+baseline, save the release from the gallery instead, for example
+Save-PSResource -Name CompleterActions -Version 3.0.0 -Repository PSGallery
+-Path $baseline.FullName, and pass
+(Join-Path -Path $baseline.FullName -ChildPath 'CompleterActions/3.0.0'), or
+pass the build/CompleterActions folder of a checkout of the tag after
+Invoke-Build -Task build.
 
 .EXAMPLE
 PS> .\tools\Measure-CompleterStartup.ps1 -CompleterRoot ~\Completers -Iterations 1 -Verbose
