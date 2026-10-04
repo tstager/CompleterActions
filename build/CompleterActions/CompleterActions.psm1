@@ -681,82 +681,6 @@ function Get-Completer
     }
 }
 <#
-.ForwardHelpTargetName Get-Completer
-.ForwardHelpCategory Function
-#>
-function Get-CompleterRegistrationLegacy
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
-    [OutputType('CompleterActions.CompleterRegistration')]
-    param(
-        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
-        [ValidateNotNull()]
-        [object[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $CommandName,
-
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $ParameterName,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Alias('IsNative')]
-        [switch] $Native,
-
-        [Parameter()]
-        [ValidateNotNullOrEmpty()]
-        [CompleterState[]] $State,
-
-        [Parameter()]
-        [switch] $ManagedOnly,
-
-        [Parameter()]
-        [switch] $DiscoveredOnly
-    )
-
-    begin
-    {
-        Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
-
-        if (($ManagedOnly -and $DiscoveredOnly) -or (($ManagedOnly -or $DiscoveredOnly) -and $PSBoundParameters.ContainsKey('State')))
-        {
-            throw 'ManagedOnly, DiscoveredOnly, and State cannot be used together.'
-        }
-
-        $forwardedParameters = [hashtable] $PSBoundParameters
-        $null = $forwardedParameters.Remove('ManagedOnly')
-        $null = $forwardedParameters.Remove('DiscoveredOnly')
-
-        if ($ManagedOnly)
-        {
-            $forwardedParameters['State'] = [CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
-        }
-        elseif ($DiscoveredOnly)
-        {
-            $forwardedParameters['State'] = [CompleterState[]] @('Discovered', 'Conflicted')
-        }
-
-        $steppablePipeline = { Get-Completer @forwardedParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
-        $steppablePipeline.Begin($PSCmdlet)
-    }
-
-    process
-    {
-        $steppablePipeline.Process($_)
-    }
-
-    end
-    {
-        $steppablePipeline.End()
-    }
-}
-<#
 .SYNOPSIS
 Imports self-contained completer scripts into registration input objects.
 
@@ -1830,88 +1754,6 @@ function Register-Completer
     }
 }
 <#
-.ForwardHelpTargetName Register-Completer
-.ForwardHelpCategory Function
-#>
-function Register-CompleterRegistrationLegacy
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'The wrapper forwards -WhatIf and -Confirm to the wrapped command, which calls ShouldProcess.')]
-    [OutputType('CompleterActions.CompleterRegistration')]
-    param(
-        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
-        [ValidateNotNull()]
-        [object[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
-        [Parameter(ParameterSetName = 'LazyPath')]
-        [Parameter(ParameterSetName = 'LazyLiteralPath')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $CommandName,
-
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
-        [Parameter(ParameterSetName = 'LazyPath')]
-        [Parameter(ParameterSetName = 'LazyLiteralPath')]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $ParameterName,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Parameter(ParameterSetName = 'LazyPath')]
-        [Parameter(ParameterSetName = 'LazyLiteralPath')]
-        [Alias('IsNative')]
-        [switch] $Native,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
-        [ValidateNotNull()]
-        [scriptblock] $ScriptBlock,
-
-        [Parameter(Mandatory, ParameterSetName = 'LazyPath')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Path,
-
-        [Parameter(Mandatory, ParameterSetName = 'LazyLiteralPath')]
-        [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath,
-
-        [Parameter(Mandatory, ParameterSetName = 'LazyPath')]
-        [Parameter(Mandatory, ParameterSetName = 'LazyLiteralPath')]
-        [switch] $Lazy,
-
-        [Parameter(ParameterSetName = 'LazyPath')]
-        [Parameter(ParameterSetName = 'LazyLiteralPath')]
-        [switch] $Trusted,
-
-        [Parameter()]
-        [switch] $Force,
-
-        [Parameter()]
-        [switch] $PassThru
-    )
-
-    begin
-    {
-        Write-CompleterDeprecationWarning -LegacyName 'Register-CompleterRegistration' -NewName 'Register-Completer'
-
-        $steppablePipeline = { Register-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
-        $steppablePipeline.Begin($PSCmdlet)
-    }
-
-    process
-    {
-        $steppablePipeline.Process($_)
-    }
-
-    end
-    {
-        $steppablePipeline.End()
-    }
-}
-<#
 .SYNOPSIS
 Returns a Failed or Active script-backed completer to Pending, so its script loads again on the next tab press.
 
@@ -2892,61 +2734,6 @@ function Unregister-Completer
         {
             $resolvedTargets = @()
         }
-    }
-}
-<#
-.ForwardHelpTargetName Unregister-Completer
-.ForwardHelpCategory Function
-#>
-function Unregister-CompleterRegistrationLegacy
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
-    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSShouldProcess', '', Justification = 'The wrapper forwards -WhatIf and -Confirm to the wrapped command, which calls ShouldProcess.')]
-    [OutputType('CompleterActions.CompleterRegistration')]
-    param(
-        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
-        [ValidateNotNull()]
-        [object[]] $InputObject,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $CommandName,
-
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter', ValueFromPipelineByPropertyName)]
-        [ValidateNotNullOrEmpty()]
-        [string[]] $ParameterName,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native', ValueFromPipelineByPropertyName)]
-        [Alias('IsNative')]
-        [switch] $Native,
-
-        [Parameter()]
-        [switch] $AllowUnmanaged,
-
-        [Parameter()]
-        [switch] $PassThru
-    )
-
-    begin
-    {
-        Write-CompleterDeprecationWarning -LegacyName 'Unregister-CompleterRegistration' -NewName 'Unregister-Completer'
-
-        $steppablePipeline = { Unregister-Completer @PSBoundParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
-        $steppablePipeline.Begin($PSCmdlet)
-    }
-
-    process
-    {
-        $steppablePipeline.Process($_)
-    }
-
-    end
-    {
-        $steppablePipeline.End()
     }
 }
 <#
@@ -9710,61 +9497,8 @@ function Test-CompleterSetHashFormat
 
     $Value -is [string] -and [regex]::IsMatch($Value, '\ASHA256:[0-9A-F]{64}\z', [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
 }
-<#
-.SYNOPSIS
-Warns once per process that a legacy command name is deprecated.
-
-.DESCRIPTION
-Emits a single Write-Warning per process for a legacy command name, naming
-the replacement command and the about_CompleterActions_Migration topic. The
-names that have already warned are tracked in the module-scope set created by
-Bootstrap.ps1, so a profile that calls a legacy name many times sees the
-warning once. A call whose warnings are suppressed, through -WarningAction
-SilentlyContinue or $WarningPreference, neither warns nor consumes the slot,
-so the next call that can show the warning still does.
-
-.PARAMETER LegacyName
-The deprecated command name the caller used.
-
-.PARAMETER NewName
-The command that replaces it.
-
-.EXAMPLE
-PS> Write-CompleterDeprecationWarning -LegacyName 'Get-CompleterRegistration' -NewName 'Get-Completer'
-#>
-function Write-CompleterDeprecationWarning
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding()]
-    [OutputType([void])]
-    param(
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string] $LegacyName,
-
-        [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string] $NewName
-    )
-
-    if ($WarningPreference -in 'SilentlyContinue', 'Ignore')
-    {
-        return
-    }
-
-    if ($script:CompleterDeprecationWarningsIssued.Add($LegacyName))
-    {
-        Write-Warning -Message "$LegacyName is deprecated and will be removed in 3.0; use $NewName instead. See about_CompleterActions_Migration."
-    }
-}
 # Import-time work shared by the source root module and the packaged module.
 Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
-$script:CompleterDeprecationWarningsIssued = [System.Collections.Generic.HashSet[string]]::new()
 $script:CompleterHelpProbeTimeoutSeconds = 5
-New-Alias -Name 'Get-CompleterRegistration' -Value 'Get-CompleterRegistrationLegacy'
-New-Alias -Name 'Register-CompleterRegistration' -Value 'Register-CompleterRegistrationLegacy'
-New-Alias -Name 'Unregister-CompleterRegistration' -Value 'Unregister-CompleterRegistrationLegacy'
