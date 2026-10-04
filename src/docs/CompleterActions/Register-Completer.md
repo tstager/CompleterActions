@@ -81,10 +81,13 @@ press, replaces itself with the real completer, and delegates that first call
 to it. The managed record reports `State` `Pending` until then and `Active`
 afterwards. Under the default strict tier the targets are read from the
 script's literal `Register-ArgumentCompleter` arguments, so the script is
-parsed but never executed at registration time; the strict grammar itself
-runs when the script loads, and a script that fails it moves to `Failed`
-then. With `-Trusted` the script is dot-sourced as-is on first use and cannot be parsed safely, so the targets must
-be supplied with `-CommandName` and `-Native` or `-ParameterName`.
+parsed but never executed at registration time. The strict grammar runs on
+that parse, so a script that fails it is refused with one line per finding
+before anything is registered, under `-WhatIf` too; it runs again when the
+script loads, and a script that no longer conforms by then moves to `Failed`.
+With `-Trusted` the script is dot-sourced as-is on first use and cannot be
+parsed safely, so the targets must be supplied with `-CommandName` and
+`-Native` or `-ParameterName`.
 
 If the script fails to load on the first tab press, the press returns no
 completions, the runtime entry is removed so the completion engine's default
@@ -256,6 +259,8 @@ HelpMessage: ''
 
 Registers a stub for each target of the script instead of running the script
 now. The script is imported on the first tab press for any of its targets.
+Under the strict tier the script is checked against the grammar before any
+stub is registered.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -447,7 +452,7 @@ Imports the script through the trusted tier on first use, dot-sourcing it
 as-is without the strict grammar. The targets must be supplied with
 `-CommandName` and `-Native` or `-ParameterName` because a trusted script is
 not parsed. The default is the strict tier, which validates the script against
-the grammar when it loads.
+the grammar when it is registered and again when it loads.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter

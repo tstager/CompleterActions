@@ -6,13 +6,19 @@ Throws when a completer script does not conform to the strict import grammar.
 Runs Get-CompleterScriptFinding over a completer script and throws one error
 that lists every Error finding with its line, column, construct, message, and
 hint. Import-CompleterScript runs this gate under the strict tier, both for an
-eager import and when a lazy stub loads its script on the first tab press, so
-no strict path executes a script the grammar rejects and every path reports
-the same findings as Test-CompleterScript. A conforming script returns without
-output.
+eager import and when a lazy stub loads its script on the first tab press, and
+Register-Completer -Lazy runs it on the parse it derives the targets from, so
+no strict path executes or registers a script the grammar rejects and every
+path reports the same findings as Test-CompleterScript. A conforming script
+returns without output.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
+
+.PARAMETER ParseResult
+A parse result of the script from Get-CompleterScriptParseResult. When it is
+supplied the script is not parsed again; Register-Completer -Lazy passes the
+parse it also derives the script's targets from.
 
 .OUTPUTS
 None
@@ -24,10 +30,14 @@ function Assert-CompleterScriptConformance
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [psobject] $ParseResult
     )
 
-    $findings = @(Get-CompleterScriptFinding -LiteralPath $LiteralPath | Where-Object -Property Severity -EQ -Value 'Error')
+    $findings = @(Get-CompleterScriptFinding @PSBoundParameters | Where-Object -Property Severity -EQ -Value 'Error')
 
     if ($findings.Count -eq 0)
     {

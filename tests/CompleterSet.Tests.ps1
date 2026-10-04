@@ -709,26 +709,6 @@ Describe 'Completer sets' {
             $retried[0].LoadError | Should -BeNullOrEmpty
         }
 
-        It 'registers a strict entry that breaks the grammar as Pending and fails it with the findings on first tab' {
-            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:UnsafeFixturePath' }"
-
-            $registered = @(Import-CompleterSet -Path $script:SetPath)
-
-            $registered.Count | Should -Be 1
-            $registered[0].Key | Should -Be 'test-unsafetool:name'
-            $registered[0].State | Should -Be 'Pending'
-
-            $inputScript = 'Test-UnsafeTool -Name un'
-            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
-            @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'unsafe'
-
-            $failed = Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name'
-            $failed.State | Should -Be 'Failed'
-            $failed.LoadError | Should -Match 'does not conform to the strict import grammar'
-            $failed.LoadError | Should -Match 'Get-Date'
-            Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -State Discovered, Conflicted | Should -BeNullOrEmpty
-        }
-
         It 'resolves relative paths against the set file directory, not the current location' {
             $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
             New-Item -Path $scriptFolder -ItemType Directory | Out-Null
@@ -2058,5 +2038,107 @@ Describe 'Completer sets' {
 
         $help.Name | Should -Be 'about_Completer_Sets'
         $help.Synopsis | Should -Match 'completer set'
+    }
+
+    Describe 'Grammar at import' {
+        BeforeEach {
+            $script:UnsafeSetScriptPath = Join-Path -Path $script:SetRoot -ChildPath 'UnsafeTopLevelScript.ps1'
+            Copy-Item -LiteralPath $script:UnsafeFixturePath -Destination $script:UnsafeSetScriptPath
+            $firstFinding = Test-CompleterScript -LiteralPath $script:UnsafeSetScriptPath | Select-Object -First 1
+            $script:NonConformingMessage = "The script does not conform to the strict import grammar: line 1, column 1 (CommandAst): $($firstFinding.Message) Run Test-CompleterScript to work through the findings, or mark the entry Trusted to run it as-is."
+        }
+
+        It 'reports a NonConforming problem for an unhashed strict entry and registers nothing' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'UnsafeTopLevelScript.ps1' }"
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath -ErrorAction Continue } | Should -Throw -PassThru
+
+            $lines = @($thrown.Exception.Message -split [regex]::Escape([Environment]::NewLine))
+            $lines[0] | Should -Match 'has 1 invalid entry and nothing was registered'
+            $lines[1] | Should -BeExactly "Entry 1 ('UnsafeTopLevelScript.ps1'): $script:NonConformingMessage"
+            $lines.Count | Should -Be 2
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+            Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'skips that entry with the skipped warning under -SkipInvalid and registers the others' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = 'UnsafeTopLevelScript.ps1' }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+            )
+
+            $output = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -Verbose -WarningVariable warnings -WarningAction SilentlyContinue 4>&1)
+
+            $registered = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+            @($registered.Key) | Should -Be @('test-importedfixturetool:name')
+            @($warnings | ForEach-Object { $_.Message }) | Should -BeExactly @("Completer set '$script:SetPath' skipped Entry 1 ('UnsafeTopLevelScript.ps1'): $script:NonConformingMessage")
+            $verbose = @($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message -match '^(Entry \d+ |Completer set )' } | ForEach-Object { $_.Message })
+            $verbose | Should -BeExactly @(
+                "Entry 2 ('$script:ParameterFixturePath'): no Targets; parsed the script."
+                "Completer set '$script:SetPath': 0 entries from the hash, 1 parsed, 0 trusted."
+            )
+            Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'imports the same entry without a problem when it is Trusted' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'UnsafeTopLevelScript.ps1'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-UnsafeTool'; ParameterName = 'Name' } ) }"
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath)
+
+            $registered.Count | Should -Be 1
+            $registered[0].Key | Should -Be 'test-unsafetool:name'
+            $registered[0].State | Should -Be 'Pending'
+            $registered[0].Trusted | Should -BeTrue
+        }
+
+        It 'reports NonConforming before TargetMismatch for one entry with both' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'UnsafeTopLevelScript.ps1'; Targets = @( @{ CommandName = 'Test-UnsafeTool'; ParameterName = 'Other' } ) }"
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath -ErrorAction Continue } | Should -Throw -PassThru
+
+            $lines = @($thrown.Exception.Message -split [regex]::Escape([Environment]::NewLine))
+            $lines[0] | Should -Match 'has 1 invalid entry and nothing was registered'
+            $lines[1..2] | Should -BeExactly @(
+                "Entry 1 ('UnsafeTopLevelScript.ps1'): $script:NonConformingMessage"
+                "Entry 1 ('UnsafeTopLevelScript.ps1'): The declared Targets do not match the script. Declared: 'Test-UnsafeTool:Other'. Script registers: 'Test-UnsafeTool:Name'."
+            )
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It "leaves Test-CompleterSet's findings unchanged for the same set" {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = 'UnsafeTopLevelScript.ps1' }"
+
+            $findings = @(Test-CompleterSet -LiteralPath $script:SetPath)
+
+            @($findings.Construct) | Should -BeExactly @('MissingHash')
+            @($findings.Construct) | Should -Not -Contain 'NonConforming'
+        }
+
+        It 'parses each unhashed strict entry once on the import path' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:ParameterFixturePath' }"
+                "@{ Path = '$script:NativeFixturePath' }"
+                "@{ Path = 'UnsafeTopLevelScript.ps1' }"
+            )
+
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestParseCalls = [System.Collections.Generic.List[string]]::new()
+                $script:TestParseFunction = ${function:Get-CompleterScriptParseResult}
+
+                function script:Get-CompleterScriptParseResult
+                {
+                    param($LiteralPath)
+
+                    $script:TestParseCalls.Add($LiteralPath)
+                    & $script:TestParseFunction -LiteralPath $LiteralPath
+                }
+            }
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningAction SilentlyContinue)
+
+            @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name')
+            $parses = @(& (Get-Module -Name 'CompleterActions') { $script:TestParseCalls })
+            $parses | Should -BeExactly @($script:ParameterFixturePath, $script:NativeFixturePath, $script:UnsafeSetScriptPath) -Because 'the grammar and the target derivation share one parse per entry'
+        }
     }
 }
