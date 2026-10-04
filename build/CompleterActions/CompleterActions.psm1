@@ -2959,18 +2959,20 @@ CompleterActions reaches into non-public PowerShell runtime members to discover 
 manage argument completers: the execution context field behind EngineIntrinsics and
 the two completer dictionaries that execution context owns.
 
-This probe resolves all of those members once during module import so an engine whose
-internals changed fails with a single terminating error that names the PowerShell
+This probe runs once during module import. It asks the compiled engine access layer
+(CompleterActions.Internal.EngineAccess) to resolve all of those members, so an engine
+whose internals changed fails with a single terminating error that names the PowerShell
 version and the unresolved members, instead of failing deep inside a later
-registration or discovery call.
+registration or discovery call. On success the resolved handles are kept in module
+state for Get-CompleterRuntime.
 
 .PARAMETER EngineIntrinsics
 The EngineIntrinsics instance to inspect. Defaults to the current session's
 ExecutionContext.
 
 .PARAMETER EngineIntrinsicsType
-The EngineIntrinsics type to reflect against. This is primarily exposed for
-internal testing of compatibility guards.
+The EngineIntrinsics type to resolve the execution context field on. This is primarily
+exposed for internal testing of compatibility guards.
 
 .PARAMETER RuntimeExecutionContext
 An already resolved execution context object to inspect for the completer
@@ -2983,8 +2985,8 @@ None
 .EXAMPLE
 Assert-CompleterRuntimeCapability
 
-Verifies that the current engine exposes the reflected completer runtime members and
-throws a single terminating error when any of them cannot be resolved.
+Verifies that the current engine exposes the completer runtime members and throws a
+single terminating error when any of them cannot be resolved.
 
 .NOTES
 This function relies on PowerShell internals rather than a public API. Keep the error
@@ -3011,40 +3013,16 @@ function Assert-CompleterRuntimeCapability
         [object] $RuntimeExecutionContext
     )
 
-    $missingMembers = [System.Collections.Generic.List[string]]::new()
-
-    if ($null -eq $RuntimeExecutionContext)
+    try
     {
-        try
-        {
-            $RuntimeExecutionContext = Resolve-CompleterRuntimeExecutionContext -EngineIntrinsics $EngineIntrinsics -EngineIntrinsicsType $EngineIntrinsicsType
-        }
-        catch
-        {
-            $missingMembers.Add('System.Management.Automation.EngineIntrinsics._context')
-        }
+        $engine = [CompleterActions.Internal.EngineAccess]::Create($EngineIntrinsics, $EngineIntrinsicsType, $RuntimeExecutionContext, $PSVersionTable.PSVersion)
+    }
+    catch
+    {
+        throw $_.Exception.GetBaseException().Message
     }
 
-    if ($missingMembers.Count -eq 0)
-    {
-        $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-        $runtimeExecutionContextType = $RuntimeExecutionContext.GetType()
-
-        foreach ($propertyName in 'CustomArgumentCompleters', 'NativeArgumentCompleters')
-        {
-            if ($null -eq $runtimeExecutionContextType.GetProperty($propertyName, $bindingFlags))
-            {
-                $missingMembers.Add("$($runtimeExecutionContextType.FullName).$propertyName")
-            }
-        }
-    }
-
-    if ($missingMembers.Count -gt 0)
-    {
-        $missingMemberList = $missingMembers -join "', '"
-
-        throw "CompleterActions cannot run on PowerShell $($PSVersionTable.PSVersion): the required runtime member(s) '$missingMemberList' could not be resolved. Completer discovery depends on PowerShell internals; check for a module update that supports this engine version."
-    }
+    $script:CompleterEngine = $engine
 }
 <#
 .SYNOPSIS
@@ -4296,15 +4274,18 @@ function Get-CompleterRegistrationSnapshot
 Gets the current session's completer runtime dictionaries from PowerShell internals.
 
 .DESCRIPTION
-Uses reflection against the current EngineIntrinsics instance to reach the
-execution context object that owns the runtime completer dictionaries.
-Maintainers use this helper when they need authoritative access to the live
-CustomArgumentCompleters and NativeArgumentCompleters collections that
+Builds the runtime wrapper object from the engine access handles that
+Assert-CompleterRuntimeCapability resolved at import: the execution context object
+that owns the runtime completer dictionaries and the handles of its two dictionary
+properties. Maintainers use this helper when they need authoritative access to the
+live CustomArgumentCompleters and NativeArgumentCompleters collections that
 Register-ArgumentCompleter populates.
 
+The dictionaries are read through the handles on every call, so a dictionary the
+engine creates after import is seen.
+
 This helper depends on non-public PowerShell runtime details. It is therefore
-intended only for internal module plumbing and may require updates if future
-PowerShell versions rename or hide the reflected members.
+intended only for internal module plumbing.
 
 .OUTPUTS
 CompleterActions.CompleterRuntime
@@ -4329,24 +4310,20 @@ function Get-CompleterRuntime
     [OutputType([pscustomobject])]
     param()
 
-    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-    $runtimeExecutionContext = Resolve-CompleterRuntimeExecutionContext
-    $runtimeExecutionContextType = $runtimeExecutionContext.GetType()
-    $customArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('CustomArgumentCompleters', $bindingFlags)
-    $nativeArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('NativeArgumentCompleters', $bindingFlags)
+    $engine = $script:CompleterEngine
 
-    if ($null -eq $customArgumentCompletersProperty -or $null -eq $nativeArgumentCompletersProperty)
+    if ($null -eq $engine -or $null -eq $engine.CustomProperty -or $null -eq $engine.NativeProperty)
     {
         throw 'The current PowerShell runtime does not expose the completer dictionaries expected by CompleterActions.'
     }
 
     $runtime = [pscustomobject] [ordered] @{
         PSTypeName               = 'CompleterActions.CompleterRuntime'
-        ExecutionContext         = $runtimeExecutionContext
-        CustomProperty           = $customArgumentCompletersProperty
-        CustomArgumentCompleters = $customArgumentCompletersProperty.GetValue($runtimeExecutionContext)
-        NativeProperty           = $nativeArgumentCompletersProperty
-        NativeArgumentCompleters = $nativeArgumentCompletersProperty.GetValue($runtimeExecutionContext)
+        ExecutionContext         = $engine.ExecutionContext
+        CustomProperty           = $engine.CustomProperty
+        CustomArgumentCompleters = $engine.CustomProperty.GetValue($engine.ExecutionContext)
+        NativeProperty           = $engine.NativeProperty
+        NativeArgumentCompleters = $engine.NativeProperty.GetValue($engine.ExecutionContext)
     }
 
     return $runtime
@@ -7295,16 +7272,17 @@ function Resolve-CompleterRegistrationState
 Resolves PowerShell's internal execution context object used for completer storage.
 
 .DESCRIPTION
-Uses reflection against EngineIntrinsics to access the internal execution
-context object that owns the runtime completer dictionaries.
+Asks the compiled engine access layer (CompleterActions.Internal.EngineAccess) for the
+internal execution context object behind EngineIntrinsics that owns the runtime
+completer dictionaries.
 
 .PARAMETER EngineIntrinsics
 The EngineIntrinsics instance to inspect. Defaults to the current session's
 ExecutionContext.
 
 .PARAMETER EngineIntrinsicsType
-The EngineIntrinsics type to reflect against. This is primarily exposed for
-internal testing of compatibility guards.
+The EngineIntrinsics type to resolve the execution context field on. This is primarily
+exposed for internal testing of compatibility guards.
 
 .OUTPUTS
 System.Object
@@ -7326,22 +7304,14 @@ function Resolve-CompleterRuntimeExecutionContext
         [type] $EngineIntrinsicsType = [System.Management.Automation.EngineIntrinsics]
     )
 
-    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-    $engineIntrinsicsField = $EngineIntrinsicsType.GetField('_context', $bindingFlags)
-
-    if ($null -eq $engineIntrinsicsField)
+    try
     {
-        throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
+        return [CompleterActions.Internal.EngineAccess]::ResolveExecutionContext($EngineIntrinsics, $EngineIntrinsicsType)
     }
-
-    $runtimeExecutionContext = $engineIntrinsicsField.GetValue($EngineIntrinsics)
-
-    if ($null -eq $runtimeExecutionContext)
+    catch
     {
-        throw 'Unable to resolve the current PowerShell execution context.'
+        throw $_.Exception.GetBaseException().Message
     }
-
-    return $runtimeExecutionContext
 }
 <#
 .SYNOPSIS

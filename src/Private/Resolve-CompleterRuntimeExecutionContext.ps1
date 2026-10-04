@@ -3,16 +3,17 @@
 Resolves PowerShell's internal execution context object used for completer storage.
 
 .DESCRIPTION
-Uses reflection against EngineIntrinsics to access the internal execution
-context object that owns the runtime completer dictionaries.
+Asks the compiled engine access layer (CompleterActions.Internal.EngineAccess) for the
+internal execution context object behind EngineIntrinsics that owns the runtime
+completer dictionaries.
 
 .PARAMETER EngineIntrinsics
 The EngineIntrinsics instance to inspect. Defaults to the current session's
 ExecutionContext.
 
 .PARAMETER EngineIntrinsicsType
-The EngineIntrinsics type to reflect against. This is primarily exposed for
-internal testing of compatibility guards.
+The EngineIntrinsics type to resolve the execution context field on. This is primarily
+exposed for internal testing of compatibility guards.
 
 .OUTPUTS
 System.Object
@@ -31,20 +32,12 @@ function Resolve-CompleterRuntimeExecutionContext
         [type] $EngineIntrinsicsType = [System.Management.Automation.EngineIntrinsics]
     )
 
-    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-    $engineIntrinsicsField = $EngineIntrinsicsType.GetField('_context', $bindingFlags)
-
-    if ($null -eq $engineIntrinsicsField)
+    try
     {
-        throw 'Unable to access the PowerShell execution context field required for completer runtime discovery.'
+        return [CompleterActions.Internal.EngineAccess]::ResolveExecutionContext($EngineIntrinsics, $EngineIntrinsicsType)
     }
-
-    $runtimeExecutionContext = $engineIntrinsicsField.GetValue($EngineIntrinsics)
-
-    if ($null -eq $runtimeExecutionContext)
+    catch
     {
-        throw 'Unable to resolve the current PowerShell execution context.'
+        throw $_.Exception.GetBaseException().Message
     }
-
-    return $runtimeExecutionContext
 }
