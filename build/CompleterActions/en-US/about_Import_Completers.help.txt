@@ -29,6 +29,15 @@ LONG DESCRIPTION
     - The trusted tier, selected with `-Trusted`, skips the grammar and
       dot-sources the script as-is.
 
+    A strict script registered lazily is checked earlier as well, when it
+    is registered: `Register-Completer -Lazy` runs the grammar on the parse
+    that reads the script's targets and refuses a script that does not
+    conform, with one line per finding, and `Import-CompleterSet` reports
+    such a script as an invalid entry, unless the entry's `Hash` matches
+    and the script is not parsed at all. The check before the script
+    executes still runs on its first tab press, so a script edited after
+    it was registered is checked in its edited form.
+
     Three more commands support the workflow around the import:
 
     - `New-CompleterScript` writes a new native completer script that
