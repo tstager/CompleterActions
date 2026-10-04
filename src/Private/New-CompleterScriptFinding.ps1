@@ -63,7 +63,7 @@ function New-CompleterScriptFinding
         [string] $Severity = 'Error'
     )
 
-    [CompleterScriptFinding] @{
+    [CompleterActions.CompleterScriptFinding] @{
         Path       = $Path
         Line       = $Extent.StartLineNumber
         Column     = $Extent.StartColumnNumber

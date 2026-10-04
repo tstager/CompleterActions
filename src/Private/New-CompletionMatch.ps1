@@ -54,7 +54,7 @@ function New-CompletionMatch
         [int] $CursorPosition
     )
 
-    [CompletionMatch] @{
+    [CompleterActions.CompletionMatch] @{
         Key            = [string] $Target.Key
         RuntimeKey     = [string] $Target.RuntimeKey
         CommandName    = [string] $Target.CommandName

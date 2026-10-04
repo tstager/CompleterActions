@@ -26,6 +26,9 @@ $resolvedCopyright = if (-not [string]::IsNullOrWhiteSpace($sourceManifestData.C
 else {
     "(c) $((Get-Date).Year) $resolvedAuthor. All rights reserved."
 }
+$coreProjectPath = Join-Path -Path $sourceRoot -ChildPath 'Core/CompleterActions.Core.csproj'
+$coreAssemblyName = 'CompleterActions.Core.dll'
+$libPath = Join-Path -Path $PSScriptRoot -ChildPath 'lib'
 # Synopsis:
 
 task clean {
@@ -42,10 +45,33 @@ task clean {
     }
 
 }
-task build clean, external_help, {
+
+# Synopsis: Compiles CompleterActions.Core.dll and places it in lib/, where the source manifest's RequiredAssemblies entry finds it
+task compile {
+
+    if (-not (Get-Command -Name dotnet -CommandType Application -ErrorAction SilentlyContinue)) {
+        throw 'compile: the dotnet SDK (8.0 or later) is required to build CompleterActions.Core.dll.'
+    }
+
+    $fileVersion = $sourceManifestData.ModuleVersion
+    $informationalVersion = $fileVersion
+    $prerelease = $sourceManifestData.PrivateData.PSData.Prerelease
+
+    if (-not [string]::IsNullOrWhiteSpace($prerelease)) {
+        $informationalVersion = "$fileVersion-$prerelease"
+    }
+
+    exec { dotnet build $coreProjectPath -c Release -nologo -v q "-p:FileVersion=$fileVersion" "-p:InformationalVersion=$informationalVersion" }
+
+    New-Item -Path $libPath -ItemType Directory -Force | Out-Null
+    $builtAssemblyPath = Join-Path -Path (Split-Path -Path $coreProjectPath -Parent) -ChildPath "bin/Release/net8.0/$coreAssemblyName"
+    Copy-Item -Path $builtAssemblyPath -Destination $libPath -Force
+}
+
+task build clean, compile, external_help, {
 
     $sourceFolders = @(
-        @('Classes', 'Public', 'Private') |
+        @('Public', 'Private') |
             ForEach-Object { Join-Path -Path $sourceRoot -ChildPath $_ } |
             Where-Object { Test-Path -Path $_ -PathType Container }
     )
@@ -135,6 +161,11 @@ task build clean, external_help, {
 
     Copy-Item -Path $sourceManifestPath -Destination $modulepath
 
+    # Before Update-ModuleManifest: it rejects a manifest whose RequiredAssemblies file is missing.
+    $moduleLibPath = Join-Path -Path $modulepath -ChildPath 'lib'
+    New-Item -Path $moduleLibPath -ItemType Directory -Force | Out-Null
+    Copy-Item -Path (Join-Path -Path $libPath -ChildPath $coreAssemblyName) -Destination $moduleLibPath -Force
+
     foreach ($supportFile in @($formatFiles + $typeFiles)) {
 
         Copy-Item -Path (Join-Path -Path $PSScriptRoot -ChildPath $supportFile) -Destination (Join-Path -Path $modulepath -ChildPath $supportFile) -Force
@@ -160,7 +191,7 @@ task build clean, external_help, {
 
         CompatiblePSEditions = @($sourceManifestData.CompatiblePSEditions)
         PowerShellVersion    = $sourceManifestData.PowerShellVersion
-        Copyright            = $resolvedCopyright
+        Copyright           = $resolvedCopyright
         Path                 = Join-Path -Path $modulePath -ChildPath "$moduleName.psd1"
         FunctionsToExport    = $public.BaseName
         AliasesToExport      = @($sourceManifestData.AliasesToExport)
@@ -175,6 +206,12 @@ task build clean, external_help, {
     }
 
     Update-ModuleManifest @Data
+
+    # Update-ModuleManifest rewrites a RequiredAssemblies entry whose file exists with the platform's
+    # path separator; restore the source manifest's portable entry so every platform builds the same text.
+    $requiredAssembliesLine = 'RequiredAssemblies = @({0})' -f (@($sourceManifestData.RequiredAssemblies | ForEach-Object { "'$_'" }) -join ', ')
+    (Get-Content -Path $Data.Path) -replace '^RequiredAssemblies = .*$', $requiredAssembliesLine |
+        Set-Content -Path $Data.Path -Encoding utf8
 }
 
 task Markdown_templates {

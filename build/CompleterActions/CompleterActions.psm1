@@ -1,107 +1,3 @@
-enum CompleterState
-{
-    Active
-    Stale
-    Conflicted
-    Pending
-    Failed
-    Discovered
-}
-
-enum CompleterType
-{
-    Native
-    Parameter
-}
-
-class CompleterRegistration
-{
-    CompleterRegistration()
-    {
-        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompleterRegistration')
-    }
-
-    [string] $Key
-    [string] $RegistrationKey
-    [string] $RuntimeKey
-    [string] $CommandName
-    [string] $ParameterName
-    [bool] $IsNative
-    [CompleterType] $CompleterType
-    [string] $TargetType
-    [string] $Source
-    [CompleterState] $State
-    [bool] $IsManaged
-    [bool] $IsRuntimeRegistered
-    [string] $ScriptPath
-    [bool] $Trusted
-    [string] $LoadError
-    [System.Management.Automation.PSModuleInfo] $ImportModule = $null
-    [scriptblock] $ScriptBlock = $null
-    [string] $ScriptText
-}
-
-class ImportedCompleterRegistration
-{
-    ImportedCompleterRegistration()
-    {
-        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.ImportedCompleterRegistration')
-    }
-
-    [string] $Key
-    [string] $RegistrationKey
-    [string] $RuntimeKey
-    [string] $CommandName
-    [string] $ParameterName
-    [bool] $IsNative
-    [bool] $Native
-    [CompleterType] $CompleterType
-    [string] $TargetType
-    [string] $Source
-    [bool] $Trusted
-    [string] $Path
-    [string] $SourcePath
-    [System.Management.Automation.PSModuleInfo] $ImportModule = $null
-    [scriptblock] $ScriptBlock = $null
-    [string] $ScriptText
-}
-
-class CompleterScriptFinding
-{
-    CompleterScriptFinding()
-    {
-        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompleterScriptFinding')
-    }
-
-    [string] $Path
-    [int] $Line
-    [int] $Column
-    [string] $Severity
-    [string] $Construct
-    [string] $Message
-    [string] $Hint
-}
-
-class CompletionMatch
-{
-    CompletionMatch()
-    {
-        $this.PSObject.TypeNames.Insert(0, 'CompleterActions.CompletionMatch')
-    }
-
-    [string] $Key
-    [string] $RuntimeKey
-    [string] $CommandName
-    [string] $ParameterName
-    [bool] $IsNative
-    [CompleterType] $CompleterType
-    [string] $InputText
-    [int] $CursorPosition
-    [string] $CompletionText
-    [string] $ListItemText
-    [System.Management.Automation.CompletionResultType] $ResultType
-    [string] $ToolTip
-}
 <#
 .SYNOPSIS
 Writes a completer set file from registrations that came from scripts.
@@ -525,7 +421,7 @@ function Get-Completer
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [CompleterState[]] $State
+        [CompleterActions.CompleterState[]] $State
     )
 
     begin
@@ -711,7 +607,7 @@ function Get-CompleterRegistrationLegacy
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [CompleterState[]] $State,
+        [CompleterActions.CompleterState[]] $State,
 
         [Parameter()]
         [switch] $ManagedOnly,
@@ -735,11 +631,11 @@ function Get-CompleterRegistrationLegacy
 
         if ($ManagedOnly)
         {
-            $forwardedParameters['State'] = [CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
+            $forwardedParameters['State'] = [CompleterActions.CompleterState[]] @('Active', 'Pending', 'Failed', 'Stale')
         }
         elseif ($DiscoveredOnly)
         {
-            $forwardedParameters['State'] = [CompleterState[]] @('Discovered', 'Conflicted')
+            $forwardedParameters['State'] = [CompleterActions.CompleterState[]] @('Discovered', 'Conflicted')
         }
 
         $steppablePipeline = { Get-Completer @forwardedParameters }.GetSteppablePipeline($MyInvocation.CommandOrigin)
@@ -6497,7 +6393,7 @@ function New-CompleterRegistrationRecord
         [System.Management.Automation.PSModuleInfo] $ImportModule,
 
         [Parameter()]
-        [CompleterState] $State = 'Active',
+        [CompleterActions.CompleterState] $State = 'Active',
 
         [Parameter()]
         [string] $ScriptPath,
@@ -6517,7 +6413,7 @@ function New-CompleterRegistrationRecord
         }
     }
 
-    $registration = [CompleterRegistration]::new()
+    $registration = [CompleterActions.CompleterRegistration]::new()
     $registration.Key = [string] $Target.Key
     $registration.RegistrationKey = [string] $Target.Key
     $registration.RuntimeKey = [string] $Target.RuntimeKey
@@ -6607,7 +6503,7 @@ function New-CompleterScriptFinding
         [string] $Severity = 'Error'
     )
 
-    [CompleterScriptFinding] @{
+    [CompleterActions.CompleterScriptFinding] @{
         Path       = $Path
         Line       = $Extent.StartLineNumber
         Column     = $Extent.StartColumnNumber
@@ -6676,7 +6572,7 @@ function New-CompletionMatch
         [int] $CursorPosition
     )
 
-    [CompletionMatch] @{
+    [CompleterActions.CompletionMatch] @{
         Key            = [string] $Target.Key
         RuntimeKey     = [string] $Target.RuntimeKey
         CommandName    = [string] $Target.CommandName
@@ -6749,7 +6645,7 @@ function New-ImportedCompleterRegistration
         [switch] $Trusted
     )
 
-    [ImportedCompleterRegistration] @{
+    [CompleterActions.ImportedCompleterRegistration] @{
         Key             = [string] $Target.Key
         RegistrationKey = [string] $Target.Key
         RuntimeKey      = [string] $Target.RuntimeKey

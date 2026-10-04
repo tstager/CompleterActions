@@ -53,7 +53,7 @@ function New-ImportedCompleterRegistration
         [switch] $Trusted
     )
 
-    [ImportedCompleterRegistration] @{
+    [CompleterActions.ImportedCompleterRegistration] @{
         Key             = [string] $Target.Key
         RegistrationKey = [string] $Target.Key
         RuntimeKey      = [string] $Target.RuntimeKey
