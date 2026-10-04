@@ -355,7 +355,7 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
 
 ## Architecture notes
 
-- `CompleterActions.psd1` is the root manifest and defines the exported functions and aliases, formatting file, and PowerShell/Core compatibility.
+- `CompleterActions.psd1` is the root manifest and defines the exported functions, formatting file, and PowerShell/Core compatibility.
 - `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Classes` (as one script block, so the classes can reference each other), then `src\Private` and `src\Public`, runs `src\Bootstrap.ps1`, and exports the public function set.
 - `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe and module state initialization. The build appends it to the packaged `.psm1` after the function definitions.
 - `src\Classes` defines the record classes (`CompleterRegistration`, `ImportedCompleterRegistration`, `CompleterScriptFinding`, `CompletionMatch`) and the `CompleterState` and `CompleterType` enums. Each class inserts its dotted `PSTypeName` in the constructor, which stays the contract the format file and consumers rely on.
