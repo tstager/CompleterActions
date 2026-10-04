@@ -758,3 +758,131 @@ Describe 'Runtime capability probe' {
         $engineCmdlets | Should -BeNullOrEmpty -Because "PowerShell $($PSVersionTable.PSVersion) now has $(($engineCmdlets.Name | Sort-Object) -join ' and '), so engine cmdlet detection is due: see appendix A of docs/roadmap-3.0/milestone-2-spec.md"
     }
 }
+
+Describe 'Compiled engine access' {
+    BeforeAll {
+        if (-not ('CompleterActionsTests.NativeOnlyContextProbe' -as [type]))
+        {
+            Add-Type -TypeDefinition @'
+namespace CompleterActionsTests
+{
+    public class NativeOnlyContextProbe
+    {
+        public object NativeArgumentCompleters { get; set; }
+    }
+
+    public class CustomOnlyContextProbe
+    {
+        public object CustomArgumentCompleters { get; set; }
+    }
+}
+'@
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'holds one EngineAccess in module state after import, on the Reflection path, with the engine version' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+
+        $engine = @(& $module { $script:CompleterEngine })
+
+        $engine.Count | Should -Be 1
+        $engine[0] | Should -BeOfType ([CompleterActions.Internal.EngineAccess])
+        $engine[0].Path | Should -Be ([CompleterActions.Internal.EnginePath]::Reflection)
+        $engine[0].EngineVersion | Should -Be $PSVersionTable.PSVersion
+        $engine[0].ExecutionContext | Should -Not -BeNullOrEmpty
+        $engine[0].CustomProperty.Name | Should -Be 'CustomArgumentCompleters'
+        $engine[0].NativeProperty.Name | Should -Be 'NativeArgumentCompleters'
+    }
+
+    It 'throws the 2.2.0 probe message from the compiled layer for a missing <Member>' -ForEach @(
+        @{ Member = '_context'; ContextTypeName = $null; MissingMember = 'System.Management.Automation.EngineIntrinsics._context' }
+        @{ Member = 'CustomArgumentCompleters'; ContextTypeName = 'CompleterActionsTests.NativeOnlyContextProbe'; MissingMember = 'CompleterActionsTests.NativeOnlyContextProbe.CustomArgumentCompleters' }
+        @{ Member = 'NativeArgumentCompleters'; ContextTypeName = 'CompleterActionsTests.CustomOnlyContextProbe'; MissingMember = 'CompleterActionsTests.CustomOnlyContextProbe.NativeArgumentCompleters' }
+    ) {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        Import-Module -Name $moduleManifestPath -Force
+
+        if ($null -eq $ContextTypeName)
+        {
+            $engineIntrinsics = [pscustomobject]@{}
+            $engineIntrinsicsType = [pscustomobject]
+            $runtimeExecutionContext = $null
+        }
+        else
+        {
+            $engineIntrinsics = $ExecutionContext
+            $engineIntrinsicsType = [System.Management.Automation.EngineIntrinsics]
+            $runtimeExecutionContext = ($ContextTypeName -as [type])::new()
+        }
+
+        $errorRecord = {
+            [CompleterActions.Internal.EngineAccess]::Create($engineIntrinsics, $engineIntrinsicsType, $runtimeExecutionContext, $PSVersionTable.PSVersion)
+        } | Should -Throw -PassThru
+
+        $probeMessageFormat = "CompleterActions cannot run on PowerShell {0}: the required runtime member(s) '{1}' could not be resolved. Completer discovery depends on PowerShell internals; check for a module update that supports this engine version."
+        $baseException = $errorRecord.Exception.GetBaseException()
+        $baseException | Should -BeOfType ([System.InvalidOperationException])
+        $baseException.Message | Should -BeExactly ($probeMessageFormat -f $PSVersionTable.PSVersion, $MissingMember)
+    }
+
+    It 'resolves the live dictionaries through the handles and sees one the engine creates later' {
+        $moduleManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
+        $module = Import-Module -Name $moduleManifestPath -Force -PassThru
+        $engine = & $module { $script:CompleterEngine }
+        $commandName = 'CompleterActionsEngineAccessTest'
+        $savedNativeArgumentCompleters = $engine.NativeProperty.GetValue($engine.ExecutionContext)
+
+        try
+        {
+            $engine.NativeProperty.SetValue($engine.ExecutionContext, $null)
+            $before = & $module { Get-CompleterRuntime }
+
+            Register-ArgumentCompleter -Native -CommandName $commandName -ScriptBlock {
+                param($wordToComplete, $commandAst, $cursorPosition)
+
+                $null = $wordToComplete, $commandAst, $cursorPosition
+            }
+            Register-ArgumentCompleter -CommandName $commandName -ParameterName 'Name' -ScriptBlock {
+                param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+                $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+            }
+
+            $after = & $module { Get-CompleterRuntime }
+            $afterHasNative = $null -ne $after.NativeArgumentCompleters -and $after.NativeArgumentCompleters.ContainsKey($commandName)
+            $afterHasCustom = $null -ne $after.CustomArgumentCompleters -and $after.CustomArgumentCompleters.ContainsKey("${commandName}:Name")
+        }
+        finally
+        {
+            $customArgumentCompleters = $engine.CustomProperty.GetValue($engine.ExecutionContext)
+            if ($null -ne $customArgumentCompleters)
+            {
+                $null = $customArgumentCompleters.Remove("${commandName}:Name")
+            }
+
+            $engine.NativeProperty.SetValue($engine.ExecutionContext, $savedNativeArgumentCompleters)
+        }
+
+        $before.NativeArgumentCompleters | Should -BeNullOrEmpty
+        [object]::ReferenceEquals($after.ExecutionContext, $engine.ExecutionContext) | Should -BeTrue
+        $afterHasNative | Should -BeTrue -Because 'Register-ArgumentCompleter creates the native dictionary after import and the handle reads it'
+        $afterHasCustom | Should -BeTrue
+    }
+
+    It 'contains no member resolution outside src/Core' {
+        $sourceRoot = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'src'
+
+        $hits = @(
+            Get-ChildItem -LiteralPath $sourceRoot -Filter '*.ps1' -Recurse -File |
+                Select-String -Pattern 'GetField|GetProperty|BindingFlags|_context' |
+                ForEach-Object { '{0}:{1}: {2}' -f $_.Path, $_.LineNumber, $_.Line.Trim() }
+        )
+
+        $hits | Should -BeNullOrEmpty
+    }
+}
