@@ -47,7 +47,7 @@
 | `Test-CompleterSet` | Reports drift between a completer set file and the scripts on disk as findings; empty when the set matches |
 | `Unregister-Completer` | Removes completer registrations from runtime and, when applicable, from module state |
 
-`Get-CompleterRegistration`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration` remain as aliases of the renamed commands until 3.0; the first call to each in a process writes a deprecation warning. `about_CompleterActions_Migration` covers the move from 1.x.
+3.0 removed the 1.x names `Get-CompleterRegistration`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`, which 2.x kept as deprecated aliases of the renamed commands; calling one now fails with `CommandNotFoundException`. `about_CompleterActions_Migration` maps each old name to its replacement.
 
 ## Start here
 
@@ -357,7 +357,7 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
 
 - `CompleterActions.psd1` is the root manifest and defines the exported functions and aliases, formatting file, and PowerShell/Core compatibility.
 - `CompleterActions.psm1` is a lightweight root loader that dot-sources `src\Classes` (as one script block, so the classes can reference each other), then `src\Private` and `src\Public`, runs `src\Bootstrap.ps1`, and exports the public function set.
-- `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe, module state initialization, and the three legacy aliases. The build appends it to the packaged `.psm1` after the function definitions.
+- `src\Bootstrap.ps1` holds the import-time work shared by the source root module and the packaged module: the runtime capability probe and module state initialization. The build appends it to the packaged `.psm1` after the function definitions.
 - `src\Classes` defines the record classes (`CompleterRegistration`, `ImportedCompleterRegistration`, `CompleterScriptFinding`, `CompletionMatch`) and the `CompleterState` and `CompleterType` enums. Each class inserts its dotted `PSTypeName` in the constructor, which stays the contract the format file and consumers rely on.
 - `src\Public` contains the user-facing command surface:
   - `Export-CompleterSet`
@@ -368,7 +368,6 @@ The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, a
   - `Test-CompleterRegistration`
   - `Test-CompleterScript`
   - `Unregister-Completer`
-  - the exported legacy wrappers `Get-CompleterRegistrationLegacy`, `Register-CompleterRegistrationLegacy`, and `Unregister-CompleterRegistrationLegacy` behind the three aliases
 - `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar lives in `Test-CompleterScriptAst`, which returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume. Completer sets are read by `Import-CompleterSetDefinition` and validated entry by entry in `Resolve-CompleterSetEntry` (with `Get-CompleterScriptTarget` deriving strict-tier targets from the AST) against one `Get-CompleterRegistrationSnapshot` of the session; `Register-Completer` and `Import-CompleterSet` both resolve conflicts through `Resolve-CompleterRegistrationConflict` and write through `Add-CompleterRegistration`, which writes a batch as one transaction: a whole set for `Import-CompleterSet`, one target at a time for `Register-Completer`.
 - `tools\Measure-CompleterStartup.ps1` is the startup benchmark: eager import versus `Import-CompleterSet`, each sampled in fresh `pwsh -NoProfile` processes.
 

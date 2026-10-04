@@ -7,6 +7,23 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Removed
+
+- **The 1.x aliases** (breaking). `Get-CompleterRegistration`,
+  `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`
+  are no longer exported; calling one fails with PowerShell's own
+  `CommandNotFoundException`. Use `Get-Completer`, `Register-Completer`, and
+  `Unregister-Completer`.
+- **The legacy wrappers** (breaking). `Get-CompleterRegistrationLegacy`,
+  `Register-CompleterRegistrationLegacy`, and
+  `Unregister-CompleterRegistrationLegacy` existed only to carry the aliases
+  and are gone with them.
+- **`-ManagedOnly` and `-DiscoveredOnly`** (breaking), which only the legacy
+  Get wrapper still accepted. Use `-State Active, Pending, Failed, Stale` and
+  `-State Discovered, Conflicted` on `Get-Completer`.
+- **The once-per-process deprecation warning** the aliases wrote. Nothing is
+  written in its place.
+
 ## [2.2.0] - 2026-10-04
 
 The stable 2.2.0 release. Same code as 2.2.0-preview1, promoted after the
