@@ -1659,14 +1659,18 @@ Describe 'Removed surface' {
             Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'en-US') -Filter '*.txt' -File
             Get-ChildItem -LiteralPath (Join-Path -Path $repoRoot -ChildPath 'src/docs/CompleterActions') -Filter '*.md' -File
         )
-        $allowed = @('en-US/about_CompleterActions_Migration.help.txt')
+        # The migration guide maps every old name; README keeps one history sentence about the removal.
+        $allowed = @{
+            'en-US/about_CompleterActions_Migration.help.txt' = '*'
+            'README.md'                                       = '3.0 removed the 1.x names *'
+        }
 
         $unexpected = @(
             $files |
                 Select-String -Pattern 'CompleterRegistrationLegacy|Write-CompleterDeprecationWarning|CompleterDeprecationWarningsIssued|ManagedOnly|DiscoveredOnly' |
                 ForEach-Object {
                     $relativePath = [System.IO.Path]::GetRelativePath($repoRoot, $_.Path).Replace('\', '/')
-                    if ($relativePath -notin $allowed)
+                    if (-not ($allowed.ContainsKey($relativePath) -and $_.Line -like $allowed[$relativePath]))
                     {
                         '{0}:{1}: {2}' -f $relativePath, $_.LineNumber, $_.Line.Trim()
                     }
