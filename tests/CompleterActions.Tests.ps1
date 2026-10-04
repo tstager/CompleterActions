@@ -180,11 +180,75 @@ Describe 'Completer registration public API' {
         $help.Synopsis | Should -Match 'import standalone completer scripts'
     }
 
-    It 'loads the about help topic for the 2.0 migration' {
+    It 'loads the about help topic for the 3.0 migration' {
         $help = Get-Help -Name 'about_CompleterActions_Migration' -ErrorAction Stop
 
         $help.Name | Should -Be 'about_CompleterActions_Migration'
-        $help.Synopsis | Should -Match 'changed in CompleterActions 2.0.0'
+        $help.Synopsis | Should -Match 'changed in CompleterActions 3.0.0'
+    }
+
+    It 'has the 3.0 migration guide' {
+        $text = @(
+            Invoke-TestBuildHelp -Script {
+                Get-Help -Name 'about_CompleterActions_Migration' -ErrorAction Stop | Out-String -Width 4096
+            }
+        ) -join "`n"
+
+        $text | Should -Match ([regex]::Escape('3.0'))
+        foreach ($removedName in 'Get-CompleterRegistration', 'Register-CompleterRegistration', 'Unregister-CompleterRegistration', 'Get-CompleterRegistrationLegacy', 'Register-CompleterRegistrationLegacy', 'Unregister-CompleterRegistrationLegacy')
+        {
+            $text | Should -Match ('(?<![\w-]){0}(?![\w-])' -f [regex]::Escape($removedName)) -Because "the guide maps $removedName"
+        }
+        $text | Should -Match ([regex]::Escape('[CompleterActions.CompleterRegistration]'))
+        $text | Should -Match 'PowerShellVersion'
+        $text | Should -Match ([regex]::Escape('7.4'))
+
+        $headings = @($text -split '\r?\n' | Where-Object { $_ -match '^\S' } | ForEach-Object { $_.TrimEnd() })
+        $headings | Should -Be @('TOPIC', 'SYNOPSIS', 'LONG DESCRIPTION', 'REMOVED COMMANDS', 'PUBLIC TYPES', 'ENGINE FLOOR', 'THE GRAMMAR AT REGISTRATION AND IMPORT', 'CHECKLIST FOR A PROFILE', 'MOVING FROM 1.x', 'SEE ALSO')
+    }
+
+    It 'states the registration and import grammar check in <Topic>' -TestCases @(
+        @{
+            Topic    = 'about_Completer_Sets'
+            Expected = @(
+                'runs the grammar on that parse',
+                'a script that fails the grammar is an invalid entry',
+                'The grammar is not re-walked on a hash-matched entry'
+            )
+        }
+        @{
+            Topic    = 'about_Import_Completers'
+            Expected = @(
+                '`Register-Completer -Lazy` runs the grammar on the parse',
+                '`Import-CompleterSet` reports such a script as an invalid entry'
+            )
+        }
+    ) {
+        param($Topic, $Expected)
+
+        $text = @(
+            Invoke-TestBuildHelp -Script ([scriptblock]::Create("Get-Help -Name '$Topic' -ErrorAction Stop | Out-String -Width 4096"))
+        ) -join "`n"
+        $flatText = $text -replace '\s+', ' '
+
+        foreach ($expectedText in $Expected)
+        {
+            $flatText | Should -Match ([regex]::Escape($expectedText))
+        }
+    }
+
+    It 'mentions the grammar at registration and import in the help of <Command>' -TestCases @(
+        @{ Command = 'Register-Completer'; Expected = 'The strict grammar runs on that parse, so a script that fails it is refused' }
+        @{ Command = 'Import-CompleterSet'; Expected = 'runs the strict import grammar on that parse' }
+    ) {
+        param($Command, $Expected)
+
+        $text = @(
+            Invoke-TestBuildHelp -Script ([scriptblock]::Create("Get-Help -Name '$Command' -Full -ErrorAction Stop | Out-String -Width 4096"))
+        ) -join "`n"
+        $flatText = $text -replace '\s+', ' '
+
+        $flatText | Should -Match ([regex]::Escape($Expected))
     }
 
     It 'has the third-edition headings in <Topic>' -TestCases @(

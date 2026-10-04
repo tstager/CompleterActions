@@ -14,6 +14,8 @@ title: CompleterActions Module
 
 ## Description
 
+The records the commands return, `CompleterActions.CompleterRegistration`, `CompleterActions.ImportedCompleterRegistration`, `CompleterActions.CompleterScriptFinding`, and `CompleterActions.CompletionMatch`, and the `CompleterActions.CompleterState` and `CompleterActions.CompleterType` enums are public .NET types in `CompleterActions.Core.dll`, which the manifest loads, so their type literals resolve in any script once the module is imported; `about_CompleterActions_Migration` lists what changed from the 2.x classes.
+
 ## CompleterActions
 
 ### [Export-CompleterSet](Export-CompleterSet.md)
