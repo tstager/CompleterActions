@@ -318,7 +318,7 @@ Invoke-Build -Task Markdown_templates
 Invoke-Build -Task ?
 ```
 
-`compile` builds the assembly and copies it to `lib\CompleterActions.Core.dll`, where the source manifest's `RequiredAssemblies` entry finds it, so `Import-Module .\CompleterActions.psd1` works only after it has run. `build` runs `compile` first and places the assembly at `build\CompleterActions\lib\CompleterActions.Core.dll`. The assembly is not tracked in git; neither are `lib\`, `build\CompleterActions\lib\`, or the project's `bin\` and `obj\` folders. An assembly cannot be unloaded, so a rebuilt `CompleterActions.Core.dll` needs a new `pwsh` process, and a process that has the repository's module imported holds the file open and makes `clean` and `compile` fail on Windows.
+`compile` builds the assembly and copies it to `lib\CompleterActions.Core.dll`, where the source manifest's `RequiredAssemblies` entry finds it, so `Import-Module .\CompleterActions.psd1` works only after it has run. When the tracked package `build\CompleterActions` exists, `compile` also copies the assembly to `build\CompleterActions\lib\CompleterActions.Core.dll`, so the packaged module imports before a full build. `build` runs `compile` first and places the assembly at `build\CompleterActions\lib\CompleterActions.Core.dll`. The assembly is not tracked in git; neither are `lib\`, `build\CompleterActions\lib\`, or the project's `bin\` and `obj\` folders. An assembly cannot be unloaded, so a rebuilt `CompleterActions.Core.dll` needs a new `pwsh` process, and a process that has the repository's module imported holds the file open and makes `clean` and `compile` fail on Windows.
 
 ### Tests
 

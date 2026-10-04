@@ -46,7 +46,7 @@ task clean {
 
 }
 
-# Synopsis: Compiles CompleterActions.Core.dll and places it in lib/, where the source manifest's RequiredAssemblies entry finds it
+# Synopsis: Compiles CompleterActions.Core.dll and places it in lib/, where the source manifest's RequiredAssemblies entry finds it, and in the tracked package's lib/ so the packaged module imports before a full build
 task compile {
 
     if (-not (Get-Command -Name dotnet -CommandType Application -ErrorAction SilentlyContinue)) {
@@ -66,6 +66,12 @@ task compile {
     New-Item -Path $libPath -ItemType Directory -Force | Out-Null
     $builtAssemblyPath = Join-Path -Path (Split-Path -Path $coreProjectPath -Parent) -ChildPath "bin/Release/net8.0/$coreAssemblyName"
     Copy-Item -Path $builtAssemblyPath -Destination $libPath -Force
+
+    if (Test-Path -Path $modulepath) {
+        $packageLibPath = Join-Path -Path $modulepath -ChildPath 'lib'
+        New-Item -Path $packageLibPath -ItemType Directory -Force | Out-Null
+        Copy-Item -Path $builtAssemblyPath -Destination $packageLibPath -Force
+    }
 }
 
 task build clean, compile, external_help, {
