@@ -540,4 +540,70 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $before.Count | Should -BeGreaterThan 0
         $after | Should -Be $before
     }
+
+    Describe 'Grammar at registration' {
+        BeforeEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -CompleterType 'Parameter'
+            $script:UnsafeScriptPath = Join-Path -Path $TestDrive -ChildPath 'UnsafeTopLevelScript.ps1'
+            Copy-Item -LiteralPath (Join-Path -Path $script:FixtureRoot -ChildPath 'ImportCompleterScript' -AdditionalChildPath 'UnsafeTopLevelScript.ps1') -Destination $script:UnsafeScriptPath -Force
+            $script:UnsafeConformanceLine = "Completer script '$script:UnsafeScriptPath' does not conform to the strict import grammar. Run Test-CompleterScript to work through the findings, or import with -Trusted to run the script as-is."
+        }
+
+        AfterEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -CompleterType 'Parameter'
+        }
+
+        It 'fails a strict lazy registration of a non-conforming script with the conformance text and registers nothing' {
+            $thrown = { Register-Completer -LiteralPath $script:UnsafeScriptPath -Lazy -ErrorAction Continue } | Should -Throw -PassThru
+
+            $lines = @($thrown.Exception.Message -split [regex]::Escape([Environment]::NewLine))
+            $lines[0] | Should -BeExactly $script:UnsafeConformanceLine -Because 'the conformance error is thrown unwrapped, without the Failed to register prefix'
+            $lines[1] | Should -BeLike 'Line 1, column 1 (CommandAst): *'
+            $lines.Count | Should -Be 3 -Because 'the fixture gives two CommandAst findings, one line each'
+            Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+            Get-TestRuntimeScriptBlock -Key 'test-unsafetool:name' | Should -BeNullOrEmpty
+        }
+
+        It 'fails the same way under -WhatIf' {
+            $thrown = { Register-Completer -LiteralPath $script:UnsafeScriptPath -Lazy -WhatIf -ErrorAction Continue } | Should -Throw -PassThru
+
+            @($thrown.Exception.Message -split [regex]::Escape([Environment]::NewLine))[0] | Should -BeExactly $script:UnsafeConformanceLine
+            Register-Completer -LiteralPath $script:UnsafeScriptPath -Lazy -Trusted -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -WhatIf
+            Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+            Get-TestRuntimeScriptBlock -Key 'test-unsafetool:name' | Should -BeNullOrEmpty
+        }
+
+        It 'registers the same script as Pending with -Trusted' {
+            $record = Register-Completer -LiteralPath $script:UnsafeScriptPath -Lazy -Trusted -CommandName 'Test-UnsafeTool' -ParameterName 'Name' -PassThru
+
+            $record.Key | Should -Be 'test-unsafetool:name'
+            $record.State | Should -Be 'Pending'
+            $record.Trusted | Should -BeTrue
+            $record.ScriptPath | Should -Be $script:UnsafeScriptPath
+            (Get-Completer -CommandName 'Test-UnsafeTool' -ParameterName 'Name').State | Should -Be 'Pending'
+        }
+
+        It 'parses the script once on the registration path' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyParseOnceCompleter.ps1'
+            Write-TestStrictCompleterScript -Path $scriptPath -CompletionText 'strict-alpha'
+
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestParseCount = 0
+                $script:TestParseFunction = ${function:Get-CompleterScriptParseResult}
+
+                function script:Get-CompleterScriptParseResult
+                {
+                    param($LiteralPath)
+
+                    $script:TestParseCount++
+                    & $script:TestParseFunction -LiteralPath $LiteralPath
+                }
+            }
+
+            $record = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+
+            $record.State | Should -Be 'Pending'
+            & (Get-Module -Name 'CompleterActions') { $script:TestParseCount } | Should -Be 1 -Because 'the grammar and the target derivation share one parse'
+        }
+    }
 }

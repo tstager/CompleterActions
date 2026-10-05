@@ -95,6 +95,13 @@ jobs:
           Install-PSResource -Name PSScriptAnalyzer -Version '1.25.0' -Repository PSGallery -TrustRepository -Scope CurrentUser
           Install-PSResource -Name Microsoft.PowerShell.PlatyPS -Version '1.0.3' -Repository PSGallery -TrustRepository -Scope CurrentUser
 
+      # Builds lib/CompleterActions.Core.dll, which the source manifest's RequiredAssemblies
+      # entry names: without it the Test step cannot import the module. The runner images
+      # carry the dotnet SDK, and the project fails on any compiler warning.
+      - name: Compile
+        shell: pwsh
+        run: Invoke-Build -Task compile
+
       - name: Lint
         shell: pwsh
         run: |

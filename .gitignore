@@ -1,3 +1,7 @@
 justfile
 .justfile
 testResults.xml
+/lib/
+/build/CompleterActions/lib/
+/src/Core/bin/
+/src/Core/obj/

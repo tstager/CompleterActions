@@ -3,15 +3,18 @@
 Gets the current session's completer runtime dictionaries from PowerShell internals.
 
 .DESCRIPTION
-Uses reflection against the current EngineIntrinsics instance to reach the
-execution context object that owns the runtime completer dictionaries.
-Maintainers use this helper when they need authoritative access to the live
-CustomArgumentCompleters and NativeArgumentCompleters collections that
+Builds the runtime wrapper object from the engine access handles that
+Assert-CompleterRuntimeCapability resolved at import: the execution context object
+that owns the runtime completer dictionaries and the handles of its two dictionary
+properties. Maintainers use this helper when they need authoritative access to the
+live CustomArgumentCompleters and NativeArgumentCompleters collections that
 Register-ArgumentCompleter populates.
 
+The dictionaries are read through the handles on every call, so a dictionary the
+engine creates after import is seen.
+
 This helper depends on non-public PowerShell runtime details. It is therefore
-intended only for internal module plumbing and may require updates if future
-PowerShell versions rename or hide the reflected members.
+intended only for internal module plumbing.
 
 .OUTPUTS
 CompleterActions.CompleterRuntime
@@ -33,24 +36,20 @@ function Get-CompleterRuntime
     [OutputType([pscustomobject])]
     param()
 
-    $bindingFlags = [System.Reflection.BindingFlags] 'Instance, NonPublic, Public'
-    $runtimeExecutionContext = Resolve-CompleterRuntimeExecutionContext
-    $runtimeExecutionContextType = $runtimeExecutionContext.GetType()
-    $customArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('CustomArgumentCompleters', $bindingFlags)
-    $nativeArgumentCompletersProperty = $runtimeExecutionContextType.GetProperty('NativeArgumentCompleters', $bindingFlags)
+    $engine = $script:CompleterEngine
 
-    if ($null -eq $customArgumentCompletersProperty -or $null -eq $nativeArgumentCompletersProperty)
+    if ($null -eq $engine -or $null -eq $engine.CustomProperty -or $null -eq $engine.NativeProperty)
     {
         throw 'The current PowerShell runtime does not expose the completer dictionaries expected by CompleterActions.'
     }
 
     $runtime = [pscustomobject] [ordered] @{
         PSTypeName               = 'CompleterActions.CompleterRuntime'
-        ExecutionContext         = $runtimeExecutionContext
-        CustomProperty           = $customArgumentCompletersProperty
-        CustomArgumentCompleters = $customArgumentCompletersProperty.GetValue($runtimeExecutionContext)
-        NativeProperty           = $nativeArgumentCompletersProperty
-        NativeArgumentCompleters = $nativeArgumentCompletersProperty.GetValue($runtimeExecutionContext)
+        ExecutionContext         = $engine.ExecutionContext
+        CustomProperty           = $engine.CustomProperty
+        CustomArgumentCompleters = $engine.CustomProperty.GetValue($engine.ExecutionContext)
+        NativeProperty           = $engine.NativeProperty
+        NativeArgumentCompleters = $engine.NativeProperty.GetValue($engine.ExecutionContext)
     }
 
     return $runtime

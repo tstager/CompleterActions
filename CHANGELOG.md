@@ -7,6 +7,107 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+### Removed
+
+- **The 1.x aliases** (breaking). `Get-CompleterRegistration`,
+  `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`
+  are no longer exported; calling one fails with PowerShell's own
+  `CommandNotFoundException`. Use `Get-Completer`, `Register-Completer`, and
+  `Unregister-Completer`.
+- **The legacy wrappers** (breaking). `Get-CompleterRegistrationLegacy`,
+  `Register-CompleterRegistrationLegacy`, and
+  `Unregister-CompleterRegistrationLegacy` existed only to carry the aliases
+  and are gone with them.
+- **`-ManagedOnly` and `-DiscoveredOnly`** (breaking), which only the legacy
+  Get wrapper still accepted. Use `-State Active, Pending, Failed, Stale` and
+  `-State Discovered, Conflicted` on `Get-Completer`.
+- **The once-per-process deprecation warning** the aliases wrote. Nothing is
+  written in its place.
+
+### Changed
+
+- **The records are public .NET types** (breaking).
+  `CompleterRegistration`, `ImportedCompleterRegistration`,
+  `CompleterScriptFinding`, `CompletionMatch`, and the `CompleterState` and
+  `CompleterType` enums move from module-private PowerShell classes to
+  sealed .NET types in the `CompleterActions` namespace, with the same
+  property names and order and the same enum values. Eight differences a
+  caller can see: `-is [CompleterActions.CompleterRegistration]` and
+  `::new()` work from any scope, and keep working after `Remove-Module`;
+  `PSTypeNames` is `CompleterActions.<Type>`, `System.Object`, without the
+  bare class name, so the format views and `PSTypeNames[0]` checks are
+  unaffected; every string property is `''` when it has no value, now also
+  on an instance built with `::new()`, and assigning `$null` stores `''`,
+  while `ImportModule` and `ScriptBlock` stay `$null`; enum values still
+  serialize as integers; `[enum]::GetNames([CompleterActions.CompleterState])`
+  works from a script; hashtable conversion such as
+  `[CompleterActions.CompleterScriptFinding] @{ Path = 'x'; Line = 1 }`
+  works; `OutputType` names are unchanged; and a record that crosses a
+  remoting or job boundary arrives deserialized as before.
+- **Engine access runs in the compiled layer.** The import-time capability
+  probe, the reflection into `EngineIntrinsics._context`, and the
+  resolution of the `CustomArgumentCompleters` and
+  `NativeArgumentCompleters` properties move into
+  `CompleterActions.Internal.EngineAccess`, which resolves each member once
+  per import and keeps the handles, so a member that resolved at import
+  cannot fail later in the session. The probe's message and the two other
+  engine messages are unchanged, and no `.ps1` under `src` reflects any
+  more.
+- **The strict grammar runs in the compiled layer, and also at
+  registration and import** (breaking). The walk is a compiled AST visitor,
+  `CompleterActions.Internal.StrictGrammar`, with the same findings, in the
+  same order and with the same text, as the 2.2.0 walk. Because it is cheap
+  enough to run wherever a strict script is already parsed for its targets,
+  `Register-Completer -Lazy` without `-Trusted` now refuses a
+  non-conforming script with the error `Import-CompleterScript` gives, one
+  line per finding, before anything is registered and under `-WhatIf` too,
+  and `Import-CompleterSet` reports a non-conforming strict entry as an
+  invalid entry, `The script does not conform to the strict import grammar:
+  line <l>, column <c> (<Construct>): <Message> ...`, ahead of any target
+  mismatch for the same entry. An entry whose `Hash` matches takes the fast
+  path and is not walked, trusted entries are never walked,
+  `Test-CompleterSet` and `Export-CompleterSet` are unchanged, and the
+  first-tab check still runs before every strict script executes.
+- **`PowerShellVersion = '7.4'`** (breaking), raised from `'7.0'`.
+  `Import-Module` on PowerShell 7.0 to 7.3 fails on the manifest with
+  PowerShell's own version error. The `src` code may use .NET 8 APIs.
+
+### Added
+
+- **`CompleterActions.Core.dll`.** The compiled core, built from the C#
+  project under `src/Core` (`net8.0`, referencing
+  `System.Management.Automation` 7.4.0), shipped at
+  `lib/CompleterActions.Core.dll` in the module and loaded through the
+  manifest's `RequiredAssemblies`. Its `AssemblyVersion` is `3.0.0.0` for
+  every 3.x release; the file and informational versions carry the module
+  version. It exports no cmdlet, and it is not tracked in git.
+- **The `compile` build task.** `Invoke-Build -Task compile` runs
+  `dotnet build` on the project and copies the assembly to `lib/`, where
+  the source manifest finds it; `build` runs it first and places the
+  assembly in the package. Importing the source manifest and running the
+  tests need it first. CI and the release workflow gain a `Compile` step.
+- **The dotnet SDK is a build requirement**, version 8.0 or later. The
+  GitHub-hosted runners carry it, so no workflow step installs one.
+
+### Documentation
+
+- `about_CompleterActions_Migration` is rewritten for 2.x to 3.0: the
+  removed names with their replacements, the public types with the eight
+  differences, the engine floor, the grammar at registration and import
+  with what a profile sees, a checklist for a profile, and a shortened
+  `MOVING FROM 1.x` section. The topic keeps its name.
+- `about_Completer_Sets` and `about_Import_Completers` describe the grammar
+  check at registration and import next to the first-tab check, and
+  `about_Completer_Sets` states why an entry whose `Hash` matches is not
+  walked again.
+- `Register-Completer` and `Import-CompleterSet` help mention the grammar
+  at registration and import. README gains a Types paragraph and describes
+  the assembly, `lib/`, and the `compile` task;
+  `.github/copilot-instructions.md` points at the C# project; the module
+  page names the public types; and the `Measure-CompleterStartup.ps1` help
+  says that a 3.x baseline comes from `Save-PSResource` or a rebuilt tag,
+  because `git archive` yields an importable package only for 2.x tags.
+
 ## [2.2.0] - 2026-10-04
 
 The stable 2.2.0 release. Same code as 2.2.0-preview1, promoted after the

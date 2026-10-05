@@ -2,335 +2,332 @@ TOPIC
     about_CompleterActions_Migration
 
 SYNOPSIS
-    Explains what changed in CompleterActions 2.0.0 and how to move a
-    profile or script from the 1.x commands to the new ones: the renamed
-    commands and their aliases, the explicit target contract, the single
-    -State filter and the new Discovered state, the promised sort order, and
-    the typed output records.
+    Explains what changed in CompleterActions 3.0.0 and how to move a 2.x
+    profile or script to it: the removed 1.x names, the public .NET record
+    types, the PowerShell 7.4 engine floor, and the strict grammar at
+    registration and import. A closing section lists what changed in
+    CompleterActions 2.0.0 for a reader still moving from 1.x.
 
 LONG DESCRIPTION
 
-    CompleterActions 2.0.0 makes every incompatible change of the 2.x line
-    at once, so there is exactly one migration to make. Five things changed:
+    CompleterActions 3.0.0 is the breaking release the 2.x line announced.
+    Four things change for a caller:
 
-    - The three commands with the CompleterRegistration noun were renamed to
-      Get-Completer, Register-Completer, and Unregister-Completer. The old
-      names keep working as aliases until 3.0 and warn once per process.
-    - Targets are explicit. A hand-typed key string such as 'git' or
-      'git:checkout' is no longer accepted as input; a target is named with
-      -CommandName plus -Native or -ParameterName, or described by a record
-      that carries IsNative. Keys are output-only identifiers.
-    - The -ManagedOnly and -DiscoveredOnly switches were replaced by one
-      -State parameter, and a runtime registration that no managed record
-      describes now reports State 'Discovered' instead of 'Active'.
-    - Get-Completer sorts its output by CompleterType, CommandName, and
-      ParameterName before paging.
-    - Registration, import, finding, and completion-match records are
-      PowerShell classes, and State is a real enum.
+    - The 1.x names are removed. Get-CompleterRegistration,
+      Register-CompleterRegistration, and Unregister-CompleterRegistration,
+      which 2.x kept as deprecated aliases, are gone, together with the
+      three legacy wrappers that carried them, the -ManagedOnly and
+      -DiscoveredOnly switches of the Get wrapper, and the once-per-process
+      deprecation warning. The module exports eleven functions and no
+      aliases.
+    - The records are public .NET types. CompleterRegistration,
+      ImportedCompleterRegistration, CompleterScriptFinding, CompletionMatch,
+      and the CompleterState and CompleterType enums live in the
+      CompleterActions namespace of a compiled assembly,
+      CompleterActions.Core.dll, that the manifest loads. A type literal such
+      as [CompleterActions.CompleterRegistration] works from any script.
+    - The minimum engine is PowerShell 7.4. The manifest declares
+      PowerShellVersion = '7.4'.
+    - The strict grammar also runs at registration and import. A strict
+      script that does not conform is refused by Register-Completer -Lazy
+      and reported as an invalid entry by Import-CompleterSet, instead of
+      registering as Pending and failing on its first tab press.
 
-    The sections below show each change with the 1.x call on the left of a
-    "before" block and the 2.0 call in the "after" block, followed by a
-    checklist for a profile. Import-CompleterScript, Import-CompleterSet,
-    Export-CompleterSet, Test-CompleterScript, and Test-CompleterRegistration
-    keep their names; the target contract and typed output apply to them too.
+    Two more things move into the compiled assembly without changing what a
+    caller sees: the import-time engine probe with the reflection into the
+    engine's completer tables, and the walk of the strict grammar. The
+    probe's message, every finding of Test-CompleterScript, and every
+    warning, error, and verbose line of the eleven commands are the same as
+    in 2.2.0, apart from the two grammar errors described below.
 
-COMMAND NAMES
+    Nothing else changes. Every command keeps its name, parameters, and
+    parameter sets. Completer set files keep their schema: a set written by
+    2.2.0 imports on 3.0.0 with the same records, and a set written by
+    3.0.0 imports on 2.2.0. Completer scripts need no change.
 
-    | 1.x                              | 2.0                    |
-    | -------------------------------- | ---------------------- |
-    | Get-CompleterRegistration        | Get-Completer          |
-    | Register-CompleterRegistration   | Register-Completer     |
-    | Unregister-CompleterRegistration | Unregister-Completer   |
+REMOVED COMMANDS
+
+    | 2.x                                      | 3.0                           |
+    | ---------------------------------------- | ----------------------------- |
+    | Get-CompleterRegistration (alias)        | Get-Completer                 |
+    | Register-CompleterRegistration (alias)   | Register-Completer            |
+    | Unregister-CompleterRegistration (alias) | Unregister-Completer          |
+    | Get-CompleterRegistrationLegacy          | Get-Completer                 |
+    | Register-CompleterRegistrationLegacy     | Register-Completer            |
+    | Unregister-CompleterRegistrationLegacy   | Unregister-Completer          |
+    | -ManagedOnly                             | -State Active, Pending,       |
+    |                                          | Failed, Stale                 |
+    | -DiscoveredOnly                          | -State Discovered, Conflicted |
+    | the deprecation warning                  | nothing is written            |
+
+    Calling an old name fails with PowerShell's own
+    CommandNotFoundException:
+
+        The term 'Get-CompleterRegistration' is not recognized as a name of
+        a cmdlet, function, script file, or executable program.
+
+    The module adds no message of its own, because a module cannot intercept
+    a name it does not export. The three *Legacy functions existed only so
+    the aliases had an exported target, and they go with them. -ManagedOnly
+    and -DiscoveredOnly were accepted only by the legacy Get wrapper;
+    Get-Completer never had them.
 
     Before:
 
         Import-CompleterScript -Path .\git_completer.ps1 |
             Register-CompleterRegistration
-        Get-CompleterRegistration -CommandName git -Native
+        Get-CompleterRegistration -ManagedOnly
+        Get-CompleterRegistration -DiscoveredOnly
         Unregister-CompleterRegistration -CommandName git -Native
 
     After:
 
         Import-CompleterScript -Path .\git_completer.ps1 |
             Register-Completer
-        Get-Completer -CommandName git -Native
-        Unregister-Completer -CommandName git -Native
-
-    Each old name is an exported alias of a legacy wrapper function
-    (Get-CompleterRegistrationLegacy, Register-CompleterRegistrationLegacy,
-    Unregister-CompleterRegistrationLegacy) that forwards every parameter,
-    pipeline input, -WhatIf, and -Confirm to the new command. The wrappers
-    are exported because an exported alias whose target is not exported
-    fails at the call site, so `Get-Command -Module CompleterActions` lists
-    thirteen functions (eleven in 2.0.0) and three aliases. `Get-Help` on an
-    old name shows the new command's help.
-
-    The first call to each old name in a process writes one warning:
-
-        WARNING: Get-CompleterRegistration is deprecated and will be removed
-        in 3.0; use Get-Completer instead. See
-        about_CompleterActions_Migration.
-
-    Later calls in the same process are silent, so a profile that calls an
-    old name many times warns once. The old names and the wrappers are
-    removed in 3.0.
-
-TARGETS ARE EXPLICIT
-
-    In 1.x a key string could name a target: a key without a colon was a
-    native command, 'Command:Parameter' was a parameter completer, and a
-    path separator after the last colon turned it back into a native command
-    path. That inference is gone. Get, Register, Unregister, and
-    Test-CompleterRegistration no longer have a -Key parameter, and an input
-    object that carries only a Key, RegistrationKey, or RuntimeKey is
-    rejected.
-
-    Before:
-
-        Get-CompleterRegistration -Key 'git'
-        Get-CompleterRegistration -Key 'git:checkout', 'git:branch'
-        Unregister-CompleterRegistration -Key 'C:\tools\example.exe'
-        [pscustomobject] @{ RegistrationKey = 'git:checkout' } |
-            Get-CompleterRegistration
-
-    After:
-
-        Get-Completer -CommandName git -Native
-        Get-Completer -CommandName git -ParameterName checkout, branch
-        Unregister-Completer -CommandName C:\tools\example.exe -Native
-        [pscustomobject] @{ CommandName = 'git'; ParameterName = 'checkout' } |
-            Get-Completer
-
-    A bare key input object fails with an error that names this topic:
-
-        InputObject supplies the key 'git:checkout' without an IsNative or
-        Native property. Keys are output-only identifiers and are no longer
-        classified by their shape: add IsNative or Native alongside the key,
-        or supply CommandName with Native or ParameterName. See
-        about_CompleterActions_Migration.
-
-    Records still round-trip. Every record Get-Completer, Register-Completer
-    -PassThru, Import-CompleterScript, Import-CompleterSet, and
-    Test-CompleterRegistration returns carries Key together with IsNative,
-    so piping records back into Get-Completer, Register-Completer,
-    Unregister-Completer, Test-CompleterRegistration, and Export-CompleterSet
-    works as before:
-
-        Get-Completer -CommandName git -Native | Unregister-Completer
-        Import-CompleterScript -Path .\git_completer.ps1 | Get-Completer
-        Test-CompleterRegistration -CommandName git -Native -InputText 'git ch' |
-            Get-Completer
-
-    An input object you build yourself may still carry a key, as long as it
-    says which kind it is. Build it as a [pscustomobject]; a plain hashtable
-    does not expose its entries as properties and is rejected:
-    `[pscustomobject] @{ Key = 'git'; IsNative = $true }` resolves,
-    `[pscustomobject] @{ Key = 'git' }` does not. Completer set files never
-    used keys, so a set exported by 2.0.0-preview3 imports unchanged.
-
-ONE STATE FILTER
-
-    -ManagedOnly and -DiscoveredOnly were two switches that selected by
-    origin. Get-Completer has one -State parameter of type CompleterState[]
-    that selects by state; a scalar binds, several values return the union,
-    and the values tab-complete: Active, Stale, Conflicted, Pending, Failed,
-    Discovered. Without -State every record is returned.
-
-    Before:
-
-        Get-CompleterRegistration -ManagedOnly
-        Get-CompleterRegistration -DiscoveredOnly
-        Get-CompleterRegistration -ManagedOnly |
-            Where-Object State -in Pending, Failed
-
-    After:
-
         Get-Completer -State Active, Pending, Failed, Stale
         Get-Completer -State Discovered, Conflicted
-        Get-Completer -State Pending, Failed
+        Unregister-Completer -CommandName git -Native
 
-    The legacy Get-CompleterRegistration alias keeps -ManagedOnly and
-    -DiscoveredOnly and translates them to exactly those state lists; it
-    rejects either switch combined with -State. Get-Completer itself does not
-    have the switches: `Get-Completer -ManagedOnly` fails with "A parameter
-    cannot be found that matches parameter name 'ManagedOnly'".
+    The new names take the parameters the aliases forwarded, so the rename
+    is the whole change. A 2.x profile that already uses the new names
+    needs nothing from this section.
 
-    THE DISCOVERED STATE IS A BEHAVIOUR CHANGE. In 1.x a runtime registration
-    that no managed record described reported State 'Active' with Source
-    'Discovered'. In 2.0 the same record reports State 'Discovered'; 'Active'
-    is reserved for managed records whose stored script is the live runtime
-    value. Any check such as
+PUBLIC TYPES
 
-        Get-CompleterRegistration | Where-Object State -eq Active
+    The four records and the two enums are public .NET types in the
+    CompleterActions namespace:
 
-    that relied on runtime-only registrations being Active now returns the
-    managed ones only. Use `-State Active, Discovered` for the old meaning.
-    The Source property is unchanged ('Managed' or 'Discovered'), as are
-    IsManaged and IsRuntimeRegistered, so a script that filtered on Source
-    is unaffected.
+    - [CompleterActions.CompleterRegistration]
+    - [CompleterActions.ImportedCompleterRegistration]
+    - [CompleterActions.CompleterScriptFinding]
+    - [CompleterActions.CompletionMatch]
+    - [CompleterActions.CompleterState]: Active, Stale, Conflicted, Pending,
+      Failed, Discovered
+    - [CompleterActions.CompleterType]: Native, Parameter
 
-    A second consequence of reporting every candidate's state once: a
-    managed target that was replaced outside the module with
-    Register-ArgumentCompleter now yields two records from an unfiltered
-    Get-Completer, the managed record as 'Stale' and the live value as
-    'Conflicted'. In 1.x only the Conflicted record was returned unless
-    -ManagedOnly revealed the Stale one. The same applies to a Failed managed
-    record whose target was re-registered externally (Failed plus
-    Conflicted). Key is therefore unique in the output except for such
-    replaced targets; select with -State when one of the two is wanted.
+    Property names, property order, enum names, and enum values are the
+    ones 2.x declared, so Select-Object *, Format-List, and ConvertTo-Csv
+    show the same columns in the same order. In 2.x the records were
+    PowerShell classes private to the module. Eight things differ for a
+    caller:
 
-    The full state list:
+    1. -is and ::new() work everywhere. Once the module is imported,
+       `$record -is [CompleterActions.CompleterRegistration]` is $true at
+       the prompt and in any script, and
+       `[CompleterActions.CompleterRegistration]::new()` builds a record. In
+       2.x both resolved only inside the module. The type literal resolves
+       as long as the assembly is loaded in the process, so it keeps working
+       after Remove-Module.
 
-    - Active      a managed record whose stored script is the live runtime
-                  value
-    - Pending     registered lazily and not loaded yet
-    - Failed      the lazy script failed to load; see LoadError
-    - Stale       a managed record whose runtime value was replaced or
-                  removed outside this module
-    - Conflicted  a live runtime value that replaced a managed registration
-                  outside this module
-    - Discovered  a live runtime value that no managed record describes
+    2. PSTypeNames loses the bare class name. A record's PSTypeNames is
+       CompleterActions.CompleterRegistration, System.Object. In 2.x it was
+       CompleterActions.CompleterRegistration, CompleterRegistration,
+       System.Object, because the PowerShell class carried its own bare name
+       and inserted the dotted one in front. The dotted name is still first,
+       so the format views apply unchanged,
+       `$record.PSTypeNames[0] -eq 'CompleterActions.CompleterRegistration'`
+       is still $true, and a deserialized record is still
+       Deserialized.CompleterActions.CompleterRegistration. Only a check for
+       the bare name 'CompleterRegistration' in PSTypeNames stops matching.
 
-SORT ORDER
+    3. String properties are '' when they have no value. Every string
+       property of the four types starts as '' and stores '' when $null is
+       assigned, so ParameterName on a native record, ScriptPath and
+       LoadError on a record without a script, and ToolTip on a completion
+       match are '' rather than $null. 2.x gave the same '' on the records
+       the module returned; 3.0 extends it to an instance you build with
+       ::new(), whose strings were $null in 2.x. ImportModule and
+       ScriptBlock stay $null until they are set.
 
-    Get-Completer sorts by CompleterType (native completers first), then
-    CommandName, then ParameterName before -Skip and -First are applied.
-    1.x returned records in the insertion order of its internal table, so a
-    script that depended on that order sees a different order now. The
-    upside is that paging across several calls stays stable while unrelated
-    targets are registered or removed between pages; only a target that
-    sorts before the current window can shift it. For a replaced target the
-    Stale record sorts before its Conflicted twin.
+    4. Enum values serialize as integers, as they did in 2.x. ConvertTo-Json
+       writes "State": 3 for Pending and Export-Clixml writes the integer.
+       Pass -EnumsAsStrings to ConvertTo-Json, or store `[string] $_.State`,
+       when a script persists records. Comparisons with strings keep
+       working: `$_.State -eq 'Pending'`, `Where-Object State -eq Pending`,
+       `-State Pending`, and tab completion of -State values all work,
+       because the parameter is typed [CompleterActions.CompleterState[]].
 
-TYPED OUTPUT
+    5. The enums are usable from a script.
+       `[enum]::GetNames([CompleterActions.CompleterState])` and
+       `[CompleterActions.CompleterState]::Failed` work anywhere. In 2.x
+       they needed `& (Get-Module CompleterActions) { [CompleterState] }`,
+       and that form no longer resolves: the bare names are gone inside the
+       module too.
 
-    The records are PowerShell classes defined by the module, each with the
-    dotted PSTypeName it has always carried:
+    6. Hashtable conversion works.
+       `[CompleterActions.CompleterScriptFinding] @{ Path = 'x'; Line = 1 }`
+       builds a finding through its property setters, as the module's own
+       helpers do.
 
-    - CompleterRegistration
-      PSTypeName CompleterActions.CompleterRegistration
-    - ImportedCompleterRegistration
-      PSTypeName CompleterActions.ImportedCompleterRegistration
-    - CompleterScriptFinding
-      PSTypeName CompleterActions.CompleterScriptFinding
-    - CompletionMatch
-      PSTypeName CompleterActions.CompletionMatch
+    7. OutputType names are unchanged.
+       `(Get-Command Get-Completer).OutputType.Name` is still
+       CompleterActions.CompleterRegistration, and the other commands keep
+       their 2.x output type names.
 
-    Two enums back them: CompleterType (Native, Parameter) and
-    CompleterState (Active, Stale, Conflicted, Pending, Failed, Discovered).
-    Every command declares its record type in OutputType, so
-    `(Get-Command Get-Completer).OutputType` is
-    CompleterActions.CompleterRegistration.
+    8. Remoting and jobs are unchanged. Across a remoting or job boundary a
+       record arrives deserialized, as in 2.x: its type name is
+       Deserialized.CompleterActions.CompleterRegistration and State is a
+       plain string such as 'Pending', so `$_.State -eq 'Pending'` still
+       holds on the receiving side.
 
-    The dotted PSTypeName is still the contract. A PowerShell class cannot
-    carry a dotted name, so each class has the bare name in the table and
-    inserts the dotted name at the front of its PSTypeNames when it is
-    constructed. Format views, `-is`-free duck typing, and
-    `$record.PSTypeNames[0] -eq 'CompleterActions.CompleterRegistration'`
-    checks all keep working. The classes are private to the module's session
-    state, so `$record -is [CompleterRegistration]` and
-    `[CompleterRegistration]::new()` only resolve inside the module; from a
-    script, test the PSTypeName instead.
+    The assembly is CompleterActions.Core.dll, in the lib folder of the
+    module, and the manifest loads it through RequiredAssemblies before the
+    module's script runs. It exports no cmdlet. Its AssemblyVersion is
+    3.0.0.0 for every 3.x release, so a type keeps its identity across
+    minor releases; the file version and informational version carry the
+    module version. An assembly cannot be unloaded from a process: after
+    an update, start a new pwsh session to load the new
+    CompleterActions.Core.dll. The loaded version is
+    `[CompleterActions.CompleterRegistration].Assembly.GetName().Version`.
 
-    Property names and order are unchanged, except that a completion match
-    now carries IsNative after ParameterName so it round-trips like the
-    other records. Four details differ from the 1.x pscustomobjects:
+    The assembly also holds the engine access and the strict grammar, in
+    the CompleterActions.Internal namespace. Those types are public only
+    because PowerShell cannot call internal members. They are not a
+    contract and may change in any 3.x release; do not call them from a
+    script.
 
-    - A piped record binds by value to the InputObject parameter, which is
-      typed [object[]] on every command that takes records. Get-Completer
-      no longer declares property-name binding on -CommandName,
-      -ParameterName, and -Native, so an input object describes exactly one
-      target: one whose CommandName or ParameterName holds several values
-      is rejected with "InputObject supplies 2 values for CommandName";
-      pass arrays to -CommandName and -ParameterName instead. Records the
-      module returns always describe one target and are unaffected.
-    - State and CompleterType are enum values, not strings. Comparisons with
-      strings still work as before: `$_.State -eq 'Failed'`,
-      `Where-Object State -in Pending, Failed`, and `-State Failed` all bind,
-      and the value displays as its name. `$_.State.GetType()` is
-      CompleterState rather than System.String.
-    - String properties that had no value were $null on the 1.x records and
-      are '' on the class records: ParameterName on a native record,
-      ScriptPath and LoadError on a record without a script, and ToolTip on
-      a completion match. `[string]::IsNullOrEmpty` and `-not $_.ScriptPath`
-      behave the same; a `-eq $null` test does not match any more.
-    - State and CompleterType serialize as their integer values through
-      ConvertTo-Json and Export-Clixml, where the 1.x strings serialized as
-      their names, so a record read back from either round trip carries 0
-      instead of 'Active' and `$_.State -eq 'Active'` is false. Pass
-      -EnumsAsStrings to ConvertTo-Json, or store `[string] $_.State` and
-      `[string] $_.CompleterType`, when a script persists records.
-      ConvertTo-Csv and the Format commands are unaffected because they
-      write the name.
+ENGINE FLOOR
 
-    Across a remoting or job boundary the records arrive deserialized, as
-    they did in 1.x: the type name becomes
-    Deserialized.CompleterActions.CompleterRegistration and State is a plain
-    string such as 'Active', so `$_.State -eq 'Active'` still holds but
-    `[CompleterState]` methods and the class itself are not available on
-    the receiving side.
+    The manifest declares PowerShellVersion = '7.4', and
+    CompatiblePSEditions stays @('Core'). On PowerShell 7.0 to 7.3,
+    Import-Module CompleterActions fails with PowerShell's own minimum
+    version error before any module file runs. The CI matrix has started at
+    7.4 since 1.3.0, so a tested engine sees no change.
+
+    A machine that must stay on an older engine keeps CompleterActions
+    2.2.0, for example with
+    `Install-PSResource CompleterActions -Version 2.2.0` and
+    `Import-Module CompleterActions -RequiredVersion 2.2.0`.
+
+    The engine probe that runs at import keeps its message. On an engine
+    whose internals changed, Import-Module still fails with one error that
+    names the running PowerShell version and the members it could not
+    resolve:
+
+        CompleterActions cannot run on PowerShell <version>: the required
+        runtime member(s) '<list>' could not be resolved. Completer
+        discovery depends on PowerShell internals; check for a module update
+        that supports this engine version.
+
+    What moved is where that check lives. The compiled layer resolves each
+    engine member once at import and keeps it, so a member that resolved at
+    import cannot fail to resolve later in the session.
+
+THE GRAMMAR AT REGISTRATION AND IMPORT
+
+    In 2.x the strict grammar ran only when a script loaded, on the first
+    tab press for one of its targets, because walking every script at
+    import cost about 20 ms each. The compiled walk is cheap enough to run
+    at import, so 3.0 also runs it wherever a strict script is already
+    parsed for its targets. The first-tab check stays exactly as it was: a
+    script that changes between registration and its first tab press is
+    still checked in its changed form before it runs.
+
+    Register-Completer -Lazy. Without -Trusted, the targets are read from
+    the parsed script, and the grammar now runs on that parse. A script that
+    does not conform fails the call with the error Import-CompleterScript
+    gives, one line per finding, and nothing is registered for any of its
+    targets. The check runs before -WhatIf is honoured, so -WhatIf fails the
+    same way:
+
+        Completer script 'C:\Completers\tool_completer.ps1' does not conform
+        to the strict import grammar. Run Test-CompleterScript to work
+        through the findings, or import with -Trusted to run the script
+        as-is.
+        Line 1, column 1 (CommandAst): The script uses unsupported top-level
+        command 'Get-Date'. ...
+
+    Import-CompleterSet. A strict entry that does not take the hash fast
+    path is parsed for its targets, as in 2.x, and the grammar now runs on
+    that parse. A script that does not conform is an invalid entry,
+    reported from its first finding:
+
+        Entry 4 ('tool_completer/tool_completer.ps1'): The script does not
+        conform to the strict import grammar: line 1, column 1
+        (CommandAst): The script uses unsupported top-level command
+        'Get-Date'. Run Test-CompleterScript to work through the findings,
+        or mark the entry Trusted to run it as-is.
+
+    It takes the path of every invalid entry. Without -SkipInvalid the set
+    fails and nothing is registered. With -SkipInvalid the entry is skipped
+    with the usual "Completer set '<path>' skipped Entry <n> ..." warning
+    and the other entries register. When the same entry also declares
+    Targets that the script does not match, both problems are reported,
+    the grammar first.
+
+    What does not change:
+
+    - An entry whose Hash matches its script takes the fast path. It is
+      neither parsed nor walked at import, because the export that wrote
+      the Hash derived its targets from the same text, and the first tab
+      press runs the grammar before the script executes. A fully hashed
+      set of unchanged scripts imports with exactly the work it did in
+      2.2.0; only a new or changed strict script pays for the walk.
+    - Trusted entries and -Trusted registrations are never walked.
+    - Test-CompleterSet reports drift, not grammar, and finds what it found
+      in 2.2.0. Test-CompleterScript stays the grammar gate for a
+      repository.
+    - Export-CompleterSet does not run the grammar.
+
+    What a profile sees: a set that in 2.x imported a non-conforming strict
+    script as a Pending record, which turned Failed on its first tab press,
+    now reports that entry when the profile runs. A profile that imports
+    with -SkipInvalid gets one warning for the entry at session start and
+    every other entry registers as before. A profile that imports without
+    -SkipInvalid fails the whole set until the script is fixed, marked
+    Trusted in the set, or removed from it. A repository whose scripts all
+    pass Test-CompleterScript sees no difference.
 
 CHECKLIST FOR A PROFILE
 
-    1. Replace the three old names with the new ones, or leave them and
-       accept one warning per process per name until 3.0.
-    2. Replace every -Key argument with -CommandName plus -Native or
-       -ParameterName, and add IsNative to any hand-built input object that
-       carries only a key.
+    1. Run PowerShell 7.4 or later, or pin CompleterActions 2.2.0.
+    2. Replace Get-CompleterRegistration, Register-CompleterRegistration,
+       and Unregister-CompleterRegistration with Get-Completer,
+       Register-Completer, and Unregister-Completer, and any *Legacy
+       function call with the same new name.
     3. Replace -ManagedOnly with -State Active, Pending, Failed, Stale and
        -DiscoveredOnly with -State Discovered, Conflicted, or with the
        narrower state you meant.
-    4. Review every `State -eq 'Active'` check: runtime-only registrations
-       are Discovered now, and a replaced target returns both its Stale and
-       its Conflicted record.
-    5. Drop any reliance on insertion order; sort by whatever you need on
-       top of the promised order.
-    6. Replace `-eq $null` tests on ParameterName, ScriptPath, LoadError,
-       or ToolTip with `[string]::IsNullOrEmpty` or a truthiness test.
-    7. Where records are persisted with ConvertTo-Json or Export-Clixml, add
-       -EnumsAsStrings or store `[string] $_.State` and
-       `[string] $_.CompleterType`; the enums serialize as integers.
-    8. Split any hand-built input object whose CommandName or ParameterName
-       holds several values into one object per target, or pass the arrays
-       to -CommandName and -ParameterName; Get-Completer rejects it now.
+    4. Replace PSTypeNames checks for the bare name 'CompleterRegistration'
+       with the dotted name or with
+       `-is [CompleterActions.CompleterRegistration]`, and replace
+       `& (Get-Module CompleterActions) { [CompleterState] }` with
+       [CompleterActions.CompleterState].
+    5. Run Test-CompleterScript over the completer repository and fix every
+       Error finding, or mark the script Trusted in the set. A
+       non-conforming strict script is now reported at import instead of
+       failing at its first tab press.
+    6. Keep -SkipInvalid on the Import-CompleterSet line if one bad entry
+       should not stop the rest of the set from registering.
+    7. Start a new pwsh session after updating, so the new
+       CompleterActions.Core.dll is the one loaded.
 
-    Completer set files and completer scripts need no change.
+    Completer set files and conforming completer scripts need no change.
 
-EXAMPLE 1
+MOVING FROM 1.x
 
-    Move a profile from the eager 1.x pipeline to the 2.0 names:
+    A 1.x profile moves through 2.0 first. 2.0.0 renamed the three commands
+    with the CompleterRegistration noun, and 3.0 removed the old names:
 
-        # 1.x
-        Get-ChildItem ~\Completers -Filter *_completer.ps1 |
-            Import-CompleterScript |
-            Register-CompleterRegistration
+    | 1.x                              | 2.0 and 3.0            |
+    | -------------------------------- | ---------------------- |
+    | Get-CompleterRegistration        | Get-Completer          |
+    | Register-CompleterRegistration   | Register-Completer     |
+    | Unregister-CompleterRegistration | Unregister-Completer   |
 
-        # 2.0
-        Get-ChildItem ~\Completers -Filter *_completer.ps1 |
-            Import-CompleterScript |
-            Register-Completer
+    Three more changes from 2.0.0 apply to a 1.x profile. The 2.0 edition
+    of this topic, shipped with every 2.x release, covered them in full,
+    so a profile that already runs on 2.x was migrated by it:
 
-EXAMPLE 2
-
-    Find the registrations that were made outside the module:
-
-        # 1.x
-        Get-CompleterRegistration -DiscoveredOnly |
-            Where-Object State -eq Active
-
-        # 2.0
-        Get-Completer -State Discovered
-
-EXAMPLE 3
-
-    Remove a target by key:
-
-        # 1.x
-        Unregister-CompleterRegistration -Key 'git:checkout' -Confirm:$false
-
-        # 2.0
-        Unregister-Completer -CommandName git -ParameterName checkout `
-            -Confirm:$false
+    - Targets are explicit. -Key is gone; name a target with -CommandName
+      plus -Native or -ParameterName, or pipe a record that carries
+      IsNative. Keys are output-only identifiers.
+    - One -State filter replaced -ManagedOnly and -DiscoveredOnly, and a
+      runtime registration that no managed record describes reports State
+      'Discovered' instead of 'Active'.
+    - The records are typed: State and CompleterType are enums, empty
+      string properties are '' instead of $null, and Get-Completer sorts
+      by CompleterType, CommandName, and ParameterName before paging.
 
 SEE ALSO
 

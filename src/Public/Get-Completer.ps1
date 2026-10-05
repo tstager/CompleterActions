@@ -117,7 +117,7 @@ function Get-Completer
 
         [Parameter()]
         [ValidateNotNullOrEmpty()]
-        [CompleterState[]] $State
+        [CompleterActions.CompleterState[]] $State
     )
 
     begin

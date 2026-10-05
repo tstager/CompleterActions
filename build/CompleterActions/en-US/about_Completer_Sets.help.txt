@@ -124,13 +124,17 @@ THE TRUST TIER PER ENTRY
       arguments, so the targets can be read from the parsed script; an entry
       whose arguments cannot be read statically is reported with the position
       of the offending argument.
-    - The script must pass the strict import grammar when it loads, exactly as
-      `Import-CompleterScript` requires. `Import-CompleterSet` does not run the
-      grammar itself: it parses each strict script once, unless the entry's
-      `Hash` matches, to validate the entry, registers the targets that parse
-      derived, and walks none of them; a script that fails the grammar moves
-      to `Failed` on its first tab press with the findings in `LoadError`. Run
-      `Test-CompleterScript` over the repository to catch that ahead of time.
+    - The script must pass the strict import grammar, exactly as
+      `Import-CompleterScript` requires. `Import-CompleterSet` parses each
+      strict script once, unless the entry's `Hash` matches, to validate the
+      entry, runs the grammar on that parse, and registers the targets that
+      parse derived; a script that fails the grammar is an invalid entry
+      whose problem names the first finding. The grammar runs again when the
+      script loads, before it executes, so a script edited after the import,
+      or one whose entry took the hash fast path, that fails the grammar
+      moves to `Failed` on its first tab press with the findings in
+      `LoadError`. Run `Test-CompleterScript` over the repository to see
+      every finding ahead of time.
     - `Targets` may be omitted. When present, it must match what the script
       declares, or the entry is reported as a mismatch. Declaring targets is
       a way to notice that a script changed underneath the set.
@@ -155,6 +159,8 @@ VALIDATION BEFORE REGISTRATION
     - trusted entries declare `Targets`
     - strict entries expose literal targets that can be derived without
       running the script
+    - strict entries pass the strict import grammar, checked on the same
+      parse that derives their targets
     - strict entries that declare `Targets` match the script
     - no target is listed by two entries of the set
     - without `-Force`, no target already carries a managed or runtime
@@ -219,23 +225,31 @@ THE HASH AND THE FAST PATH
       and nothing is hashed.
     - A trusted entry is never parsed and its `Hash` is ignored at import;
       `Test-CompleterSet` still checks it.
-    - A strict entry without `Targets` is parsed, because a hash cannot
-      supply targets the set does not list.
+    - A strict entry without `Targets` is parsed, and the strict grammar
+      runs on the parse, because a hash cannot supply targets the set does
+      not list.
     - A strict entry with `Targets` and no `Hash`, a `Hash` in another
-      form, or a `Hash` that differs from the script is parsed, and its
-      targets are derived and compared with `Targets`, exactly as before
-      the key existed.
+      form, or a `Hash` that differs from the script is parsed, the strict
+      grammar runs on the parse, and its targets are derived and compared
+      with `Targets`, exactly as before the key existed.
     - A strict entry with `Targets` and a `Hash` that matches the script
-      takes the fast path: the script is not parsed, and its declared
-      `Targets` are registered in the order the entry lists them, each key
-      once.
+      takes the fast path: the script is neither parsed nor walked by the
+      grammar, and its declared `Targets` are registered in the order the
+      entry lists them, each key once.
 
     A script that cannot be read for its hash falls back to the parse, so
     the problem reported is the one the parse finds. The fast path skips
-    three checks: the parse errors, the literal-argument check, and the
-    comparison with the script's targets. The export that wrote the `Hash`
-    ran them against the same text. Every check that needs only the set
-    still runs, as listed under VALIDATION BEFORE REGISTRATION.
+    four checks: the parse errors, the literal-argument check, the
+    comparison with the script's targets, and the strict grammar. The
+    export that wrote the `Hash` ran the first three against the same text.
+    The grammar is not re-walked on a hash-matched entry because the walk
+    needs the parse that the fast path exists to avoid, and because it adds
+    no safety there: the first tab press runs the full grammar on the
+    script as it is at that moment, before anything executes, as described
+    below. A set of unchanged, hashed scripts therefore imports with the
+    same work as in 2.2.0, when the grammar did not run at import; only a
+    new or changed strict script pays for the walk. Every check that needs
+    only the set still runs, as listed under VALIDATION BEFORE REGISTRATION.
 
     The two paths give identical records whenever an entry's `Targets` list
     each target the script registers once, in the script's order and with
@@ -290,6 +304,12 @@ LAZY LOADING, PENDING, AND FAILED
     script is swapped in from that same import. When a script registers the
     same target more than once, the last registration wins, exactly as it
     does when the script is dot-sourced.
+
+    For a strict record that import is the second check against the strict
+    grammar. The first ran when the set was imported or the script was
+    registered with `Register-Completer -Lazy`, unless the entry took the
+    hash fast path; the second checks the file as it is at the first tab
+    press, so a script edited in between is never run unchecked.
 
     If the script fails to load on that first press, the press returns no
     completions, no error reaches the host, and the prompt is never
@@ -611,7 +631,11 @@ COMPLETER SETS AS MODULES
 
           WARNING: The completer set module 'PS_Completers' 1.0.0 declares 2 trusted completer scripts, which run without the strict grammar check at first tab.
 
-      A set whose entries are all strict writes no warning.
+      A set whose entries are all strict writes no warning. A trusted
+      script skips the grammar everywhere, at import as well as at its
+      first tab press, while a strict entry's script is checked when the
+      set is imported, unless its `Hash` matches, and again at its first
+      tab press.
 
     `-Path` and `-LiteralPath` apply neither rule, because a set on a path
     is your own.
@@ -619,9 +643,10 @@ COMPLETER SETS AS MODULES
     Installing a completer set package and importing it by name is a
     decision to run its scripts. Each script runs on the first tab press
     for one of its targets: a strict entry's script only after it passes
-    the strict grammar, and a trusted entry's script without the grammar,
-    exactly as the package author wrote it. Install packages only from
-    authors whose code you would run in your session.
+    the strict grammar, which checks it at import, unless its `Hash`
+    matches, and again just before it runs, and a trusted entry's script
+    without the grammar, exactly as the package author wrote it. Install
+    packages only from authors whose code you would run in your session.
 
     Checking a package
 
@@ -676,11 +701,14 @@ WORKFLOW
 
     Scripts that need the trusted tier are marked once in the set file, with
     their targets, and stay marked. Run `Test-CompleterScript` over the
-    repository when a script changes: importing the set does not run the
-    grammar, so a strict script that stops conforming still imports as
-    `Pending` and is only reported, as `Failed` with the findings in
-    `LoadError`, on its first tab press. A strict script whose targets change
-    is caught at import when its entry declares `Targets`.
+    repository when a script changes: importing the set runs the grammar
+    only on a strict script whose entry has no matching `Hash`. A strict
+    script that stops conforming is reported as an invalid entry at the
+    next import while its entry's `Hash` still describes the old text, but
+    once the set is regenerated the new `Hash` matches, the script takes
+    the fast path, and it is reported only on its first tab press, as
+    `Failed` with the findings in `LoadError`. A strict script whose
+    targets change is caught at import when its entry declares `Targets`.
 
     After a script changes, regenerate the set and check it against its
     folder, for example in the repository's CI; CHECKING FOR DRIFT WITH
