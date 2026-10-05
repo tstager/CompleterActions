@@ -66,6 +66,16 @@ REMOVED COMMANDS
         The term 'Get-CompleterRegistration' is not recognized as a name of
         a cmdlet, function, script file, or executable program.
 
+    That is what a session sees once 3.0 is the only CompleterActions on
+    PSModulePath. While a 2.x copy is still installed beside it, command
+    discovery autoloads that 2.x module for the old name instead, so the
+    call succeeds against 2.x and the session then holds both versions.
+    Uninstall the 2.x copies you no longer pin before relying on the error:
+
+        Get-InstalledPSResource CompleterActions |
+            Where-Object Version -lt 3.0.0 |
+            Uninstall-PSResource
+
     The module adds no message of its own, because a module cannot intercept
     a name it does not export. The three *Legacy functions existed only so
     the aliases had an exported target, and they go with them. -ManagedOnly
@@ -280,7 +290,9 @@ THE GRAMMAR AT REGISTRATION AND IMPORT
 
 CHECKLIST FOR A PROFILE
 
-    1. Run PowerShell 7.4 or later, or pin CompleterActions 2.2.0.
+    1. Run PowerShell 7.4 or later, or pin CompleterActions 2.2.0. Uninstall
+       the 2.x copies you no longer pin; while one is installed, an old name
+       autoloads it instead of failing.
     2. Replace Get-CompleterRegistration, Register-CompleterRegistration,
        and Unregister-CompleterRegistration with Get-Completer,
        Register-Completer, and Unregister-Completer, and any *Legacy

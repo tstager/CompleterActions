@@ -91,6 +91,9 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ### Documentation
 
+- **`about_CompleterActions_Migration`** says that an installed 2.x copy on
+  `PSModulePath` is autoloaded by a removed name until it is uninstalled,
+  and gives the `Uninstall-PSResource` line to run.
 - `about_CompleterActions_Migration` is rewritten for 2.x to 3.0: the
   removed names with their replacements, the public types with the eight
   differences, the engine floor, the grammar at registration and import
