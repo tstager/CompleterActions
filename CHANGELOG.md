@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [3.0.0-rc1] - 2026-10-04
+
 ### Removed
 
 - **The 1.x aliases** (breaking). `Get-CompleterRegistration`,
@@ -765,7 +767,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.0.0-rc1...HEAD
+[3.0.0-rc1]: https://github.com/tstager/CompleterActions/compare/v2.2.0...v3.0.0-rc1
 [2.2.0]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0
 [2.2.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0-preview1
 [2.1.0]: https://github.com/tstager/CompleterActions/compare/v2.0.0...v2.1.0
