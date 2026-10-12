@@ -3,14 +3,14 @@
 Drafted: 2026-09-23
 Baseline: 2.0.0, release commit `b2de0be`, tag v2.0.0
 Live page: https://claude.ai/artifact/3w1YVcGxbpGYLWmaMCF1R1
-Status (2026-10-04, evening): milestones 0, 1, and 2 shipped; milestone 3 candidate shipped the same day as 3.0.0-rc1 (PR #9, merge 242c177, release commit on tag v3.0.0-rc1), soaking per decision 6; stable 3.0.0 after the soak closes the roadmap.
+Status (2026-10-11): complete. All three milestones shipped; 3.0.0 stable was cut from the rc1 code on 2026-10-11 (release commit abac592, tag v3.0.0) after a one-week soak in the owner's profile and the PS_Completers CI passed without a defect, per decision 6.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
 | 0 Promote the candidate | 2.0.0 | Shipped 2026-09-23, tag v2.0.0, from the rc1 code |
 | 1 Faster imports and recovery | 2.1.0-preview1, then 2.1.0 | Shipped 2026-10-02, tag v2.1.0, from the preview1 code; preview shipped 2026-09-29, PR #7 (merge ad267e1) |
 | 2 Authoring and distribution | 2.2.0-preview1, then 2.2.0 | Shipped 2026-10-04, tag v2.2.0, from the preview1 code; preview shipped 2026-10-03, PR #8 (merge 30e39b8); PS_Completers 1.0.0 on PSGallery 2026-10-04 |
-| 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Candidate shipped 2026-10-04, tag v3.0.0-rc1, PR #9 (merge 242c177); stable after the soak |
+| 3 Compiled core and the engine boundary | 3.0.0-rc1, then 3.0.0 | Shipped 2026-10-11, tag v3.0.0, from the rc1 code; candidate shipped 2026-10-04, tag v3.0.0-rc1, PR #9 (merge 242c177) |
 
 Three milestones from the 2.0.0 baseline to the next major release. The first two ship on the 2.x line and carry the recommendations that came out of the 2.0 retrospective. The breaking surface is deliberately small: it removes what 2.0 promised to remove, raises the engine floor to what CI has always tested, and moves the engine boundary into typed code.
 
@@ -79,6 +79,8 @@ Get-Command Get-ArgumentCompleter -ErrorAction Ignore                           
 ## Milestone 3: Compiled core and the engine boundary (3.0.0-rc1 then 3.0.0, breaking)
 
 The breaking surface is short and every item was promised or implied by 2.0. Ships as a release candidate first, per the rule carried over from the 2.0 roadmap.
+
+**Stable shipped 2026-10-11 as v3.0.0** (release commit abac592, same code as the candidate; promoted after a one-week soak in the owner's profile and three green PS_Completers conformance runs on 2026-10-08, the last on its 1.1.3 release, with no defect reported). PSGallery lists 3.0.0 as the stable version and the GitHub release carries the Latest marker. The roadmap is complete.
 
 **Candidate shipped 2026-10-04 as v3.0.0-rc1** (PR #9 merged as 242c177; spec and plan accepted the same morning, all ten questions as recommended; implemented by one 62-agent workflow with three adversarial reviews per package). 644 Pester tests, eight CI legs green, 11 functions and 0 aliases exported, `CompleterActions.Core.dll` compiled in CI and never tracked. Benchmark, third edition (docs/roadmap-3.0/validation/milestone-3-benchmark.md): the unhashed import at 0.99 of 2.2.0 (bound 1.05), the hashed import at 0.97, the `Test-CompleterScript` loop over the 173 scripts at 0.099 of 2.2.0 (bound 0.30), and the compiled grammar walk at about 0.1 ms per script against 25.9 ms on 2.2.0. Grammar parity proven over 207 scripts against the 2.2.0 build. Seven plan departures are recorded in the plan. Soaking in the owner's profile and the PS_Completers CI; stable 3.0.0 follows per decision 6.
 - **Compiled core** (breaking). A small C# assembly holds the record types, the enums, the engine access, and the AST conformance walk; the lazy stub stays a PowerShell script block, because its only job is to run `Import-CompleterScript` (2026-10-04, milestone 3 spec question 4). `CompleterRegistration` and friends become public .NET types under the `CompleterActions` namespace, so `-is [CompleterActions.CompleterRegistration]` works in any scope and the dotted PSTypeName stops being a workaround. The conformance walk drops from about 20 ms per script (25.9 ms measured on 2.2.0) to well under 1 ms (about 0.1 ms measured), which reopens decision 5 of the 2.0 roadmap: the grammar can run at import again without touching the ratio (decision 8).
