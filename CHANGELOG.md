@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-11
+
+The stable 3.0.0 release. Same code as 3.0.0-rc1, promoted after the
+candidate soaked for a week in a profile and in the PS_Completers conformance
+CI without a defect, per roadmap decision 6. The 3.0.0-rc1 section below is
+the full record of the milestone: the compiled C# core with public record
+types, the version-gated engine boundary, the PowerShell 7.4 minimum, the
+removal of the 1.x aliases, legacy wrappers, and `-ManagedOnly`/`-DiscoveredOnly`,
+and the rewritten migration guide.
+
 ## [3.0.0-rc1] - 2026-10-04
 
 ### Removed
@@ -767,7 +777,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.0.0-rc1...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/tstager/CompleterActions/compare/v2.2.0...v3.0.0
 [3.0.0-rc1]: https://github.com/tstager/CompleterActions/compare/v2.2.0...v3.0.0-rc1
 [2.2.0]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0
 [2.2.0-preview1]: https://github.com/tstager/CompleterActions/compare/v2.1.0...v2.2.0-preview1
