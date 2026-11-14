@@ -1750,7 +1750,15 @@ Describe 'Removed surface' {
 }
 
 Describe 'Startup benchmark tool' {
-    It 'writes child scripts that parse back to paths holding every single-quote character the tokenizer accepts' {
+    # Code points keep this file ASCII. Each typographic quote alone, and all five together, must
+    # come back unchanged from the child script's literals.
+    It 'writes child scripts that parse back to paths holding <Name>' -ForEach @(
+        @{ Name = 'U+2018'; Codes = @(0x2018) }
+        @{ Name = 'U+2019'; Codes = @(0x2019) }
+        @{ Name = 'U+201A'; Codes = @(0x201A) }
+        @{ Name = 'U+201B'; Codes = @(0x201B) }
+        @{ Name = 'every single-quote character the tokenizer accepts'; Codes = @(0x0027, 0x2018, 0x2019, 0x201A, 0x201B) }
+    ) {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $toolPath = Join-Path -Path $repoRoot -ChildPath 'tools' -AdditionalChildPath 'Measure-CompleterStartup.ps1'
 
@@ -1766,8 +1774,7 @@ Describe 'Startup benchmark tool' {
             . ([scriptblock]::Create($helper.Extent.Text))
         }
 
-        # U+0027, U+2018, U+2019, U+201A, and U+201B, written as code points so this file stays ASCII.
-        $quotes = -join @([char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B)
+        $quotes = -join @($Codes | ForEach-Object { [char] $_ })
         $modulePath = Join-Path -Path $TestDrive -ChildPath "module $quotes" -AdditionalChildPath 'CompleterActions.psd1'
         $setPath = Join-Path -Path $TestDrive -ChildPath "set $quotes" -AdditionalChildPath 'startup.psd1'
 

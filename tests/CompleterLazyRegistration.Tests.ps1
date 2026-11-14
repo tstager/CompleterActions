@@ -609,8 +609,9 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
 
     Context 'Typographic apostrophes in lazy stubs' {
         BeforeAll {
-            # The single-quote characters the tokenizer accepts, written as code points so this file stays ASCII.
-            $script:LazyQuoteNames = @(0x0027, 0x2018, 0x2019, 0x201A, 0x201B | ForEach-Object { 'lazy{0}quote' -f [char] $_ })
+            # Each name pairs the ASCII apostrophe with one typographic single-quote character the
+            # tokenizer accepts, written as code points so this file stays ASCII.
+            $script:LazyQuoteNames = @(0x2018, 0x2019, 0x201A, 0x201B | ForEach-Object { "lazy'{0}quote" -f [char] $_ })
         }
 
         AfterEach {
@@ -620,16 +621,15 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
             }
         }
 
-        It 'registers a target named with U+<Code> lazily and activates it on the first completion' -ForEach @(
-            @{ Code = '0027' }
+        It 'registers a target named with U+0027 and U+<Code> lazily and activates it on the first completion' -ForEach @(
             @{ Code = '2018' }
             @{ Code = '2019' }
             @{ Code = '201A' }
             @{ Code = '201B' }
         ) {
             $quote = [string] [char] [Convert]::ToInt32($Code, 16)
-            $targetName = 'lazy{0}quote' -f $quote
-            $quotedTarget = $targetName.Replace($quote, $quote + $quote)
+            $targetName = "lazy'{0}quote" -f $quote
+            $quotedTarget = $targetName.Replace("'", "''").Replace($quote, $quote + $quote)
             $scriptPath = Join-Path -Path $TestDrive -ChildPath "LazyQuote$Code.ps1"
             Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
 Register-ArgumentCompleter -Native -CommandName '$quotedTarget' -ScriptBlock {

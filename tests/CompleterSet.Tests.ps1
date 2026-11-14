@@ -2167,6 +2167,10 @@ Describe 'Completer sets' {
 
             Export-CompleterSet -Path $script:SetPath
 
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written Path must be doubled'
+
             $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
             $data.Entries[0].Path | Should -BeExactly "$folderName/Native.ps1"
             Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
@@ -2205,6 +2209,10 @@ Register-ArgumentCompleter -CommandName 'Test-SetQuoteTool' -ParameterName '$($s
 "@
 
             Import-CompleterScript -LiteralPath $scriptPath | Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written names must be doubled'
 
             $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
             @($data.Entries[0].Targets.CommandName) | Should -BeExactly @($script:QuoteNativeName, 'Test-SetQuoteTool')
