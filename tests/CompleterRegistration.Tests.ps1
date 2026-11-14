@@ -886,3 +886,30 @@ namespace CompleterActionsTests
         $hits | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Build script' {
+    It 'writes a RequiredAssemblies line that reads back entries holding every single-quote character the tokenizer accepts' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $buildScriptPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'
+
+        # The build script dot-sources the module's quoting helper; load it the same way, then
+        # evaluate the build's RequiredAssemblies line expression from its source.
+        . (Join-Path -Path $repoRoot -ChildPath 'src' -AdditionalChildPath 'Private', 'ConvertTo-CompleterSingleQuotedText.ps1')
+        $buildAst = [System.Management.Automation.Language.Parser]::ParseFile($buildScriptPath, [ref] $null, [ref] $null)
+        $lineAssignments = @($buildAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -eq 'requiredAssembliesLine' }, $true))
+        $lineAssignments.Count | Should -Be 1
+
+        # U+0027, U+2018, U+2019, U+201A, and U+201B, written as code points so this file stays ASCII.
+        $quotes = -join @([char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B)
+        $sourceManifestData = @{ RequiredAssemblies = @("lib/Core$quotes.dll", "lib/Author$([char] 0x2019)s.dll") }
+        $requiredAssembliesLine = & ([scriptblock]::Create($lineAssignments[0].Right.Extent.Text))
+
+        $parseErrors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($requiredAssembliesLine, [ref] $null, [ref] $parseErrors)
+        $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in an entry must be doubled'
+
+        $manifestPath = Join-Path -Path $TestDrive -ChildPath 'RequiredAssemblies.psd1'
+        Set-Content -LiteralPath $manifestPath -Encoding utf8 -Value '@{', $requiredAssembliesLine, '}'
+        @((Import-PowerShellDataFile -LiteralPath $manifestPath).RequiredAssemblies) | Should -BeExactly $sourceManifestData.RequiredAssemblies
+    }
+}

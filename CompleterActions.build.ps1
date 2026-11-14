@@ -29,6 +29,7 @@ else {
 $coreProjectPath = Join-Path -Path $sourceRoot -ChildPath 'Core/CompleterActions.Core.csproj'
 $coreAssemblyName = 'CompleterActions.Core.dll'
 $libPath = Join-Path -Path $PSScriptRoot -ChildPath 'lib'
+. (Join-Path -Path $sourceRoot -ChildPath 'Private/ConvertTo-CompleterSingleQuotedText.ps1')
 # Synopsis:
 
 task clean {
@@ -215,7 +216,7 @@ task build clean, compile, external_help, {
 
     # Update-ModuleManifest rewrites a RequiredAssemblies entry whose file exists with the platform's
     # path separator; restore the source manifest's portable entry so every platform builds the same text.
-    $requiredAssembliesLine = 'RequiredAssemblies = @({0})' -f (@($sourceManifestData.RequiredAssemblies | ForEach-Object { "'$_'" }) -join ', ')
+    $requiredAssembliesLine = 'RequiredAssemblies = @({0})' -f (@($sourceManifestData.RequiredAssemblies | ForEach-Object { "'$(ConvertTo-CompleterSingleQuotedText -Value $_)'" }) -join ', ')
     (Get-Content -Path $Data.Path) -replace '^RequiredAssemblies = .*$', $requiredAssembliesLine |
         Set-Content -Path $Data.Path -Encoding utf8
 }
