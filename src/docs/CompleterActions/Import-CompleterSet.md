@@ -44,7 +44,9 @@ Reads a completer set, a `.psd1` data file written by `Export-CompleterSet` or
 by hand, validates every entry up front, and then registers each valid entry's
 targets as managed registrations. The set is read with
 `Import-PowerShellDataFile`, which evaluates data only, and validation never
-executes a completer script.
+executes a completer script. A set file larger than 1 MB (1048576 bytes) is
+refused before it is read, as `Export-CompleterSet` refuses to write one, and
+nothing from it is registered; split a larger set into several.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because

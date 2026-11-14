@@ -37,6 +37,12 @@ both its targets and its hash. When a trusted script cannot be read, its entry
 is written without a Hash, a warning names the script, and the export still
 succeeds.
 
+A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of one
+target each, because Import-CompleterSet and Test-CompleterSet refuse a
+larger file before reading it. The command refuses, writing nothing, when the
+set it would write is larger; export the registrations as several sets
+instead.
+
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
 
@@ -277,6 +283,16 @@ function Export-CompleterSet
 
             $lines.Add('    )')
             $lines.Add('}')
+
+            # Import-CompleterSetDefinition refuses a file over this size, so a set
+            # that would be larger is refused here, before anything is written.
+            # Set-Content writes every line followed by a newline, in UTF-8.
+            $byteCount = [System.Text.Encoding]::UTF8.GetByteCount(($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+
+            if ($byteCount -gt $script:CompleterSetMaxFileBytes)
+            {
+                throw "The set would be $byteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
+            }
 
             if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
             {

@@ -9,6 +9,14 @@ completer script or anything else. The file must declare Version 1 and a
 non-empty Entries array; the entries themselves are validated one by one by
 Resolve-CompleterSetEntry.
 
+A set file larger than $script:CompleterSetMaxFileBytes (1 MB) is refused
+before it is read; for a symbolic link, the size of its final target is
+checked. Within that size the file is read with -SkipLimitCheck, because the
+reader's default limits of 500 keys and 5000 syntax nodes reject an exported
+set of a few hundred entries. The switch lifts only those limits: anything
+that is not data is still refused. Export-CompleterSet refuses to write a set
+over the same size, so every set it writes reads back.
+
 .PARAMETER LiteralPath
 The literal path to the completer set file.
 
@@ -37,7 +45,16 @@ function Import-CompleterSetDefinition
         throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
     }
 
-    $data = Import-PowerShellDataFile -LiteralPath $file.FullName -ErrorAction Stop
+    # Get-Item reports a Windows symbolic link's own size, 0, so measure the
+    # file the reader will actually open.
+    $fileLength = ($file.ResolveLinkTarget($true) ?? $file).Length
+
+    if ($fileLength -gt $script:CompleterSetMaxFileBytes)
+    {
+        throw "Completer set '$($file.FullName)' is $fileLength bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files. Split its entries across several sets."
+    }
+
+    $data = Import-PowerShellDataFile -LiteralPath $file.FullName -SkipLimitCheck -ErrorAction Stop
 
     if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
     {

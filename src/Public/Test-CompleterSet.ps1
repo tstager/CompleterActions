@@ -84,10 +84,11 @@ literally, and a name that does not resolve fails the call.
 Every -Path, -LiteralPath, or -Name value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
 are written before the next set is read. A set that cannot be read, such as
-one without Version = 1, stops the call with a terminating error after the
-findings of the earlier sets. A folder under a set's directory that cannot be
-read also stops the call with a terminating error, after that set's entry
-findings, because the scan for unlisted scripts would be incomplete.
+one without Version = 1 or one larger than the 1 MB (1048576-byte) limit that
+Import-CompleterSet also applies, stops the call with a terminating error
+after the findings of the earlier sets. A folder under a set's directory that
+cannot be read also stops the call with a terminating error, after that set's
+entry findings, because the scan for unlisted scripts would be incomplete.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
