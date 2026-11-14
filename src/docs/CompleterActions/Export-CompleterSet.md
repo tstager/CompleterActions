@@ -33,12 +33,14 @@ back and registers everything in it, so a profile that imports a completer
 repository becomes one `Import-CompleterSet` call.
 
 Records arrive through `-InputObject` or the pipeline, typically from
-`Get-Completer` or `Import-CompleterScript`. Only a call that neither pipes
-records nor passes `-InputObject` exports every managed registration that
-records a `ScriptPath`. A pipeline or `-InputObject` that delivers no records,
-such as a `Get-Completer` filter that matches nothing, selects nothing: the
+`Get-Completer` or `Import-CompleterScript`. When the command comes after a
+pipe or is given `-InputObject`, it exports only the records that arrive that
+way, even when none do: a `Get-Completer` filter that matches nothing, an empty
+array piped to the command, or `-InputObject @()` selects nothing, so the
 command warns that no registrations were selected, writes nothing, and leaves
-an existing file unchanged.
+an existing file unchanged. Only a call with no pipe before it and no
+`-InputObject`, such as the command on its own or as the first command of a
+pipeline, exports every managed registration that records a `ScriptPath`.
 
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file

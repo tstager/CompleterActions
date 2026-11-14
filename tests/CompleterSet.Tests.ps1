@@ -669,13 +669,88 @@ Describe 'Completer sets' {
         }
 
         It 'exports every managed registration when nothing is piped, also as the first command of a pipeline' {
+            $null = Import-CompleterScript -LiteralPath $script:ParameterFixturePath | Register-Completer
+
             $written = @(Export-CompleterSet -Path $script:SetPath -PassThru | Select-Object -ExpandProperty FullName)
 
             $written | Should -Be @($script:SetPath)
             $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
-            @($data.Entries).Count | Should -Be 1
-            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
-            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            $entriesByScript = @{}
+
+            foreach ($entry in $data.Entries)
+            {
+                $entriesByScript[[System.IO.Path]::GetFullPath($entry.Path, $script:SetRoot)] = $entry
+            }
+
+            @($entriesByScript.Keys | Sort-Object) | Should -Be @($script:NativeFixturePath, $script:ParameterFixturePath | Sort-Object)
+            @($entriesByScript[$script:NativeFixturePath].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            $entriesByScript[$script:ParameterFixturePath].Targets.CommandName | Should -Be 'Test-ImportedFixtureTool'
+        }
+
+        It 'prints no What if line under -WhatIf when no registrations are selected' {
+            # ShouldProcess writes its What if line to the host, so a child pwsh is
+            # the only place the test can read it. The second export is the control
+            # that shows the capture sees the line when there is something to write.
+            $childScriptPath = Join-Path -Path $script:SetRoot -ChildPath 'whatif-child.ps1'
+            Set-Content -LiteralPath $childScriptPath -Encoding utf8 -Value @'
+param($ModulePath, $FixturePath, $SetPath)
+
+$ErrorActionPreference = 'Stop'
+Import-Module -Name $ModulePath -Force
+$null = Import-CompleterScript -LiteralPath $FixturePath | Register-Completer
+Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $SetPath -WhatIf 3>$null
+'-- selected registrations --'
+Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $SetPath -WhatIf
+'@
+            $modulePath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'CompleterActions.psd1'))
+
+            $lines = @(& pwsh -NoProfile -NonInteractive -File $childScriptPath -ModulePath $modulePath -FixturePath $script:NativeFixturePath -SetPath $script:SetPath 2>&1 | ForEach-Object { [string] $_ })
+
+            $LASTEXITCODE | Should -Be 0 -Because ($lines -join [Environment]::NewLine)
+            $split = [System.Array]::IndexOf([string[]] $lines, '-- selected registrations --')
+            $split | Should -BeGreaterOrEqual 0
+            @($lines[0..$split] -match '^What if:') | Should -BeNullOrEmpty -Because 'an empty selection returns before ShouldProcess'
+            @($lines[$split..($lines.Count - 1)] -match '^What if:').Count | Should -Be 1 -Because 'a selection that would be written does print its What if line'
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'states the input-selection contract in the <Source> of Export-CompleterSet' -TestCases @(
+            @{ Source = 'comment-based help' }
+            @{ Source = 'markdown help' }
+            @{ Source = 'MAML help' }
+        ) {
+            param($Source)
+
+            $docRoot = [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'docs', 'CompleterActions')
+            $text = switch ($Source)
+            {
+                'comment-based help' { Get-Help -Name 'Export-CompleterSet' -Full | Out-String -Width 4096 }
+                'markdown help' { Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'Export-CompleterSet.md')) -Raw }
+                'MAML help'
+                {
+                    $maml = [xml] (Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'CompleterActions', 'CompleterActions-Help.xml')) -Raw)
+                    $command = $maml.helpItems.command | Where-Object { $_.details.verb -eq 'Export' -and $_.details.noun -eq 'CompleterSet' }
+                    @($command.description.para) -join ' '
+                }
+            }
+            $flatText = $text -replace '`', '' -replace '\s+', ' '
+
+            foreach ($expectedText in @(
+                    'When the command comes after a pipe or is given -InputObject, it exports only the records that arrive that way, even when none do'
+                    'an empty array piped to the command, or -InputObject @() selects nothing'
+                    'Only a call with no pipe before it and no -InputObject, such as the command on its own or as the first command of a pipeline, exports every managed registration that records a ScriptPath.'
+                ))
+            {
+                $flatText | Should -Match ([regex]::Escape($expectedText))
+            }
+        }
+
+        It 'states the input-selection contract in about_Completer_Sets' {
+            $topicPath = [System.IO.Path]::Combine($PSScriptRoot, '..', 'en-US', 'about_Completer_Sets.help.txt')
+            $flatText = (Get-Content -LiteralPath $topicPath -Raw) -replace '`', '' -replace '\s+', ' '
+
+            $flatText | Should -Match ([regex]::Escape('Export-CompleterSet after a pipe exports only the records the pipe delivers, so a pipeline that delivers none'))
+            $flatText | Should -Match ([regex]::Escape('which is what the command exports when it has no pipe before it and no -InputObject:'))
         }
     }
 

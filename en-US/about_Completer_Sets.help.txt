@@ -686,12 +686,13 @@ WORKFLOW
             Import-CompleterScript |
             Export-CompleterSet -Path ~\Completers\completers.psd1
 
-    A pipeline that delivers no records, such as a folder with no matching
-    scripts, selects nothing: `Export-CompleterSet` warns and leaves an
+    `Export-CompleterSet` after a pipe exports only the records the pipe
+    delivers, so a pipeline that delivers none, such as a folder with no
+    matching scripts, selects nothing: the command warns and leaves an
     existing set file unchanged.
 
     Or write it from the registrations a session already has, which is what
-    the command exports when nothing is piped to it:
+    the command exports when it has no pipe before it and no `-InputObject`:
 
         Export-CompleterSet -Path ~\Completers\completers.psd1
 
