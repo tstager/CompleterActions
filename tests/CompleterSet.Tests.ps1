@@ -2355,5 +2355,61 @@ Describe 'Completer sets' {
                 [System.IO.File]::Delete($pipePath)
             }
         }
+
+        It 'keeps the set file from being rewritten between the size check and the data reader on Windows' {
+            if (-not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'only Windows keeps other processes from writing a file that is open for reading'
+                return
+            }
+
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            Limit-TestCompleterSetFileSize -Bytes (Get-Item -LiteralPath $script:SetPath).Length
+            $script:GapSetPath = (Resolve-Path -LiteralPath $script:SetPath).ProviderPath
+
+            # The larger set adds an entry, so reading it would register importfixture as well.
+            $largeSetPath = Join-Path -Path $script:SetRoot -ChildPath 'large.txt'
+            Write-TestCompleterSet -Path $largeSetPath -Entry "@{ Path = '$script:ParameterFixturePath' }", "@{ Path = '$script:NativeFixturePath' }"
+            $script:GapLargeSet = [System.IO.File]::ReadAllBytes($largeSetPath)
+            $script:GapRewrites = [System.Collections.Generic.List[object]]::new()
+
+            # Rewrites the set at the moment the data reader is called, then reads it.
+            Mock -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -ParameterFilter { $LiteralPath -eq $script:GapSetPath } -MockWith {
+                try
+                {
+                    [System.IO.File]::WriteAllBytes($LiteralPath, $script:GapLargeSet)
+                    $script:GapRewrites.Add('rewritten')
+                }
+                catch
+                {
+                    $script:GapRewrites.Add($_.Exception.InnerException.HResult)
+                }
+
+                Microsoft.PowerShell.Utility\Import-PowerShellDataFile -LiteralPath $LiteralPath -SkipLimitCheck -ErrorAction Stop
+            }
+
+            @(Import-CompleterSet -LiteralPath $script:SetPath).Key | Should -Be @('test-importedfixturetool:name')
+            $findings = @(Test-CompleterSet -LiteralPath $script:SetPath)
+            $findings.Count | Should -Be 1 -Because 'the one-entry set that was measured is the one read'
+            $findings[0].Message | Should -BeLike 'Entry 1 (*): The entry has no Hash*'
+
+            # 0x80070020 is ERROR_SHARING_VIOLATION.
+            $script:GapRewrites | Should -Be @(0x80070020, 0x80070020) -Because 'the open measuring stream refuses both rewrites'
+            [System.IO.File]::WriteAllBytes($script:GapSetPath, $script:GapLargeSet)
+            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*is larger than the*' -Because 'the reader lets go of the file once it has read it'
+        }
+
+        It 'returns a script block in a set as a value and never runs it' {
+            $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
+            $probe = "{ New-Item -ItemType File -Path '$probePath' }"
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = $probe; Trusted = $probe; Targets = @( @{ CommandName = $probe; Native = $probe } ) }"
+
+            & (Get-Module -Name 'CompleterActions') { param($LiteralPath) (Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries[0]['Path'] } $script:SetPath | Should -BeOfType [scriptblock]
+            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*has 1 invalid entry and nothing was registered*'
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -Not -BeNullOrEmpty
+
+            Test-Path -LiteralPath $probePath | Should -BeFalse
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
     }
 }
