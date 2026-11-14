@@ -888,7 +888,7 @@ namespace CompleterActionsTests
 }
 
 Describe 'Markdown_templates build task' {
-    It 'compiles the core and generates a page for every exported command in a fresh process' {
+    It 'compiles the core and generates a page for every exported command, twice in one process that never loads the module' {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
 
         if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
@@ -899,6 +899,11 @@ Describe 'Markdown_templates build task' {
         if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
         {
             Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to generate the markdown help'
+        }
+
+        if ($null -eq (Get-Command -Name 'dotnet' -CommandType Application -ErrorAction SilentlyContinue))
+        {
+            Set-ItResult -Skipped -Because 'the dotnet SDK is not available to compile the core'
         }
 
         # The task overwrites every page under src/docs, so it runs in a staged copy under a folder
@@ -920,9 +925,29 @@ Describe 'Markdown_templates build task' {
         $stagedPagesRoot = Join-Path -Path $stagingRoot -ChildPath 'src/docs/CompleterActions'
         Get-ChildItem -LiteralPath $stagedPagesRoot -Filter '*.md' -File | Remove-Item -Force
 
+        # Both runs share one process. If the task loaded the core there, the second compile could not replace
+        # lib/, and a core that process already held would silently stand in for the one compile just built.
+        $pwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
-        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' Markdown_templates" 2>&1)
-        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+        $runOutput = @(& $pwshPath -NoProfile -NonInteractive -Command {
+                param($BuildScriptPath)
+
+                $ErrorActionPreference = 'Stop'
+                foreach ($run in 1, 2)
+                {
+                    Invoke-Build -File $BuildScriptPath -Task Markdown_templates | Out-Null
+                }
+
+                [pscustomobject]@{
+                    LoadedModules = @(Get-Module -Name 'CompleterActions').Count
+                    LoadedCores = @([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'CompleterActions.Core' }).Count
+                }
+            } -args $buildScriptPath *>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($runOutput -join [Environment]::NewLine)
+
+        $callerState = $runOutput | Where-Object { $null -ne $_.PSObject.Properties['LoadedCores'] }
+        $callerState.LoadedModules | Should -Be 0 -Because 'the task imports the source module in its own child pwsh'
+        $callerState.LoadedCores | Should -Be 0 -Because 'the task must not load the core into the process that runs it'
 
         $exportedFunctions = (Import-PowerShellDataFile -Path (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1')).FunctionsToExport
         $expectedPages = @(@($exportedFunctions) + 'CompleterActions' | ForEach-Object { "$_.md" } | Sort-Object)

@@ -330,7 +330,7 @@ Invoke-Build -Task ?
 
 `compile` builds the assembly and copies it to `lib\CompleterActions.Core.dll`, where the source manifest's `RequiredAssemblies` entry finds it, so `Import-Module .\CompleterActions.psd1` works only after it has run. When the tracked package `build\CompleterActions` exists, `compile` also copies the assembly to `build\CompleterActions\lib\CompleterActions.Core.dll`, so the packaged module imports before a full build. `build` runs `compile` first and places the assembly at `build\CompleterActions\lib\CompleterActions.Core.dll`. The assembly is not tracked in git; neither are `lib\`, `build\CompleterActions\lib\`, or the project's `bin\` and `obj\` folders. An assembly cannot be unloaded, so a rebuilt `CompleterActions.Core.dll` needs a new `pwsh` process, and a process that has the repository's module imported holds the file open and makes `clean` and `compile` fail on Windows.
 
-`Markdown_templates` also runs `compile` first, then imports the source manifest and regenerates every page under `src\docs\CompleterActions` with `New-MarkdownCommandHelp -Force`, which overwrites the hand-edited help that `external_help` compiles, so restore any page you did not mean to replace.
+`Markdown_templates` also runs `compile` first. It then imports the source manifest in a new `pwsh` process, so the calling process never loads the assembly and can run the task again, and regenerates every page under `src\docs\CompleterActions` with `New-MarkdownCommandHelp -Force`. That overwrites the hand-edited help that `external_help` compiles, so restore any page you did not mean to replace.
 
 ### Tests
 

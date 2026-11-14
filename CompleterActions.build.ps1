@@ -230,16 +230,20 @@ task Markdown_templates compile, {
         New-Item -Path $templatePath -ItemType Directory -Force | Out-Null
     }
 
-    # Import Microsoft.PowerShell.Platyps module (new version)
-    if (-not (Get-Module -Name Microsoft.PowerShell.Platyps -ErrorAction SilentlyContinue)) {
-        Import-Module -Name Microsoft.PowerShell.Platyps -Force
+    # An assembly cannot be unloaded, so the source manifest is imported in a new pwsh: its RequiredAssemblies
+    # entry then loads the core compile just built rather than one this process already holds, and lib/ stays
+    # unlocked here for the next compile.
+    $pwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+    exec {
+        & $pwshPath -NoProfile -NonInteractive -Command {
+            param($ManifestPath, $OutputFolder)
+
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name Microsoft.PowerShell.PlatyPS
+            $moduleInfo = Import-Module -Name $ManifestPath -PassThru
+            New-MarkdownCommandHelp -ModuleInfo $moduleInfo -OutputFolder $OutputFolder -WithModulePage -Force
+        } -args $sourceManifestPath, $templatePath
     }
-
-    # The source manifest's RequiredAssemblies entry loads the compiled core the root psm1 depends on.
-    $moduleInfo = Import-Module -Name $sourceManifestPath -Force -PassThru
-
-    # Create markdown templates for all commands in the module using the new PlatyPS 1.0 API
-    New-MarkdownCommandHelp -ModuleInfo $moduleInfo -OutputFolder $templatePath -WithModulePage -Force
 }
 
 # Synopsis: Updates external help documentation
