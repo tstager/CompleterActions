@@ -2141,4 +2141,92 @@ Describe 'Completer sets' {
             $parses | Should -BeExactly @($script:ParameterFixturePath, $script:NativeFixturePath, $script:UnsafeSetScriptPath) -Because 'the grammar and the target derivation share one parse per entry'
         }
     }
+
+    Context 'Typographic apostrophes in set data' {
+        BeforeAll {
+            # U+2019, a single-quote delimiter to the tokenizer, written as a code point so this file stays ASCII.
+            $script:Apostrophe = [string] [char] 0x2019
+            $script:QuoteNativeName = 'set{0}quote' -f $script:Apostrophe
+            $script:QuoteParameterName = 'Na{0}me' -f $script:Apostrophe
+        }
+
+        AfterEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName $script:QuoteNativeName -CompleterType 'Native'
+            Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-SetQuoteTool' -ParameterName $script:QuoteParameterName -CompleterType 'Parameter'
+        }
+
+        It 'roundtrips a script in a folder named with U+2019 through Register-Completer, Export-CompleterSet and Import-CompleterSet' {
+            $folderName = 'author{0}s scripts' -f $script:Apostrophe
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath $folderName
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+
+            $registered = @(Import-CompleterScript -LiteralPath $scriptPath | Register-Completer -PassThru)
+            @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+
+            Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written Path must be doubled'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $data.Entries[0].Path | Should -BeExactly "$folderName/Native.ps1"
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
+
+            Get-Completer -State Active, Pending, Failed, Stale | Unregister-Completer -Confirm:$false
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($reimported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+            @($reimported.ScriptPath | Select-Object -Unique) | Should -Be @($scriptPath)
+
+            $completion = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+        }
+
+        It 'writes command and parameter names with U+2019 that Import-CompleterSet reads back and activates' {
+            $doubled = $script:Apostrophe + $script:Apostrophe
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath 'QuoteTargets.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
+Register-ArgumentCompleter -Native -CommandName '$($script:QuoteNativeName.Replace($script:Apostrophe, $doubled))' -ScriptBlock {
+    param(`$wordToComplete, `$commandAst, `$cursorPosition)
+
+    `$null = `$wordToComplete, `$commandAst, `$cursorPosition
+
+    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+}
+
+Register-ArgumentCompleter -CommandName 'Test-SetQuoteTool' -ParameterName '$($script:QuoteParameterName.Replace($script:Apostrophe, $doubled))' -ScriptBlock {
+    param(`$commandName, `$parameterName, `$wordToComplete, `$commandAst, `$fakeBoundParameters)
+
+    `$null = `$commandName, `$parameterName, `$wordToComplete, `$commandAst, `$fakeBoundParameters
+
+    [System.Management.Automation.CompletionResult]::new('beta', 'beta', 'ParameterValue', 'beta')
+}
+"@
+
+            Import-CompleterScript -LiteralPath $scriptPath | Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written names must be doubled'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @($script:QuoteNativeName, 'Test-SetQuoteTool')
+            @($data.Entries[0].Targets.ParameterName | Where-Object { $_ }) | Should -BeExactly @($script:QuoteParameterName)
+
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($reimported.Key) | Should -BeExactly @($script:QuoteNativeName, "test-setquotetool:$($script:QuoteParameterName.ToLowerInvariant())")
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+
+            $inputScript = "& '$($script:QuoteNativeName.Replace($script:Apostrophe, $doubled))' a"
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName $script:QuoteNativeName -Native).State | Should -Be 'Active'
+        }
+    }
 }
