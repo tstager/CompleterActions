@@ -1750,6 +1750,35 @@ Describe 'Removed surface' {
 }
 
 Describe 'Packaged command help' {
+    BeforeAll {
+        function New-TestBuildStage
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only copies the build inputs into TestDrive.')]
+            [CmdletBinding()]
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name
+            )
+
+            # The build derives the module name from its folder, so the inputs are staged under a folder with that name.
+            $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+            $stagingRoot = Join-Path -Path $TestDrive -ChildPath "$Name/CompleterActions"
+            New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+            foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
+            {
+                Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+            }
+
+            foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+            {
+                Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+
+            $stagingRoot
+        }
+    }
+
     It 'points every packaged command at the generated MAML and renders it' {
         $commands = @(
             Invoke-TestBuildHelp -Script {
@@ -1882,21 +1911,7 @@ Describe 'Packaged command help' {
             Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
         }
 
-        # The build derives the module name from its folder, so the inputs are staged under a folder with that name.
-        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
-        $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'CompleterActions'
-        New-Item -Path $stagingRoot -ItemType Directory | Out-Null
-
-        foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
-        {
-            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
-        }
-
-        foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
-        {
-            Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
-        }
-
+        $stagingRoot = New-TestBuildStage -Name 'layouts'
         $publicRoot = Join-Path -Path $stagingRoot -ChildPath 'src/Public'
         $helpLineLikeDeclaration = 'function names in this description are informational only.'
 
@@ -1942,6 +1957,11 @@ Describe 'Packaged command help' {
         $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterSet.ps1'
         Set-Content -LiteralPath $path -Value @(@('<#', '.SYNOPSIS', $helperSynopsis, '#>', 'function Get-BuildProbeHelper { 1 }', '') + @(Get-Content -LiteralPath $path))
 
+        # A comment a blank line above the help, which is outside the block PowerShell reads the help from.
+        $regionLine = '#region BuildProbeRegion'
+        $path = Join-Path -Path $publicRoot -ChildPath 'Register-Completer.ps1'
+        Set-Content -LiteralPath $path -Value @(@($regionLine, '') + @(Get-Content -LiteralPath $path))
+
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
@@ -1957,6 +1977,7 @@ Describe 'Packaged command help' {
         $packagedText | Should -Match "(?m)^$([regex]::Escape($requiresLine))\r?$"
         $packagedAst.ScriptRequirements.RequiredPSVersion | Should -Be ([version] '7.4') -Because 'the #requires line must stay a requirement of the packaged module'
         $packagedText | Should -Match "(?m)^$([regex]::Escape($statementLine))\r?$"
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($regionLine))\r?$"
 
         $functions = @($packagedAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
         $publicNames = @(Get-ChildItem -LiteralPath $publicRoot -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
@@ -1979,7 +2000,7 @@ Describe 'Packaged command help' {
             )
 
             $leadingComments[0] -replace '\r', '' | Should -BeExactly "<#`n.EXTERNALHELP CompleterActions-help.xml`n#>"
-            @($leadingComments | Select-Object -Skip 1 | Where-Object { $_ -notin $requiresLine, $trailingComment }) | Should -BeNullOrEmpty -Because "only the directive may lead into the packaged $($function.Name)"
+            @($leadingComments | Select-Object -Skip 1 | Where-Object { $_ -notin $requiresLine, $trailingComment, $regionLine }) | Should -BeNullOrEmpty -Because "only the directive may lead into the packaged $($function.Name)"
 
             $help = $function.GetHelpContent()
             $help.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml'
@@ -2016,5 +2037,30 @@ Describe 'Packaged command help' {
         @($imported.Exported) | Should -Be @($publicNames | Sort-Object) -Because 'the package must export every public command and no helper'
         @($imported.Maml) | Should -Be @('CompleterActions-help.xml')
         $imported.Marker | Should -BeExactly 'kept' -Because 'the statement above the help of Import-CompleterScript must run when the package is imported'
+    }
+
+    It 'fails the build when a public command is defined more than once' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # Only the command's own definition carries the directive, so a second definition in its file, or one in a
+        # private file that loads after it, would ship the command without the MAML.
+        $stagingRoot = New-TestBuildStage -Name 'duplicates'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Public/Get-Completer.ps1') -Value '', "function Get-Completer { 'second' }"
+        Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Get-BuildProbeShadow.ps1') -Value "function Reset-Completer { 'private' }"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Get-Completer\.ps1:\d+"
+        $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Get-BuildProbeShadow\.ps1:1\b"
     }
 }

@@ -88,6 +88,7 @@ task build clean, compile, external_help, {
     $formatFiles = @($sourceManifestData.FormatsToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $typeFiles = @($sourceManifestData.TypesToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $usingStatements = [System.Collections.Generic.List[string]]::new()
+    $definitions = @{}
     $sourceDotSourcingPattern = '^\s*\.\s+[''\"]?(?:\.\\|\.\/)?src[\\/].+\.ps1[''\"]?\s*$'
 
 
@@ -115,6 +116,11 @@ task build clean, compile, external_help, {
 
         # The parser finds the functions, so a help line that starts with the word 'function' is not taken for one.
         $functionAsts = @($fileAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+
+        foreach ($definition in $fileAst.FindAll({ param($ast) $ast -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
+            $definitions[$definition.Name] += @("$($file.FullName):$($definition.Extent.StartLineNumber)")
+        }
+
         $firstFunctionLine = if ($functionAsts.Count -eq 0) { [int]::MaxValue } else { $functionAsts[0].Extent.StartLineNumber }
         $commandLine = 0
         $helpLine = 0
@@ -137,14 +143,26 @@ task build clean, compile, external_help, {
 
             # PowerShell reads help from the comment block directly before the function, never from between the name
             # and the opening brace, and that block outranks help in the body. The help that leads into the command is
-            # therefore replaced with the directive, so Get-Help selects the MAML built from the markdown. The help
-            # starts at the earliest comment of the run before the declaration that begins its own line; a comment
-            # after code on its line, a #requires line and everything before them stay in the package.
+            # therefore replaced with the directive, so Get-Help selects the MAML built from the markdown. The block is
+            # the one PowerShell reads: comments ending at most one blank line above the declaration, with no blank
+            # line between them. The help starts at its earliest comment that begins its own line; a comment after
+            # code on its line, a #requires line and everything before them stay in the package.
             $helpStart = $commandAst.Extent
+            $minEndLine = $commandAst.Extent.StartLineNumber - 2
 
-            for ($index = $commandIndex - 1; $index -ge 0 -and $tokens[$index].Kind -in 'Comment', 'NewLine' -and $tokens[$index].Text -notmatch '^#requires\b'; $index--) {
-                if ($tokens[$index].Kind -eq 'Comment' -and ($index -eq 0 -or $tokens[$index - 1].Kind -eq 'NewLine')) {
-                    $helpStart = $tokens[$index].Extent
+            for ($index = $commandIndex - 1; $index -ge 0; $index--) {
+                $token = $tokens[$index]
+
+                if ($token.Extent.EndLineNumber -lt $minEndLine -or $token.Kind -notin 'Comment', 'NewLine' -or $token.Text -match '^#requires\b') {
+                    break
+                }
+
+                if ($token.Kind -eq 'Comment') {
+                    $minEndLine = $token.Extent.StartLineNumber - 1
+
+                    if ($index -eq 0 -or $tokens[$index - 1].Kind -eq 'NewLine') {
+                        $helpStart = $token.Extent
+                    }
                 }
             }
 
@@ -196,6 +214,14 @@ task build clean, compile, external_help, {
 
         $fileBody | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
 
+    }
+
+    # Only the command's own definition carries the directive, so another definition of its name, which would replace
+    # it or define it a second time, would ship the command without the MAML.
+    $duplicates = @($public.BaseName | Where-Object { $definitions[$_].Count -gt 1 } | ForEach-Object { "'$_' at $($definitions[$_] -join ', ')" })
+
+    if ($duplicates.Count -gt 0) {
+        throw "build: a public command must be defined once, in its own file, so the definition that is exported reads its help from the MAML: $($duplicates -join '; ')."
     }
 
     Get-Content -Path (Join-Path -Path $sourceRoot -ChildPath 'Bootstrap.ps1') |
