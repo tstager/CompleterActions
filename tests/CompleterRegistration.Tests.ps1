@@ -886,3 +886,47 @@ namespace CompleterActionsTests
         $hits | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Markdown_templates build task' {
+    It 'compiles the core and generates a page for every exported command in a fresh process' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to run the build task'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to generate the markdown help'
+        }
+
+        # The task overwrites every page under src/docs, so it runs in a staged copy under a folder
+        # with the module name. The copy has no lib/ or compiler output, so the task must compile the core itself.
+        $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'markdown/CompleterActions'
+        New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+        foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.psm1', 'CompleterActions.Format.ps1xml', 'src')
+        {
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+        }
+
+        foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+        {
+            Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # Remove the tracked pages so the assertion below sees only what the task generated.
+        $stagedPagesRoot = Join-Path -Path $stagingRoot -ChildPath 'src/docs/CompleterActions'
+        Get-ChildItem -LiteralPath $stagedPagesRoot -Filter '*.md' -File | Remove-Item -Force
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' Markdown_templates" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+
+        $exportedFunctions = (Import-PowerShellDataFile -Path (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1')).FunctionsToExport
+        $expectedPages = @(@($exportedFunctions) + 'CompleterActions' | ForEach-Object { "$_.md" } | Sort-Object)
+
+        @(Get-ChildItem -LiteralPath $stagedPagesRoot -Filter '*.md' -File | Select-Object -ExpandProperty Name | Sort-Object) | Should -Be $expectedPages
+    }
+}

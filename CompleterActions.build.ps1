@@ -220,7 +220,8 @@ task build clean, compile, external_help, {
         Set-Content -Path $Data.Path -Encoding utf8
 }
 
-task Markdown_templates {
+# Synopsis: Regenerates every markdown help page under src/docs from the source module, overwriting hand edits
+task Markdown_templates compile, {
 
     $templatePath = Join-Path -Path $sourceRoot -ChildPath 'docs'
 
@@ -234,14 +235,10 @@ task Markdown_templates {
         Import-Module -Name Microsoft.PowerShell.Platyps -Force
     }
 
-    # Import the module if not already loaded
-    if (-not (Get-Module -Name $modulename -ErrorAction SilentlyContinue)) {
-        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psm1") -Force
-    }
+    # The source manifest's RequiredAssemblies entry loads the compiled core the root psm1 depends on.
+    $moduleInfo = Import-Module -Name $sourceManifestPath -Force -PassThru
 
     # Create markdown templates for all commands in the module using the new PlatyPS 1.0 API
-
-    $moduleInfo = Get-Module -Name $modulename
     New-MarkdownCommandHelp -ModuleInfo $moduleInfo -OutputFolder $templatePath -WithModulePage -Force
 }
 
