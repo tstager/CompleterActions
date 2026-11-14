@@ -35,15 +35,16 @@ LONG DESCRIPTION
     script or anything else when it is read.
 
     A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of
-    one target each. `Import-CompleterSet` and `Test-CompleterSet` refuse a
-    larger file before reading it, measuring the final target of a symbolic
-    link, and read a file within the limit in full. That size takes the
-    place of the 500-key and 5000-node limits `Import-PowerShellDataFile`
-    applies by default, which a set of a few hundred entries already
-    exceeds, and still bounds the time and memory a file can cost to read;
-    lifting those limits does not admit expressions. `Export-CompleterSet`
-    refuses to write a set over the same size, writing nothing, so every set
-    it writes reads back. Split a larger repository into several sets, for
+    one target each depending on the length of their paths.
+    `Import-CompleterSet` and `Test-CompleterSet` measure a file by reading
+    it, never more than one byte past the limit, so a symbolic link or a
+    procfs file whose reported size is 0 is measured too, and refuse a
+    larger file before reading it as data. That size takes the place of the
+    500-key and 5000-node limits `Import-PowerShellDataFile` applies by
+    default, which a set of a few hundred entries already exceeds; lifting
+    those limits does not admit expressions. `Export-CompleterSet` refuses
+    to write a set over the same size, writing nothing, so every set it
+    writes reads back. Split a larger repository into several sets, for
     example one per folder, and import them together:
 
         Import-CompleterSet -Path ~\Completers\tools\completers.psd1, ~\Completers\work\completers.psd1

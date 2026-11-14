@@ -2142,7 +2142,7 @@ Describe 'Completer sets' {
         }
     }
 
-    Context 'Large completer sets' {
+    Context 'Reading completer set files' {
         BeforeAll {
             $script:LargeSetScriptCount = 450
             $script:LargeSetTargetNames = @(
@@ -2164,7 +2164,13 @@ Describe 'Completer sets' {
             }
         }
 
+        BeforeEach {
+            $script:DefaultSetMaxFileBytes = & (Get-Module -Name 'CompleterActions') { $script:CompleterSetMaxFileBytes }
+        }
+
         AfterEach {
+            Limit-TestCompleterSetFileSize -Bytes $script:DefaultSetMaxFileBytes
+
             foreach ($targetName in $script:LargeSetTargetNames)
             {
                 Invoke-TestRuntimeCompleterCleanup -CommandName $targetName -CompleterType Native
@@ -2197,18 +2203,21 @@ Describe 'Completer sets' {
             Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
         }
 
-        It 'refuses a large set that is not data without evaluating it' {
+        It 'reads a large set as data and refuses the same set with an expression, without evaluating it' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
-            # Past the default node limit, so only the data-only check can refuse it.
             $entries = @(
                 foreach ($index in 1..1000)
                 {
                     "@{ Path = 'calargeset$($index)_completer.ps1'; Targets = @( @{ CommandName = 'calargeset$index'; Native = `$true } ) }"
                 }
-
-                "(New-Item -ItemType File -Path '$probePath')"
             )
             Write-TestCompleterSet -Path $script:SetPath -Entry $entries
+
+            $entryCount = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) @((Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries).Count } $script:SetPath
+            $entryCount | Should -Be 1000 -Because 'a set this large reads, so only the data-only check can refuse the same set with an expression'
+
+            # The expression sits past the default node limit.
+            Write-TestCompleterSet -Path $script:SetPath -Entry ($entries + "(New-Item -ItemType File -Path '$probePath')")
 
             { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*'
             { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*'
@@ -2233,7 +2242,7 @@ Describe 'Completer sets' {
             $thrown.Exception.Message | Should -BeExactly "Failed to export completer set. The set would be $setBytes bytes, larger than the $($setBytes - 1)-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
             Get-Content -LiteralPath $overLimitPath | Should -BeExactly 'placeholder'
 
-            $readProblem = "Completer set '$resolvedSetPath' is $setBytes bytes, larger than the $($setBytes - 1)-byte limit for completer set files. Split its entries across several sets."
+            $readProblem = "Completer set '$resolvedSetPath' is larger than the $($setBytes - 1)-byte limit for completer set files. Split its entries across several sets."
             $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
             $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
             $thrown = { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
@@ -2249,7 +2258,7 @@ Describe 'Completer sets' {
             @(Import-CompleterSet -LiteralPath $atLimitPath).Key | Should -Be @('importfixture', 'importfixture.exe')
         }
 
-        It 'measures the target of a symbolic link to a set file' {
+        It 'limits what it reads through a symbolic link to a set file' {
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
             $setBytes = (Get-Item -LiteralPath $script:SetPath).Length
             $linkPath = Join-Path -Path $script:SetRoot -ChildPath 'linked.psd1'
@@ -2266,8 +2275,38 @@ Describe 'Completer sets' {
 
             Limit-TestCompleterSetFileSize -Bytes ($setBytes - 1)
 
-            { Import-CompleterSet -LiteralPath $linkPath } | Should -Throw "*is $setBytes bytes, larger than the $($setBytes - 1)-byte limit*"
+            { Import-CompleterSet -LiteralPath $linkPath } | Should -Throw "*is larger than the $($setBytes - 1)-byte limit*"
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'limits the bytes it reads, not the size the file system reports' {
+            $procfsPath = '/proc/self/status'
+
+            if (-not (Test-Path -LiteralPath $procfsPath) -or (Get-Item -LiteralPath $procfsPath).Length -ne 0)
+            {
+                Set-ItResult -Skipped -Because 'this platform has no procfs file whose reported size is 0'
+                return
+            }
+
+            $linkPath = Join-Path -Path $script:SetRoot -ChildPath 'procfs.psd1'
+            New-Item -ItemType SymbolicLink -Path $linkPath -Target $procfsPath | Out-Null
+
+            try
+            {
+                Limit-TestCompleterSetFileSize -Bytes 64
+                $readProblem = "Completer set '$((Resolve-Path -LiteralPath $linkPath).ProviderPath)' is larger than the 64-byte limit for completer set files. Split its entries across several sets."
+
+                $thrown = { Import-CompleterSet -LiteralPath $linkPath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+                $thrown = { Test-CompleterSet -LiteralPath $linkPath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+            }
+            finally
+            {
+                # TestDrive cleanup's Remove-Item -Force would try to clear the
+                # read-only attribute of the procfs file and fail.
+                [System.IO.File]::Delete($linkPath)
+            }
         }
     }
 }

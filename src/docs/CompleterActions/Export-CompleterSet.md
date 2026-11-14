@@ -62,10 +62,10 @@ entry is written without a `Hash`, a warning names the script, and the export
 still succeeds.
 
 A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of one
-target each, because `Import-CompleterSet` and `Test-CompleterSet` refuse a
-larger file before reading it. The command refuses, writing nothing, when the
-set it would write is larger; export the registrations as several sets
-instead.
+target each depending on the length of their paths, because
+`Import-CompleterSet` and `Test-CompleterSet` refuse a larger file. The command
+refuses, writing nothing, when the set it would write is larger; export the
+registrations as several sets instead.
 
 ## EXAMPLES
 

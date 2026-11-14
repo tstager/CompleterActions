@@ -46,10 +46,10 @@ entry is written without a `Hash`, a warning names the script, and the export
 still succeeds.
 
 A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of one
-target each, because `Import-CompleterSet` and `Test-CompleterSet` refuse a
-larger file before reading it. The command refuses, writing nothing, when the
-set it would write is larger; export the registrations as several sets
-instead.</maml:para>
+target each depending on the length of their paths, because
+`Import-CompleterSet` and `Test-CompleterSet` refuse a larger file. The command
+refuses, writing nothing, when the set it would write is larger; export the
+registrations as several sets instead.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -911,9 +911,10 @@ grammar, then registers it. The imported records carry `Trusted` set to
 by hand, validates every entry up front, and then registers each valid entry's
 targets as managed registrations. The set is read with
 `Import-PowerShellDataFile`, which evaluates data only, and validation never
-executes a completer script. A set file larger than 1 MB (1048576 bytes) is
-refused before it is read, as `Export-CompleterSet` refuses to write one, and
-nothing from it is registered; split a larger set into several.
+executes a completer script. A set file that holds more than 1 MB (1048576
+bytes) is refused before it is read as data, as `Export-CompleterSet` refuses
+to write one, and nothing from it is registered; split a larger set into
+several.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because
