@@ -34,7 +34,7 @@
 ## Build, test, and lint
 
 - Build from the repo root with `Invoke-Build -Task .` or `Invoke-Build -Task build`; clean with `Invoke-Build -Task clean`.
-- The build packages the module into `build\CompleterActions`, copies the format file, generates the MAML from `src\docs\CompleterActions\*.md`, and copies it and the `en-US\about_*.help.txt` topics into `build\CompleterActions\en-US`.
+- The build packages the module into `build\CompleterActions`, copies the format file, generates the MAML from `src\docs\CompleterActions\*.md`, and copies it and the `en-US\about_*.help.txt` topics into `build\CompleterActions\en-US`. In the packaged `.psm1` each public function's comment help is replaced by an `.EXTERNALHELP` directive, so installed `Get-Help` shows the markdown help while the source module shows the comment help: keep the two in step. A related link to another command's markdown page keeps its text but loses its URI in the MAML, because `Get-Help` stops on a relative first link.
 - Tests run with `Invoke-Pester` in their own `pwsh -NoProfile` process with nothing else loaded: importing PSScriptAnalyzer or running Invoke-Build in the same session registers completers that break the paging tests. Use `pwsh -NoProfile -Command "Invoke-Pester -Path ./tests -CI"` for the whole suite; it writes an untracked `testResults.xml` at the repo root that is not committed.
 - Lint separately with `Invoke-ScriptAnalyzer -Path .\src -Recurse -Settings .\PSScriptAnalyzerSettings.psd1` and the same command for `.\tests` and `.\tools`.
 - `build\CompleterActions` is tracked and a test compares it with a fresh build of the sources, so after a source change run `Invoke-Build -Task build` in its own process and commit the output with the change.

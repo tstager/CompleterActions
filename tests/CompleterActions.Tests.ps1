@@ -1748,3 +1748,63 @@ Describe 'Removed surface' {
         }
     }
 }
+
+Describe 'Packaged command help' {
+    It 'points every packaged command at the generated MAML and renders it' {
+        $commands = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $helpError = $null
+                    try
+                    {
+                        $null = Get-Help -Name $command.Name -Full -ErrorAction Stop | Out-String -Width 4096
+                    }
+                    catch
+                    {
+                        $helpError = $_.Exception.Message
+                    }
+
+                    [pscustomobject] @{
+                        Name         = $command.Name
+                        MamlHelpFile = [string] $command.ScriptBlock.Ast.GetHelpContent().MamlHelpFile
+                        HelpError    = [string] $helpError
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($commands.Name | Sort-Object) | Should -Be $publicCommands
+        foreach ($command in $commands)
+        {
+            $command.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml' -Because "the packaged $($command.Name) must carry a recognized .EXTERNALHELP directive"
+            $command.HelpError | Should -BeNullOrEmpty -Because "Get-Help $($command.Name) -Full must render the MAML"
+        }
+    }
+
+    It 'shows Reset-Completer wording that only the MAML has' {
+        # Both sentences come from the maintained markdown help and are absent from the source comment help,
+        # so finding them in the packaged Get-Help output shows the MAML was selected.
+        $mamlOnlyPhrases = @(
+            'the first of these rules that applies decides it'
+            'whose script was deleted is therefore left alone without an error'
+        )
+        $sourceHelp = (Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public/Reset-Completer.ps1') -Raw) -replace '\s+', ' '
+        $text = (@(
+                Invoke-TestBuildHelp -Script {
+                    Get-Help -Name 'Reset-Completer' -Full -ErrorAction Stop | Out-String -Width 4096
+                }
+            ) -join "`n") -replace '\s+', ' '
+
+        foreach ($phrase in $mamlOnlyPhrases)
+        {
+            $sourceHelp | Should -Not -Match ([regex]::Escape($phrase)) -Because 'the phrase must be unique to the MAML to show which help Get-Help selected'
+            $text | Should -Match ([regex]::Escape($phrase))
+        }
+    }
+}

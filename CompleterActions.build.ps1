@@ -131,24 +131,33 @@ task build clean, compile, external_help, {
 
         $functionLine = ($fileBody | Select-String -Pattern '^\s*function\b' | Select-Object -First 1).LineNumber
 
-        if ($null -eq $functionLine) {
+        # Only public commands are in the generated MAML, so a private function keeps its comment help.
+        if ($null -eq $functionLine -or $public.FullName -notcontains $file.FullName) {
             $fileBody | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
             continue
         }
 
+        # PowerShell reads help from the comment block directly before the function, never from one between
+        # the name and the opening brace, and that block outranks one in the body. The directive therefore
+        # replaces the source comment help, so Get-Help selects the MAML built from the markdown.
         $functionIndex = $functionLine - 1
-        $fileContentWithExternalHelp = @(
-            $fileBody[0..$functionIndex]
+        $helpStart = $functionIndex
+
+        if ($functionIndex -gt 0 -and $fileBody[$functionIndex - 1] -match '^\s*#>\s*$') {
+            $helpStart = $functionIndex - 1
+
+            while ($helpStart -gt 0 -and $fileBody[$helpStart] -notmatch '^\s*<#') {
+                $helpStart--
+            }
+        }
+
+        @(
+            if ($helpStart -gt 0) { $fileBody[0..($helpStart - 1)] }
             '<#'
             ".EXTERNALHELP $modulename-help.xml"
             '#>'
-        )
-
-        if ($functionIndex -lt ($fileBody.Count - 1)) {
-            $fileContentWithExternalHelp += $fileBody[($functionIndex + 1)..($fileBody.Count - 1)]
-        }
-
-        $fileContentWithExternalHelp | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
+            $fileBody[$functionIndex..($fileBody.Count - 1)]
+        ) | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
 
     }
 
@@ -251,6 +260,17 @@ task external_help {
     Measure-PlatyPSMarkdown -Path (Join-Path -Path $docPath -ChildPath '*.md') |
         Where-Object Filetype -match 'CommandHelp' |
         Import-MarkdownCommandHelp -Path { $_.FilePath } |
+        ForEach-Object {
+            # Get-Help reads the first non-empty related-link URI on every view and stops with "The specified URI ...
+            # is not valid" unless it is absolute, so a link to another command's markdown page keeps its text but no URI.
+            foreach ($link in $_.RelatedLinks) {
+                if (-not [uri]::TryCreate($link.Uri, [System.UriKind]::Absolute, [ref] $null)) {
+                    $link.Uri = ''
+                }
+            }
+
+            $_
+        } |
         Export-MamlCommandHelp -OutputFolder $docPath -Force
 }
 
