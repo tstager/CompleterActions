@@ -753,3 +753,124 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
         }
     }
 }
+
+Describe 'Completer script importer literal target arrays' {
+    # Each target array is an array expression whose pipeline does more than yield its strings.
+    # The strict grammar must refuse it before the capture module runs the script.
+    $literalTargetArrayCases = @(
+        @{
+            Name         = 'native target that redirects the error stream to a file'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('importarraytarget' 2> '{MarkerPath}') -ScriptBlock { 'ok' }"
+            WritesMarker = $true
+        },
+        @{
+            Name         = 'native target array that redirects the success stream to a file'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('importarraytarget', 'importarraytarget.exe' > '{MarkerPath}') -ScriptBlock { 'ok' }"
+            WritesMarker = $true
+        },
+        @{
+            Name         = 'colon-bound native target that redirects to a file'
+            Registration = "Register-ArgumentCompleter -Native -CommandName:@('importarraytarget' 2> '{MarkerPath}') -ScriptBlock { 'ok' }"
+            WritesMarker = $true
+        },
+        @{
+            Name         = 'parameter command target that redirects every stream to a file'
+            Registration = "Register-ArgumentCompleter -CommandName @('Test-ImportArrayTargetTool' *> '{MarkerPath}') -ParameterName 'Name' -ScriptBlock { 'ok' }"
+            WritesMarker = $true
+        },
+        @{
+            Name         = 'parameter name that appends to a file'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ImportArrayTargetTool' -ParameterName @('Name' >> '{MarkerPath}') -ScriptBlock { 'ok' }"
+            WritesMarker = $true
+        },
+        @{
+            Name         = 'native target in a background pipeline'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('importarraytarget' &) -ScriptBlock { 'ok' }"
+            WritesMarker = $false
+        }
+    )
+
+    BeforeAll {
+        $script:LiteralTargetArrayMarkerBytes = [System.Text.Encoding]::UTF8.GetBytes('CompleterActions disposable marker')
+
+        function Write-LiteralTargetArrayScript
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name,
+
+                [Parameter(Mandatory)]
+                [string] $Registration
+            )
+
+            $fileBaseName = $Name -replace '[^A-Za-z0-9]+', '-'
+            $markerPath = Join-Path -Path $TestDrive -ChildPath ('{0}.marker' -f $fileBaseName)
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath ('{0}_completer.ps1' -f $fileBaseName)
+            $escapedMarkerPath = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($markerPath)
+
+            [System.IO.File]::WriteAllBytes($markerPath, $script:LiteralTargetArrayMarkerBytes)
+            Set-Content -LiteralPath $scriptPath -Value $Registration.Replace('{MarkerPath}', $escapedMarkerPath) -Encoding utf8
+
+            [pscustomobject] @{
+                ScriptPath = $scriptPath
+                MarkerPath = $markerPath
+            }
+        }
+
+        function Get-LiteralTargetArrayMarker
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $MarkerPath
+            )
+
+            [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($MarkerPath))
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+        $script:LiteralTargetArrayJobIds = @(Get-Job | ForEach-Object -MemberName Id)
+    }
+
+    AfterEach {
+        Get-Job | Where-Object -Property Id -NotIn -Value $script:LiteralTargetArrayJobIds | Remove-Job -Force
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'refuses a <Name> and leaves the marker byte-identical' -TestCases $literalTargetArrayCases {
+        param(
+            [string] $Name,
+            [string] $Registration
+        )
+
+        $fixture = Write-LiteralTargetArrayScript -Name $Name -Registration $Registration
+        $markerBefore = Get-LiteralTargetArrayMarker -MarkerPath $fixture.MarkerPath
+
+        {
+            Import-CompleterScript -LiteralPath $fixture.ScriptPath
+        } | Should -Throw '*does not conform to the strict import grammar*'
+
+        Get-LiteralTargetArrayMarker -MarkerPath $fixture.MarkerPath | Should -Be $markerBefore
+        @(Get-Job | Where-Object -Property Id -NotIn -Value $script:LiteralTargetArrayJobIds) | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'importarraytarget', 'importarraytarget.exe' -Native | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-ImportArrayTargetTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+    }
+
+    It 'confirms the <Name> marker changes when the script runs without validation' -TestCases $literalTargetArrayCases.Where({ $_.WritesMarker }) {
+        param(
+            [string] $Name,
+            [string] $Registration
+        )
+
+        $fixture = Write-LiteralTargetArrayScript -Name $Name -Registration $Registration
+        $markerBefore = Get-LiteralTargetArrayMarker -MarkerPath $fixture.MarkerPath
+
+        # The unvalidated run happens in a throwaway process so its registration and
+        # binding errors stay out of this one.
+        $null = & ([System.Environment]::ProcessPath) -NoProfile -NonInteractive -File $fixture.ScriptPath 2>&1
+
+        Get-LiteralTargetArrayMarker -MarkerPath $fixture.MarkerPath | Should -Not -Be $markerBefore
+    }
+}
