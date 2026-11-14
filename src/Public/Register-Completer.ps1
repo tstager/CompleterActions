@@ -28,11 +28,13 @@ at the top, register it again with -Force to pick up the change. Script paths
 compare the way the file system does: ignoring case on Windows and macOS, and
 case sensitively elsewhere, where two paths that differ only in case are two
 scripts. For any other script block, the context is the file that defines it
-and the module the block is bound to, compared by name, so a module that is
-imported again and registers the same text again gets the existing record. A
-closure created with GetNewClosure() is bound to a module of its own, so a
-second closure is a different completer even when its text is identical, and
-replacing the first one needs -Force.
+and the module instance the block is bound to. A module that is imported again
+and registers the same text from the same file binds it to its new instance,
+which holds its own state, so that registration replaces the record from the
+earlier instance without -Force and completion runs in the module that is
+loaded now. A closure created with GetNewClosure() is bound to a module of its
+own, so a second closure is a different completer even when its text is
+identical, and replacing the first one needs -Force.
 
 A target is its kind and its runtime key, the name PowerShell stores the
 completer under, compared ordinally ignoring case as PowerShell compares it. A
@@ -82,8 +84,8 @@ indicator is rejected; keys are output-only identifiers and are never
 classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record. IsNative, Native, and Trusted take a Boolean
-value or the text 'True' or 'False', as Export-Csv writes it; other text is
-rejected.
+value or the text 'True' or 'False' in any letter case, as Export-Csv writes a
+Boolean. Empty text counts as False, and any other text is rejected.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be registered.

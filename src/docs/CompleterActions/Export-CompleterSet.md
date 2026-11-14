@@ -38,7 +38,8 @@ the command exports every managed registration that records a `ScriptPath`.
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file
 alongside its scripts; paths on another drive stay absolute. The `Trusted` flag of each entry is taken from the records, and
-records for the same script must agree on it.
+records for the same script must agree on it. A record without a `Trusted`
+property is strict.
 
 A strict entry must list every target its script registers, because
 `Import-CompleterSet` compares a strict entry's `Targets` with the targets
@@ -112,6 +113,10 @@ HelpMessage: ''
 Registration records to export. Each record must describe a target and expose
 the script it came from through a `ScriptPath` or `SourcePath` property.
 Records without a script path cannot be expressed in a set and are rejected.
+`Trusted`, `IsNative` and `Native` take a Boolean value or the text `True` or
+`False` in any letter case, as `Export-Csv` writes a Boolean, so rows read back
+with `Import-Csv` export with the tier and kind they were written with. Empty
+text counts as `False`, and any other text is rejected.
 
 ```yaml
 Type: System.Object[]

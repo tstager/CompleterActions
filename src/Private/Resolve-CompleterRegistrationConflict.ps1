@@ -7,7 +7,8 @@ Reconciles the records through one Resolve-CompleterRegistrationState pass,
 or through the states the caller already resolved for them, and applies the
 module's replacement rules in one place. Without -Force an existing managed
 record blocks a registration when it is stale, when its lazy load failed, or
-when it describes a different completer, and an unmanaged runtime
+when it describes a different completer that does not come from a new
+instance of the module that registered it, and an unmanaged runtime
 registration blocks it as well. A managed record that already describes the
 same completer is reported as existing so the caller can reuse it. Script
 paths compare the way the file system does: ignoring case on Windows and
@@ -31,10 +32,16 @@ bound to the same context. Two imported records of the same script are bound
 to the same context, so importing and registering the same script again stays
 a no-op although every import binds its script blocks to a new module. Any
 other two script blocks are bound to the same context when they are bound to
-the same module, to modules with the same name, as when a module is imported
-again, or to none. A closure is bound to a module of its own with a unique
-name, so two closures never match even when their text is identical, because
-they run with different captured values.
+the same module or to none. A closure is bound to a module of its own with a
+unique name, so two closures never match even when their text is identical,
+because they run with different captured values.
+
+A script block with that same text, ScriptPath, tier and file that is bound to
+another instance of a module with the same name, as when a module is imported
+again, comes from the module that owns the managed record. It is not the same
+completer, because the new instance holds its own state, so it is not reported
+as existing, but it is not a problem either: it replaces the record from the
+earlier instance without -Force.
 
 The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same target sees the earlier
@@ -138,6 +145,7 @@ function Resolve-CompleterRegistrationConflict
         $existingManagedRegistration = $registrationState.ManagedRegistration
         $existingRuntimeRegistration = $registrationState.RuntimeRegistration
         $isExisting = $false
+        $isNewModuleInstance = $false
         $problem = $null
 
         if (-not $Force)
@@ -167,18 +175,21 @@ function Resolve-CompleterRegistrationConflict
                         $newScriptBlock = $registrationItem.ScriptBlock
                         $existingModule = $existingScriptBlock.Module
                         $newModule = $newScriptBlock.Module
+                        $isSameDefinition = [string]::Equals($existingManagedRegistration.ScriptText, $registrationItem.ScriptText, [System.StringComparison]::Ordinal) -and
+                            $isSameScript -and
+                            [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, $pathComparison)
+                        $isNewModuleInstance = $isSameDefinition -and
+                            $null -ne $existingModule -and $null -ne $newModule -and
+                            -not [object]::ReferenceEquals($existingModule, $newModule) -and
+                            [string]::Equals($existingModule.Name, $newModule.Name, [System.StringComparison]::OrdinalIgnoreCase)
 
                         [object]::ReferenceEquals($existingScriptBlock, $newScriptBlock) -or (
-                            [string]::Equals($existingManagedRegistration.ScriptText, $registrationItem.ScriptText, [System.StringComparison]::Ordinal) -and
-                            $isSameScript -and
-                            [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, $pathComparison) -and (
+                            $isSameDefinition -and (
                                 ($isExistingImported -and (Test-ImportedCompleterRecord -Record $registrationItem)) -or
-                                [object]::ReferenceEquals($existingModule, $newModule) -or (
-                                    $null -ne $existingModule -and $null -ne $newModule -and
-                                    [string]::Equals($existingModule.Name, $newModule.Name, [System.StringComparison]::OrdinalIgnoreCase))))
+                                [object]::ReferenceEquals($existingModule, $newModule)))
                     }
 
-                    if (-not $isExisting)
+                    if (-not $isExisting -and -not $isNewModuleInstance)
                     {
                         $problem = "A module-managed completer registration already exists for '$($registrationItem.RuntimeKey)'. Use -Force to replace it."
                     }

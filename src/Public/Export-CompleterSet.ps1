@@ -15,7 +15,7 @@ managed registration that records a ScriptPath. Script paths are written
 relative to the set file when both share a root, so a repository can carry its
 set file alongside its scripts; paths on another drive stay absolute. The
 Trusted flag of each entry is taken from the records, and records for the same
-script must agree on it.
+script must agree on it. A record without a Trusted property is strict.
 
 A strict entry must list every target its script registers, because
 Import-CompleterSet compares a strict entry's Targets with the targets derived
@@ -43,7 +43,11 @@ The path of the .psd1 file to write. The parent directory must exist.
 .PARAMETER InputObject
 Registration records to export. Each record must describe a target and expose
 the script it came from through a ScriptPath or SourcePath property. Records
-without a script path cannot be expressed in a set and are rejected.
+without a script path cannot be expressed in a set and are rejected. Trusted,
+IsNative and Native take a Boolean value or the text 'True' or 'False' in any
+letter case, as Export-Csv writes a Boolean, so rows read back with Import-Csv
+export with the tier and kind they were written with. Empty text counts as
+False, and any other text is rejected.
 
 .PARAMETER PassThru
 Returns the written file.
@@ -141,9 +145,9 @@ function Export-CompleterSet
                     throw 'InputObject must expose the script it came from through a ScriptPath or SourcePath property; registrations created from an in-memory script block cannot be exported to a set.'
                 }
 
-                $target = ($record | Resolve-CompleterInputObject).Target
-                $trustedProperty = $record.PSObject.Properties['Trusted']
-                $trusted = $null -ne $trustedProperty -and [bool] $trustedProperty.Value
+                $resolvedInput = $record | Resolve-CompleterInputObject
+                $target = $resolvedInput.Target
+                $trusted = $resolvedInput.Trusted
 
                 if (-not $entriesByPath.Contains($scriptPath))
                 {
