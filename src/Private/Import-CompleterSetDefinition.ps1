@@ -19,6 +19,11 @@ an exported set of a few hundred entries. The switch lifts only those limits:
 anything that is not data is still refused. Export-CompleterSet refuses to
 write a set over the same size, so every set it writes reads back.
 
+Import-PowerShellDataFile opens the path again, so the measured file must
+return the same bytes to both reads. A file that cannot seek, such as a named
+pipe, can hand each open different bytes, so it is refused before anything is
+read from it. Opening a named pipe still waits until something writes to it.
+
 .PARAMETER LiteralPath
 The literal path to the completer set file.
 
@@ -47,12 +52,18 @@ function Import-CompleterSetDefinition
         throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
     }
 
-    $reader = $null
+    $stream = $null
 
     try
     {
-        $reader = [System.IO.BinaryReader]::new([System.IO.File]::OpenRead($file.FullName))
-        $byteCount = $reader.ReadBytes($script:CompleterSetMaxFileBytes + 1).Length
+        $stream = [System.IO.File]::OpenRead($file.FullName)
+
+        if (-not $stream.CanSeek)
+        {
+            throw "Completer set '$($file.FullName)' is not a regular file. Completer sets must be regular files, not named pipes or other streams."
+        }
+
+        $byteCount = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1).Length
     }
     catch [System.Management.Automation.MethodInvocationException]
     {
@@ -60,9 +71,9 @@ function Import-CompleterSetDefinition
     }
     finally
     {
-        if ($null -ne $reader)
+        if ($null -ne $stream)
         {
-            $reader.Dispose()
+            $stream.Dispose()
         }
     }
 

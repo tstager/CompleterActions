@@ -2308,5 +2308,52 @@ Describe 'Completer sets' {
                 [System.IO.File]::Delete($linkPath)
             }
         }
+
+        It 'refuses a named pipe, which can hand the data reader a larger set than it measured' {
+            $mkfifo = Get-Command -Name 'mkfifo' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+
+            if ($IsWindows -or $null -eq $mkfifo)
+            {
+                Set-ItResult -Skipped -Because 'it needs named pipes in the file system and mkfifo to create one, as on Linux and macOS'
+                return
+            }
+
+            $smallSetPath = Join-Path -Path $script:SetRoot -ChildPath 'small.txt'
+            Write-TestCompleterSet -Path $smallSetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            $largeSetPath = Join-Path -Path $script:SetRoot -ChildPath 'large.txt'
+            Copy-Item -LiteralPath $smallSetPath -Destination $largeSetPath
+            Add-Content -LiteralPath $largeSetPath -Value ('# ' + ('x' * 4096))
+            Limit-TestCompleterSetFileSize -Bytes (Get-Item -LiteralPath $smallSetPath).Length
+
+            $pipePath = Join-Path -Path $script:SetRoot -ChildPath 'pipe.psd1'
+            & $mkfifo.Source $pipePath
+
+            # The first open of the pipe gets the set at the limit, every later open the larger one.
+            $writerStart = [System.Diagnostics.ProcessStartInfo]::new('sh')
+            foreach ($argument in '-c', 'cat "$1" > "$3"; while :; do cat "$2" > "$3"; done', 'sh', $smallSetPath, $largeSetPath, $pipePath)
+            {
+                $writerStart.ArgumentList.Add($argument)
+            }
+
+            $writer = [System.Diagnostics.Process]::Start($writerStart)
+
+            try
+            {
+                $readProblem = "Completer set '$((Resolve-Path -LiteralPath $pipePath).ProviderPath)' is not a regular file. Completer sets must be regular files, not named pipes or other streams."
+
+                $thrown = { Import-CompleterSet -LiteralPath $pipePath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+                $thrown = { Test-CompleterSet -LiteralPath $pipePath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+                Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+            }
+            finally
+            {
+                $writer.Kill($true)
+                $writer.WaitForExit()
+                $writer.Dispose()
+                [System.IO.File]::Delete($pipePath)
+            }
+        }
     }
 }
