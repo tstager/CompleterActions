@@ -28,7 +28,7 @@ function New-CompleterLazyStub
         [string] $Key
     )
 
-    $escapedKey = $Key.Replace("'", "''")
+    $escapedKey = ConvertTo-CompleterSingleQuotedText -Value $Key
 
     return $ExecutionContext.SessionState.InvokeCommand.NewScriptBlock("Invoke-CompleterLazyStub -Key '$escapedKey' -ArgumentList `$args")
 }

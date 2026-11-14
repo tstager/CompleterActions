@@ -247,7 +247,7 @@ function Export-CompleterSet
                 $writtenPath = if ([System.IO.Path]::IsPathRooted($relativePath)) { $entry.Path } else { $relativePath.Replace('\', '/') }
 
                 $lines.Add('        @{')
-                $lines.Add("            Path    = '$($writtenPath.Replace("'", "''"))'")
+                $lines.Add("            Path    = '$(ConvertTo-CompleterSingleQuotedText -Value $writtenPath)'")
                 $lines.Add("            Trusted = `$$($entry.Trusted.ToString().ToLowerInvariant())")
 
                 if ($null -ne $entry.Hash)
@@ -259,7 +259,7 @@ function Export-CompleterSet
 
                 foreach ($target in $entry.Targets.Values)
                 {
-                    $commandName = ([string] $target.CommandName).Replace("'", "''")
+                    $commandName = ConvertTo-CompleterSingleQuotedText -Value ([string] $target.CommandName)
 
                     if ($target.IsNative)
                     {
@@ -267,7 +267,7 @@ function Export-CompleterSet
                     }
                     else
                     {
-                        $lines.Add("                @{ CommandName = '$commandName'; ParameterName = '$(([string] $target.ParameterName).Replace("'", "''"))' }")
+                        $lines.Add("                @{ CommandName = '$commandName'; ParameterName = '$(ConvertTo-CompleterSingleQuotedText -Value ([string] $target.ParameterName))' }")
                     }
                 }
 
