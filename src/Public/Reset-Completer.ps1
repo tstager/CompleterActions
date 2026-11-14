@@ -235,7 +235,7 @@ function Reset-Completer
                     }
                     elseif ($PSCmdlet.ShouldProcess($runtimeKey, 'Reset completer registration'))
                     {
-                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.Key -Native:$managedRegistration.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
+                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.RuntimeKey -Native:$managedRegistration.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
                         $conflict = [pscustomobject] [ordered] @{
                             Key                 = $registration.Key
                             ManagedRegistration = $managedRegistration

@@ -4,14 +4,15 @@ Adds or replaces a managed registration record in module state.
 
 .DESCRIPTION
 Stores a registration object in the module's in-memory registration table
-under its Get-CompleterTargetIdentity, which combines its Key with its kind,
-so a native and a parameter record that share a Key are stored side by side.
-An existing entry for the same target is replaced, which lets higher-level
-registration code refresh an internal record after re-registering a completer.
+under its Get-CompleterTargetIdentity, which combines its RuntimeKey with its
+kind, so records whose Key is the same, such as a native and a parameter record,
+are stored side by side. An existing entry for the same target is replaced,
+which lets higher-level registration code refresh an internal record after
+re-registering a completer.
 
 .PARAMETER Registration
 The registration record to store. The object must expose a non-empty Key
-property and an IsNative property.
+property, a RuntimeKey property, and an IsNative property.
 
 .PARAMETER Table
 The managed registration table to write to, as a registration snapshot

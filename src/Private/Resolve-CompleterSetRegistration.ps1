@@ -67,7 +67,7 @@ function Resolve-CompleterSetRegistration
         $registrations = @(
             foreach ($target in @($entryItem.Targets))
             {
-                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key -Native:$target.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
+                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.RuntimeKey -Native:$target.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
             }
         )
 

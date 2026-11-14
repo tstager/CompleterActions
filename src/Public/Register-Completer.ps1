@@ -6,25 +6,37 @@ Registers a managed PowerShell argument completer.
 Registers native or command-parameter argument completers with
 Register-ArgumentCompleter and records the registrations in the module's managed
 state. Existing managed or runtime registrations are preserved unless you use
--Force to replace them. Registering the same completer for a target that is
-already managed is idempotent only while the managed record still matches the
-live runtime value, which means the runtime still holds the very script block
-the module registered. When the runtime registration was replaced or removed
-outside this module, even by a script block with the same text, the managed
-record is stale and the command fails until you reconcile it with -Force.
+-Force to replace them.
 
-The same completer is the same script block, or one with exactly the same
-text, compared case sensitively, bound to the same context. For records
+Registering the same completer again for a target that is already managed is a
+no-op that returns the managed record, but only while that record is live,
+which means the runtime still holds the very script block the module
+registered. When the runtime registration was replaced or removed outside this
+module, even by a script block with the same text, the managed record is stale
+and the command fails until you reconcile it with -Force.
+
+The script block you register is the same completer as the managed record's
+when it is that very script block, or when its text is exactly the same,
+compared case sensitively, and it is bound to the same context. For records
 imported from a script, the context is the script file and its tier, so
-importing and registering the same script again stays a no-op. For any other
-script block, it is the module the block is bound to and the file that defines
-it. A closure created with GetNewClosure() is bound to a module of its own, so
-a second closure is a different completer even when its text is identical,
-and replacing the first one needs -Force.
+importing and registering the same script again stays a no-op. Only the
+completer's own text is compared, so after you edit other code in the script,
+such as a value it sets at the top, register it again with -Force to pick up
+the change. Script paths compare the way the file system does: ignoring case on
+Windows and macOS, and case sensitively elsewhere, where two paths that differ
+only in case are two scripts. For any other script block, the context is the
+module the block is bound to and the file that defines it. A closure created
+with GetNewClosure() is bound to a module of its own, so a second closure is a
+different completer even when its text is identical, and replacing the first
+one needs -Force.
 
-A native command whose name contains a colon, such as an alias named
-'Get-Thing:Name', is a separate target from the parameter target Get-Thing /
-Name, although the two share a key. Each target is updated transactionally: if
+A target is its kind and its runtime key, the name PowerShell stores the
+completer under, compared ordinally ignoring case as PowerShell compares it. A
+native command whose name contains a colon, such as an alias named
+'Get-Thing:Name', is therefore a separate target from the parameter target
+Get-Thing / Name, although the two share a key, and so are two names that the
+key's lowercasing merges, such as one spelled with the Kelvin sign (U+212A)
+and one with the letter K. Each target is updated transactionally: if
 the runtime or managed write fails, the previous runtime and managed state are
 restored and any rollback failure is reported alongside the original error.
 The command supports array inputs for command and parameter targets, and it
@@ -266,11 +278,16 @@ function Register-Completer
                     }
                     else
                     {
-                        $derivedIdentities = @($derivedTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+                        $derivedIdentities = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+                        foreach ($derivedTarget in $derivedTargets)
+                        {
+                            $null = $derivedIdentities.Add((Get-CompleterTargetIdentity -Target $derivedTarget))
+                        }
 
                         foreach ($explicitTarget in $explicitTargets)
                         {
-                            if ($derivedIdentities -notcontains (Get-CompleterTargetIdentity -Target $explicitTarget))
+                            if (-not $derivedIdentities.Contains((Get-CompleterTargetIdentity -Target $explicitTarget)))
                             {
                                 $derivedList = ($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                                 throw "The script '$scriptPath' does not register a completer for '$($explicitTarget.RuntimeKey)'. It registers: $derivedList."
@@ -285,7 +302,7 @@ function Register-Completer
                 {
                     $resolvedInputs += [pscustomobject] [ordered] @{
                         Target = $target
-                        ScriptBlock = New-CompleterLazyStub -Key $target.Key -Native:$target.IsNative
+                        ScriptBlock = New-CompleterLazyStub -Key $target.RuntimeKey -Native:$target.IsNative
                         ImportModule = $null
                         ScriptPath = $scriptPath
                         Trusted = [bool] $Trusted

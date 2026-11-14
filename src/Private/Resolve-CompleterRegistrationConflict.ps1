@@ -11,7 +11,9 @@ when it describes a different completer, and an unmanaged runtime
 registration blocks it as well. A managed record that already describes the
 same completer is reported as existing so the caller can reuse it. A record
 is lazy when its State is 'Pending', and a lazy record describes the same
-completer when it loads the same script under the same tier.
+completer when it loads the same script under the same tier. Script paths
+compare the way the file system does: ignoring case on Windows and macOS, and
+ordinally elsewhere, where two paths that differ only in case name two files.
 
 An eager record describes the same completer when it holds the very same
 script block, or a script block with exactly the same text, compared case
@@ -92,6 +94,7 @@ function Resolve-CompleterRegistrationConflict
     }
 
     $plannedRegistrations = @{}
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
     for ($index = 0; $index -lt $Registration.Count; $index++)
     {
@@ -130,9 +133,10 @@ function Resolve-CompleterRegistrationConflict
                 }
                 else
                 {
+                    $isSameScript = [string]::Equals($existingManagedRegistration.ScriptPath, $registrationItem.ScriptPath, $pathComparison)
                     $isExisting = if ($registrationItem.State -eq 'Pending')
                     {
-                        $existingManagedRegistration.ScriptPath -eq $registrationItem.ScriptPath -and [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
+                        $isSameScript -and [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
                     }
                     else
                     {
@@ -141,11 +145,11 @@ function Resolve-CompleterRegistrationConflict
 
                         [object]::ReferenceEquals($existingScriptBlock, $newScriptBlock) -or (
                             [string]::Equals($existingManagedRegistration.ScriptText, $registrationItem.ScriptText, [System.StringComparison]::Ordinal) -and
-                            $existingManagedRegistration.ScriptPath -eq $registrationItem.ScriptPath -and
+                            $isSameScript -and
                             [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted -and
                             (-not [string]::IsNullOrEmpty($registrationItem.ScriptPath) -or (
                                 [object]::ReferenceEquals($existingScriptBlock.Module, $newScriptBlock.Module) -and
-                                [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, [System.StringComparison]::Ordinal))))
+                                [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, $pathComparison))))
                     }
 
                     if (-not $isExisting)

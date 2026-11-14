@@ -11,6 +11,8 @@ together with IsNative/Native. An input object describes one target, so a
 CommandName or ParameterName that holds several values is rejected rather
 than joined into one name. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
+When an object exposes several keys, RuntimeKey wins: Key and RegistrationKey
+are folded to lowercase, which can merge two names the runtime keeps apart.
 A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
 so imported and managed records round-trip into Register-Completer.
@@ -59,7 +61,7 @@ function Resolve-CompleterInputObject
 
         try
         {
-            foreach ($propertyName in 'Key', 'RegistrationKey', 'RuntimeKey')
+            foreach ($propertyName in 'RuntimeKey', 'Key', 'RegistrationKey')
             {
                 $property = $InputObject.PSObject.Properties[$propertyName]
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))

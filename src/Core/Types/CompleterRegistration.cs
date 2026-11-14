@@ -22,19 +22,23 @@ public sealed class CompleterRegistration
     private string scriptText = string.Empty;
 
     /// <summary>
-    /// The module's key for the registration: the lowercase command name of a native target, or
-    /// <c>command:parameter</c> of a parameter target. A native command whose name contains a colon
-    /// shares its key with a parameter target, so the key identifies a registration only together with
-    /// <see cref="IsNative"/>.
+    /// The module's normalized key for the registration: the <see cref="RuntimeKey"/> folded to
+    /// lowercase. It does not identify a registration: a native command whose name contains a colon
+    /// shares its key with a parameter target, and the folding merges names the runtime keeps apart,
+    /// such as one spelled with the Kelvin sign (U+212A) and one with the letter K. A registration is
+    /// identified by <see cref="RuntimeKey"/> together with <see cref="IsNative"/>.
     /// </summary>
     [AllowNull]
     public string Key { get => key; set => key = value ?? string.Empty; }
 
-    /// <summary>The key the module tracks the registration under, together with <see cref="IsNative"/>.</summary>
+    /// <summary>The same value as <see cref="Key"/>.</summary>
     [AllowNull]
     public string RegistrationKey { get => registrationKey; set => registrationKey = value ?? string.Empty; }
 
-    /// <summary>The key of the entry in the runtime's completer dictionary.</summary>
+    /// <summary>
+    /// The key of the entry in the runtime's completer dictionary, which compares its keys ordinally
+    /// ignoring case. Together with <see cref="IsNative"/> it identifies the registration.
+    /// </summary>
     [AllowNull]
     public string RuntimeKey { get => runtimeKey; set => runtimeKey = value ?? string.Empty; }
 

@@ -161,7 +161,7 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['parameter:test-managedtool:name'] | Should -Not -BeNullOrEmpty
+        InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' } | Should -Not -BeNullOrEmpty
 
         $inputScript = 'Test-ManagedTool -Name a'
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
@@ -1269,7 +1269,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        [object]::ReferenceEquals($state['Registrations']['parameter:test-managedtool:name'], $original) | Should -BeTrue
+        [object]::ReferenceEquals((InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' }), $original) | Should -BeTrue
 
         $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
@@ -1309,7 +1309,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['parameter:test-managedtool:name'].ScriptText | Should -Match 'old'
+        (InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' }).ScriptText | Should -Match 'old'
 
         $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
@@ -1379,7 +1379,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations'].Contains('parameter:test-arrayone:name') | Should -BeTrue
+        InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ArrayOne' -ParameterName 'Name' } | Should -Not -BeNullOrEmpty
 
         $kept = Get-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name'
         $kept.Source | Should -Be 'Managed'
@@ -1751,11 +1751,19 @@ Describe 'Removed surface' {
 
 Describe 'Registration identity' {
     BeforeAll {
+        # The Kelvin sign (U+212A) lowercases to the letter k, so both Kelvin names
+        # below have the key 'test-kelvintool', yet the runtime compares its keys
+        # ordinally ignoring case and keeps them as two entries.
+        $script:KelvinLetterName = 'Test-KelvinTool'
+        $script:KelvinSignName = 'Test-{0}elvinTool' -f [char] 0x212A
+
         $script:IdentityCleanupTargets = @(
             @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
             @{ CommandName = 'Test-IdentityTool:Name'; CompleterType = 'Native' }
             @{ CommandName = 'importfixture'; CompleterType = 'Native' }
             @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = $script:KelvinLetterName; CompleterType = 'Native' }
+            @{ CommandName = $script:KelvinSignName; CompleterType = 'Native' }
         )
 
         function Get-TestIdentityCompletion
@@ -1889,7 +1897,7 @@ Describe 'Registration identity' {
             } | Should -Throw '*is stale*-AllowUnmanaged*'
         }
 
-        It 'reuses the managed record for equal text bound to the same context and for a re-imported script' {
+        It 'reuses the managed record for equal unbound text and for a re-imported script' {
             $first = [scriptblock]::Create("'same'")
             $second = [scriptblock]::Create("'same'")
 
@@ -1912,6 +1920,27 @@ Describe 'Registration identity' {
             }
 
             @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | ForEach-Object { [string] $_.State }) | Should -Be @('Active', 'Active')
+        }
+
+        It 'reuses the managed record for equal text bound to the same module and defined in the same file' {
+            $maker = New-Module -Name 'TestIdentityMaker' -ScriptBlock {
+                function Get-TestIdentityBlock { { 'same' } }
+            }
+
+            $first = & $maker { Get-TestIdentityBlock }
+            $second = & $maker { Get-TestIdentityBlock }
+
+            [object]::ReferenceEquals($first, $second) | Should -BeFalse -Because 'each call creates a new script block'
+            [object]::ReferenceEquals($first.Module, $maker) | Should -BeTrue
+            [object]::ReferenceEquals($second.Module, $maker) | Should -BeTrue
+            $second.File | Should -BeExactly $first.File
+
+            $firstRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
+            $secondRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -PassThru
+
+            [object]::ReferenceEquals($secondRecord, $firstRecord) | Should -BeTrue -Because 'a script block with the same text, bound to the same module and defined in the same file, is the same completer'
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'same'")
+            Get-TestIdentityCompletion | Should -Be @('same')
         }
 
         It 'treats equal text defined in another file as a different completer' {
@@ -2013,6 +2042,127 @@ Describe 'Registration identity' {
             $removedUnmanaged.CompleterType | Should -Be 'Parameter'
             Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
             Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Discovered/'native-result'")
+        }
+    }
+
+    Context 'two native names that lowercase to the same key' {
+        BeforeAll {
+            function Get-TestKelvinState
+            {
+                @(
+                    Get-Completer |
+                        Where-Object { $_.IsNative -and $_.Key -eq 'test-kelvintool' } |
+                        ForEach-Object {
+                            $spelling = if ([string]::Equals($_.CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal)) { 'sign' } else { 'letter' }
+                            '{0}/{1}/{2}' -f $spelling, $_.State, $_.ScriptText.Trim()
+                        } |
+                        Sort-Object
+                )
+            }
+
+            function Get-TestKelvinCompletion
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [string] $CommandName
+                )
+
+                $inputScript = "$CommandName "
+                @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText)
+            }
+        }
+
+        It 'finds and removes only the name each command is given' {
+            $letter = Register-Completer -CommandName $script:KelvinLetterName -Native -ScriptBlock { 'letter-result' } -PassThru
+            $letter.Key | Should -BeExactly 'test-kelvintool'
+
+            @(Get-Completer -CommandName $script:KelvinSignName -Native) | Should -BeNullOrEmpty -Because 'the runtime does not complete the Kelvin-sign name with the letter name''s completer'
+
+            {
+                Unregister-Completer -CommandName $script:KelvinSignName -Native -Confirm:$false
+            } | Should -Throw '*No completer registration was found*'
+
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
+        }
+
+        It 'registers both names side by side without -Force and removes each one alone' {
+            $letter = Register-Completer -CommandName $script:KelvinLetterName -Native -ScriptBlock { 'letter-result' } -PassThru
+            $sign = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' } -PassThru
+
+            $sign.Key | Should -BeExactly $letter.Key -Because 'the two names share the lowercase key, which is why the key is not their identity'
+            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinLetterName -Native), $letter) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinSignName -Native), $sign) | Should -BeTrue
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'", "sign/Active/'sign-result'")
+            Get-TestKelvinCompletion -CommandName $script:KelvinLetterName | Should -Be @('letter-result')
+            Get-TestKelvinCompletion -CommandName $script:KelvinSignName | Should -Be @('sign-result')
+
+            $removed = Unregister-Completer -CommandName $script:KelvinSignName -Native -Confirm:$false -PassThru
+
+            [string]::Equals($removed.CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $removed.ScriptText.Trim() | Should -BeExactly "'sign-result'"
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
+            Get-TestKelvinCompletion -CommandName $script:KelvinLetterName | Should -Be @('letter-result')
+        }
+
+        It 'lists and removes both unmanaged runtime entries' {
+            Register-ArgumentCompleter -Native -CommandName $script:KelvinLetterName -ScriptBlock { 'letter-result' }
+            Register-ArgumentCompleter -Native -CommandName $script:KelvinSignName -ScriptBlock { 'sign-result' }
+
+            Get-TestKelvinState | Should -Be @("letter/Discovered/'letter-result'", "sign/Discovered/'sign-result'")
+
+            $removed = @(Unregister-Completer -CommandName $script:KelvinLetterName, $script:KelvinSignName -Native -AllowUnmanaged -Confirm:$false -PassThru)
+
+            $removed.Count | Should -Be 2
+            Get-TestKelvinState | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a script path compares the way the file system does' {
+        BeforeAll {
+            $script:IdentityScriptText = "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'same' }"
+        }
+
+        It 'treats two scripts whose paths differ only in case as two scripts on a case-sensitive file system' -Skip:($IsWindows -or $IsMacOS) {
+            $upperPath = Join-Path -Path $TestDrive -ChildPath 'Identity_completer.ps1'
+            $lowerPath = Join-Path -Path $TestDrive -ChildPath 'identity_completer.ps1'
+            Set-Content -LiteralPath $upperPath -Value $script:IdentityScriptText -Encoding utf8
+            Set-Content -LiteralPath $lowerPath -Value $script:IdentityScriptText -Encoding utf8
+
+            $null = Import-CompleterScript -LiteralPath $upperPath | Register-Completer
+
+            {
+                Import-CompleterScript -LiteralPath $lowerPath | Register-Completer
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Split-Path -Path (Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptPath -Leaf | Should -BeExactly 'Identity_completer.ps1'
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            $null = Register-Completer -LiteralPath $upperPath -Lazy
+
+            {
+                Register-Completer -LiteralPath $lowerPath -Lazy
+            } | Should -Throw '*already exists*Use -Force*'
+
+            $pending = Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'
+            $pending.State | Should -Be 'Pending'
+            Split-Path -Path $pending.ScriptPath -Leaf | Should -BeExactly 'Identity_completer.ps1'
+        }
+
+        It 'treats two spellings of one script path as the same script on a case-insensitive file system' -Skip:(-not ($IsWindows -or $IsMacOS)) {
+            $path = Join-Path -Path $TestDrive -ChildPath 'identity_completer.ps1'
+            $otherSpelling = Join-Path -Path $TestDrive -ChildPath 'IDENTITY_COMPLETER.PS1'
+            Set-Content -LiteralPath $path -Value $script:IdentityScriptText -Encoding utf8
+
+            $imported = Import-CompleterScript -LiteralPath $path | Register-Completer -PassThru
+            $reimported = Import-CompleterScript -LiteralPath $otherSpelling | Register-Completer -PassThru
+
+            [object]::ReferenceEquals($reimported, $imported) | Should -BeTrue -Because 'both spellings name one file'
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            $lazy = Register-Completer -LiteralPath $path -Lazy -PassThru
+            $lazyAgain = Register-Completer -LiteralPath $otherSpelling -Lazy -PassThru
+
+            [object]::ReferenceEquals($lazyAgain, $lazy) | Should -BeTrue
         }
     }
 }

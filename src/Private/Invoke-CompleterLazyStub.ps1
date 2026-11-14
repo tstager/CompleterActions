@@ -10,11 +10,14 @@ block for its own target, replaces the runtime dictionary entry with it, and
 moves the managed record to Active. Every other Pending record that points at
 the same script and tier, and whose runtime entry is still its own stub, is
 swapped from the same import so a script that registers several targets is
-executed once. When the script registers the same target more than once, the
-last definition wins for that target, as it does when the script is
-dot-sourced and Register-ArgumentCompleter overwrites the earlier entry. The
-call that triggered the load is then delegated to the real script block and
-its results are returned.
+executed once. Script paths compare the way the file system does, ignoring case
+on Windows and macOS and case sensitively elsewhere, so a sibling registered
+from another file whose path differs only in case keeps its own script. When
+the script registers the same target more than once, the last definition wins
+for that target, as it does when the script is dot-sourced and
+Register-ArgumentCompleter overwrites the earlier entry. The call that
+triggered the load is then delegated to the real script block and its results
+are returned.
 
 A load in flight owns its record. The helper tracks the targets it is loading
 on the current call stack, so a nested completion for the same target, such as a
@@ -30,7 +33,7 @@ host. The helper never hooks key handlers, replaces TabExpansion2, or touches
 PSReadLine options.
 
 .PARAMETER Key
-The normalized registration key of the lazy target being invoked.
+The RuntimeKey of the lazy target being invoked, with its casing kept.
 
 .PARAMETER Native
 Indicates that the lazy target being invoked is a native command completer.
@@ -114,6 +117,7 @@ function Invoke-CompleterLazyStub
                 }
 
                 $ownRegistration = $importedRegistrationsByIdentity[$identity]
+                $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
                 foreach ($importedIdentity in @($importedRegistrationsByIdentity.Keys))
                 {
@@ -122,9 +126,9 @@ function Invoke-CompleterLazyStub
 
                     if ($null -eq $pendingRegistration -or
                         $pendingRegistration.State -ne 'Pending' -or
-                        $pendingRegistration.ScriptPath -ne $registration.ScriptPath -or
+                        -not [string]::Equals($pendingRegistration.ScriptPath, $registration.ScriptPath, $pathComparison) -or
                         [bool] $pendingRegistration.Trusted -ne [bool] $registration.Trusted -or
-                        ($importedIdentity -ne $identity -and $script:CompleterLazyLoadsInProgress.Contains($importedIdentity)))
+                        (-not [string]::Equals($importedIdentity, $identity, [System.StringComparison]::OrdinalIgnoreCase) -and $script:CompleterLazyLoadsInProgress.Contains($importedIdentity)))
                     {
                         continue
                     }

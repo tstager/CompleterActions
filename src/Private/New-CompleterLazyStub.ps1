@@ -4,16 +4,16 @@ Creates the runtime stub registered for a lazy completer target.
 
 .DESCRIPTION
 Builds a script block, bound to this module's session state, that hands every
-invocation to Invoke-CompleterLazyStub together with the target's normalized
-key and kind, which together identify its managed record: a native and a
-parameter target can share a key. The stub carries nothing else: the script
+invocation to Invoke-CompleterLazyStub together with the target's runtime key
+and kind, which together identify its managed record (see
+Get-CompleterTargetIdentity). The stub carries nothing else: the script
 path and trust tier live on the managed record, so the stub text is the same
 shape for every lazy target and the record stays the single source of truth. Binding through the module's
 InvokeCommand is what lets the stub reach the module's private helpers when the
 completion engine invokes it.
 
 .PARAMETER Key
-The normalized registration key of the lazy target.
+The RuntimeKey of the lazy target, with its casing kept.
 
 .PARAMETER Native
 Indicates that the lazy target is a native command completer.

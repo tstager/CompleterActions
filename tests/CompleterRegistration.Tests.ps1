@@ -670,7 +670,7 @@ namespace CompleterActionsTests
         $result = & $module {
             $registration = New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -CommandName 'CaseCmd' -Native) -ScriptBlock { 'case' } -State 'Pending' -ScriptPath 'C:\completers\case_completer.ps1'
             $snapshot = [pscustomobject] @{
-                Managed = @{ 'native:casecmd' = $registration }
+                Managed = @{ (Get-CompleterTargetIdentity -Target $registration) = $registration }
                 Runtime = @()
             }
             $targets = foreach ($key in 'CASECMD', 'casecmd', 'OtherCmd')

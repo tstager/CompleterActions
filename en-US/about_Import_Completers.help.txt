@@ -179,12 +179,16 @@ OUTPUT OBJECTS
     The most useful properties are:
 
     - `Key` and `RegistrationKey`
-      The module's normalized key for the target. A native command whose name
-      contains a colon shares its key with a parameter target, so the key
-      identifies a target only together with `IsNative`.
+      The module's normalized key for the target, `RuntimeKey` folded to
+      lowercase. It does not identify a target: a native command whose name
+      contains a colon shares its key with a parameter target, and the
+      folding merges names PowerShell keeps apart, such as one spelled with
+      the Kelvin sign (U+212A) and one with the letter K.
 
     - `RuntimeKey`
       The target key as PowerShell runtime registration logic expects it.
+      Together with `IsNative` it identifies the target, compared ordinally
+      ignoring case as PowerShell compares its completer keys.
 
     - `CommandName`
       The command or native executable name.

@@ -707,3 +707,134 @@ Register-ArgumentCompleter -CommandName 'Test-LazyIdentityTool' -ParameterName '
         Get-TestLazyIdentityState | Should -Be @('Native/Pending', 'Parameter/Active')
     }
 }
+
+Describe 'Lazy registration of native names that lowercase to the same key, or of scripts whose paths differ only in case' {
+    BeforeAll {
+        # The Kelvin sign (U+212A) lowercases to the letter k, so both Kelvin names
+        # have one lowercase key, yet the runtime keeps them as two entries.
+        $script:LazyKelvinLetterName = 'Test-LazyKelvinTool'
+        $script:LazyKelvinSignName = 'Test-Lazy{0}elvinTool' -f [char] 0x212A
+
+        $script:LazyLookalikeCleanupTargets = @(
+            @{ CommandName = $script:LazyKelvinLetterName; CompleterType = 'Native' }
+            @{ CommandName = $script:LazyKelvinSignName; CompleterType = 'Native' }
+            @{ CommandName = 'test-lazycasex'; CompleterType = 'Native' }
+            @{ CommandName = 'test-lazycasey'; CompleterType = 'Native' }
+        )
+
+        function Write-TestLazyNativeScript
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $Path,
+
+                [Parameter(Mandatory)]
+                [string[]] $CommandName,
+
+                [Parameter(Mandatory)]
+                [string] $Result
+            )
+
+            $text = foreach ($commandNameItem in $CommandName)
+            {
+                "Register-ArgumentCompleter -Native -CommandName '$commandNameItem' -ScriptBlock {"
+                '    param($wordToComplete, $commandAst, $cursorPosition)'
+                ''
+                '    $null = $wordToComplete, $commandAst, $cursorPosition'
+                "    '$Result'"
+                '}'
+            }
+
+            Set-Content -LiteralPath $Path -Value $text -Encoding utf8
+        }
+
+        function Get-TestLazyNativeCompletion
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $CommandName
+            )
+
+            $inputScript = "$CommandName "
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText)
+        }
+
+        function Get-TestLazyNativeState
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string[]] $CommandName
+            )
+
+            @(
+                foreach ($commandNameItem in $CommandName)
+                {
+                    @(Get-Completer -CommandName $commandNameItem -Native | ForEach-Object { [string] $_.State })
+                }
+            )
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:LazyLookalikeCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:LazyLookalikeCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'registers a script for each Kelvin name and loads only the script of the name pressed' {
+        $letterPath = Join-Path -Path $TestDrive -ChildPath 'kelvin_letter_completer.ps1'
+        $signPath = Join-Path -Path $TestDrive -ChildPath 'kelvin_sign_completer.ps1'
+        Write-TestLazyNativeScript -Path $letterPath -CommandName $script:LazyKelvinLetterName -Result 'letter-lazy'
+        Write-TestLazyNativeScript -Path $signPath -CommandName $script:LazyKelvinSignName -Result 'sign-lazy'
+        $names = $script:LazyKelvinLetterName, $script:LazyKelvinSignName
+
+        $null = Register-Completer -LiteralPath $letterPath -Lazy
+        $null = Register-Completer -LiteralPath $signPath -Lazy
+
+        Get-TestLazyNativeState -CommandName $names | Should -Be @('Pending', 'Pending')
+        Get-TestLazyNativeCompletion -CommandName $script:LazyKelvinSignName | Should -Be @('sign-lazy')
+        Get-TestLazyNativeState -CommandName $names | Should -Be @('Pending', 'Active') -Because 'the stub carries the name it was registered for, not its lowercase key'
+        Get-TestLazyNativeCompletion -CommandName $script:LazyKelvinLetterName | Should -Be @('letter-lazy')
+        Get-TestLazyNativeState -CommandName $names | Should -Be @('Active', 'Active')
+    }
+
+    It 'keeps a sibling registered from the other file pending when one file loads on a case-sensitive file system' -Skip:($IsWindows -or $IsMacOS) {
+        $upperPath = Join-Path -Path $TestDrive -ChildPath 'Lazy_case_completer.ps1'
+        $lowerPath = Join-Path -Path $TestDrive -ChildPath 'lazy_case_completer.ps1'
+        Write-TestLazyNativeScript -Path $upperPath -CommandName 'test-lazycasex', 'test-lazycasey' -Result 'upper'
+        Write-TestLazyNativeScript -Path $lowerPath -CommandName 'test-lazycasex', 'test-lazycasey' -Result 'lower'
+
+        $null = Register-Completer -LiteralPath $upperPath -Lazy -CommandName 'test-lazycasex' -Native
+        $null = Register-Completer -LiteralPath $lowerPath -Lazy -CommandName 'test-lazycasey' -Native
+
+        Get-TestLazyNativeCompletion -CommandName 'test-lazycasex' | Should -Be @('upper')
+        Get-TestLazyNativeState -CommandName 'test-lazycasex', 'test-lazycasey' | Should -Be @('Active', 'Pending') -Because 'the sibling belongs to another file, so loading this one must not swap it'
+        Get-TestLazyNativeCompletion -CommandName 'test-lazycasey' | Should -Be @('lower')
+    }
+
+    It 'swaps a sibling registered through another spelling of the same file on a case-insensitive file system' -Skip:(-not ($IsWindows -or $IsMacOS)) {
+        $path = Join-Path -Path $TestDrive -ChildPath 'lazy_case_completer.ps1'
+        $otherSpelling = Join-Path -Path $TestDrive -ChildPath 'LAZY_CASE_COMPLETER.PS1'
+        Write-TestLazyNativeScript -Path $path -CommandName 'test-lazycasex', 'test-lazycasey' -Result 'one'
+
+        $null = Register-Completer -LiteralPath $path -Lazy -CommandName 'test-lazycasex' -Native
+        $null = Register-Completer -LiteralPath $otherSpelling -Lazy -CommandName 'test-lazycasey' -Native
+
+        Get-TestLazyNativeCompletion -CommandName 'test-lazycasex' | Should -Be @('one')
+        Get-TestLazyNativeState -CommandName 'test-lazycasex', 'test-lazycasey' | Should -Be @('Active', 'Active') -Because 'both spellings name one file, so one load swaps both targets'
+    }
+}
