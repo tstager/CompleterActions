@@ -1871,7 +1871,7 @@ Describe 'Packaged command help' {
         }
     }
 
-    It 'replaces every comment that leads into a public function, in any form, and keeps private comment help' {
+    It 'replaces only the help that leads into each public command, in any layout, and keeps every other source line' {
         if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
         {
             Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
@@ -1921,6 +1921,27 @@ Describe 'Packaged command help' {
         $lines[0] | Should -BeExactly '<#'
         Set-Content -LiteralPath $path -Value @(@($lines[1..($helpEnd - 1)] | ForEach-Object { "# $_" }) + $lines[($helpEnd + 1)..($lines.Count - 1)])
 
+        # The help closes on the declaration's line.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Import-CompleterSet.ps1'
+        $lines = @(Get-Content -LiteralPath $path)
+        $declarationIndex = [array]::IndexOf($lines, 'function Import-CompleterSet')
+        $lines[$declarationIndex - 1] | Should -BeExactly '#>'
+        Set-Content -LiteralPath $path -Value @($lines[0..($declarationIndex - 2)] + "#> $($lines[$declarationIndex])" + $lines[($declarationIndex + 1)..($lines.Count - 1)])
+
+        # A #requires line, and a statement that ends in a comment, each directly above the help.
+        $requiresLine = '#requires -Version 7.4'
+        $trailingComment = '# a comment that ends a statement'
+        $statementLine = "`$script:BuildProbeMarker = 'kept'  $trailingComment"
+        $path = Join-Path -Path $publicRoot -ChildPath 'Export-CompleterSet.ps1'
+        Set-Content -LiteralPath $path -Value @(@($requiresLine) + @(Get-Content -LiteralPath $path))
+        $path = Join-Path -Path $publicRoot -ChildPath 'Import-CompleterScript.ps1'
+        Set-Content -LiteralPath $path -Value @(@($statementLine) + @(Get-Content -LiteralPath $path))
+
+        # A helper function with its own comment help ahead of the command.
+        $helperSynopsis = 'A helper defined ahead of the command.'
+        $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterSet.ps1'
+        Set-Content -LiteralPath $path -Value @(@('<#', '.SYNOPSIS', $helperSynopsis, '#>', 'function Get-BuildProbeHelper { 1 }', '') + @(Get-Content -LiteralPath $path))
+
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
@@ -1931,7 +1952,11 @@ Describe 'Packaged command help' {
         $packagedAst = [System.Management.Automation.Language.Parser]::ParseFile($packagedPath, [ref] $tokens, [ref] $parseErrors)
 
         @($parseErrors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }) | Should -BeNullOrEmpty
-        Get-Content -LiteralPath $packagedPath -Raw | Should -Not -Match ([regex]::Escape($helpLineLikeDeclaration))
+        $packagedText = Get-Content -LiteralPath $packagedPath -Raw
+        $packagedText | Should -Not -Match ([regex]::Escape($helpLineLikeDeclaration))
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($requiresLine))\r?$"
+        $packagedAst.ScriptRequirements.RequiredPSVersion | Should -Be ([version] '7.4') -Because 'the #requires line must stay a requirement of the packaged module'
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($statementLine))\r?$"
 
         $functions = @($packagedAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
         $publicNames = @(Get-ChildItem -LiteralPath $publicRoot -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
@@ -1953,17 +1978,43 @@ Describe 'Packaged command help' {
                 }
             )
 
-            $leadingComments | Should -HaveCount 1 -Because "only the directive may lead into the packaged $($function.Name)"
             $leadingComments[0] -replace '\r', '' | Should -BeExactly "<#`n.EXTERNALHELP CompleterActions-help.xml`n#>"
-            $function.GetHelpContent().MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml'
+            @($leadingComments | Select-Object -Skip 1 | Where-Object { $_ -notin $requiresLine, $trailingComment }) | Should -BeNullOrEmpty -Because "only the directive may lead into the packaged $($function.Name)"
+
+            $help = $function.GetHelpContent()
+            $help.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml'
+            $help.Synopsis | Should -BeNullOrEmpty -Because "no comment may join the directive of the packaged $($function.Name)"
         }
 
-        foreach ($function in $functions | Where-Object Name -in $privateNames)
+        foreach ($function in $functions | Where-Object Name -in ($privateNames + 'Get-BuildProbeHelper'))
         {
             $help = $function.GetHelpContent()
 
             $help.MamlHelpFile | Should -BeNullOrEmpty
             $help.Synopsis | Should -Not -BeNullOrEmpty -Because "the packaged private $($function.Name) keeps its comment help"
         }
+
+        @($functions | Where-Object Name -eq 'Get-BuildProbeHelper') | Should -HaveCount 1
+        ($functions | Where-Object Name -eq 'Get-BuildProbeHelper').GetHelpContent().Synopsis.Trim() | Should -BeExactly $helperSynopsis
+
+        $manifestPath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
+        $imported = & pwsh -NoProfile -NonInteractive -Command {
+            param($ManifestPath)
+
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name $ManifestPath -Force
+            $commands = @(Get-Command -Module 'CompleterActions' -CommandType Function)
+
+            [pscustomobject] @{
+                Exported = @($commands.Name | Sort-Object)
+                Maml     = @($commands | ForEach-Object { [string] $_.ScriptBlock.Ast.GetHelpContent().MamlHelpFile } | Sort-Object -Unique)
+                Marker   = & (Get-Module -Name 'CompleterActions') { $script:BuildProbeMarker }
+            }
+        } -args $manifestPath
+
+        $LASTEXITCODE | Should -Be 0
+        @($imported.Exported) | Should -Be @($publicNames | Sort-Object) -Because 'the package must export every public command and no helper'
+        @($imported.Maml) | Should -Be @('CompleterActions-help.xml')
+        $imported.Marker | Should -BeExactly 'kept' -Because 'the statement above the help of Import-CompleterScript must run when the package is imported'
     }
 }

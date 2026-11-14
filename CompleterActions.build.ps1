@@ -113,28 +113,42 @@ task build clean, compile, external_help, {
             throw "build: '$($file.FullName)' does not parse at line $($parseErrors[0].Extent.StartLineNumber): $($parseErrors[0].Message)"
         }
 
-        # The parser finds the function, so a help line that starts with the word 'function' is not taken for it.
-        $functionAst = $fileAst.EndBlock.Statements |
-            Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] } |
-            Select-Object -First 1
-        $functionLine = if ($null -eq $functionAst) { [int]::MaxValue } else { $functionAst.Extent.StartLineNumber }
-        $helpStartLine = $functionLine
+        # The parser finds the functions, so a help line that starts with the word 'function' is not taken for one.
+        $functionAsts = @($fileAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+        $firstFunctionLine = if ($functionAsts.Count -eq 0) { [int]::MaxValue } else { $functionAsts[0].Extent.StartLineNumber }
+        $commandLine = 0
+        $helpLine = 0
 
-        # Only public commands are in the generated MAML, so a private function keeps its comment help.
-        $isPublic = $null -ne $functionAst -and $public.FullName -contains $file.FullName
+        # Only public commands are in the generated MAML, so a private function, a helper in a public file included,
+        # keeps its comment help.
+        if ($public.FullName -contains $file.FullName) {
+            $commandAst = $functionAsts | Where-Object Name -eq $file.BaseName | Select-Object -First 1
 
-        if ($isPublic) {
-            # PowerShell reads help from the comments directly before the function, never from between the name and
-            # the opening brace, and those comments outrank help in the body. Every comment that leads into a public
-            # function, block or line comments and any blank lines between, is therefore replaced with the directive,
-            # so Get-Help selects the MAML built from the markdown.
-            $leadingTokens = @($tokens | Where-Object { $_.Extent.EndOffset -le $functionAst.Extent.StartOffset })
+            if ($null -eq $commandAst) {
+                throw "build: '$($file.FullName)' does not define the function '$($file.BaseName)' at its top level, so the exported command would be missing."
+            }
 
-            for ($index = $leadingTokens.Count - 1; $index -ge 0 -and $leadingTokens[$index].Kind -in 'Comment', 'NewLine'; $index--) {
-                if ($leadingTokens[$index].Kind -eq 'Comment') {
-                    $helpStartLine = $leadingTokens[$index].Extent.StartLineNumber
+            $commandLine = $commandAst.Extent.StartLineNumber
+            $commandIndex = 0
+
+            while ($tokens[$commandIndex].Extent.StartOffset -lt $commandAst.Extent.StartOffset) {
+                $commandIndex++
+            }
+
+            # PowerShell reads help from the comment block directly before the function, never from between the name
+            # and the opening brace, and that block outranks help in the body. The help that leads into the command is
+            # therefore replaced with the directive, so Get-Help selects the MAML built from the markdown. The help
+            # starts at the earliest comment of the run before the declaration that begins its own line; a comment
+            # after code on its line, a #requires line and everything before them stay in the package.
+            $helpStart = $commandAst.Extent
+
+            for ($index = $commandIndex - 1; $index -ge 0 -and $tokens[$index].Kind -in 'Comment', 'NewLine' -and $tokens[$index].Text -notmatch '^#requires\b'; $index--) {
+                if ($tokens[$index].Kind -eq 'Comment' -and ($index -eq 0 -or $tokens[$index - 1].Kind -eq 'NewLine')) {
+                    $helpStart = $tokens[$index].Extent
                 }
             }
+
+            $helpLine = $helpStart.StartLineNumber
         }
 
         $fileBody = [System.Collections.Generic.List[string]]::new()
@@ -143,7 +157,25 @@ task build clean, compile, external_help, {
         foreach ($line in Get-Content -Path $file.FullName) {
             $lineNumber++
 
-            if ($lineNumber -ge $helpStartLine -and $lineNumber -lt $functionLine) {
+            if ($lineNumber -ge $helpLine -and $lineNumber -lt $commandLine) {
+                continue
+            }
+
+            if ($lineNumber -eq $commandLine) {
+                # The help can end on the declaration's line, so only the declaration is kept from it. Code before a
+                # declaration that has no help stays, on its own line. The blank line keeps a comment left above out of
+                # the directive's block: PowerShell reads no help from a block that starts with another comment.
+                $lead = if ($helpLine -eq $commandLine) { $line.Substring(0, $helpStart.StartColumnNumber - 1) } else { '' }
+
+                if (-not [string]::IsNullOrWhiteSpace($lead)) {
+                    $fileBody.Add($lead)
+                }
+
+                $fileBody.Add('')
+                $fileBody.Add('<#')
+                $fileBody.Add(".EXTERNALHELP $modulename-help.xml")
+                $fileBody.Add('#>')
+                $fileBody.Add($line.Substring($commandAst.Extent.StartColumnNumber - 1))
                 continue
             }
 
@@ -155,14 +187,8 @@ task build clean, compile, external_help, {
                 continue
             }
 
-            if ($lineNumber -lt $functionLine -and $line -match $sourceDotSourcingPattern) {
+            if ($lineNumber -lt $firstFunctionLine -and $line -match $sourceDotSourcingPattern) {
                 continue
-            }
-
-            if ($isPublic -and $lineNumber -eq $functionLine) {
-                $fileBody.Add('<#')
-                $fileBody.Add(".EXTERNALHELP $modulename-help.xml")
-                $fileBody.Add('#>')
             }
 
             $fileBody.Add($line)
