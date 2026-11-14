@@ -9,13 +9,24 @@ tier and the targets it registers. Import-CompleterSet reads the file back and
 registers everything in it, so a profile that imports a completer repository
 becomes one Import-CompleterSet call.
 
-Records arrive through -InputObject, typically from Get-Completer
-or Import-CompleterScript. Without -InputObject the command exports every
-managed registration that records a ScriptPath. Script paths are written
-relative to the set file when both share a root, so a repository can carry its
-set file alongside its scripts; paths on another drive stay absolute. The
-Trusted flag of each entry is taken from the records, and records for the same
-script must agree on it.
+Records arrive through -InputObject or the pipeline, typically from
+Get-Completer or Import-CompleterScript. When the command comes after a pipe
+or is given -InputObject, it exports only the records that arrive that way,
+even when none do. A Get-Completer filter that matches nothing selects nothing,
+whether it is piped to the command or passed to -InputObject, and so do an
+empty array and $null; the command then warns that no registrations were
+selected, writes nothing, and leaves an existing file unchanged. Only a call
+with no pipe before it and no -InputObject, such as the command on its own or
+as the first command of a pipeline, exports every managed registration that
+records a ScriptPath. The command cannot see a pipe in front of a function or
+script block that calls it, so a wrapper must pass its input on, for example as
+$input | Export-CompleterSet; otherwise the inner call has no pipe before it
+and exports every managed registration.
+
+Script paths are written relative to the set file when both share a root, so a
+repository can carry its set file alongside its scripts; paths on another drive
+stay absolute. The Trusted flag of each entry is taken from the records, and
+records for the same script must agree on it.
 
 A strict entry must list every target its script registers, because
 Import-CompleterSet compares a strict entry's Targets with the targets derived
@@ -43,7 +54,9 @@ The path of the .psd1 file to write. The parent directory must exist.
 .PARAMETER InputObject
 Registration records to export. Each record must describe a target and expose
 the script it came from through a ScriptPath or SourcePath property. Records
-without a script path cannot be expressed in a set and are rejected.
+without a script path cannot be expressed in a set and are rejected. A null
+carries no record and is skipped, so -InputObject $null, like the output of a
+Get-Completer filter that matches nothing, selects nothing.
 
 .PARAMETER PassThru
 Returns the written file.
@@ -74,7 +87,6 @@ function Export-CompleterSet
         [string] $Path,
 
         [Parameter(ValueFromPipeline)]
-        [ValidateNotNull()]
         [object[]] $InputObject,
 
         [Parameter()]
@@ -98,15 +110,24 @@ function Export-CompleterSet
         }
 
         $records = [System.Collections.Generic.List[psobject]]::new()
-        $inputBound = $false
+
+        # A pipeline or -InputObject chooses the records to export even when it
+        # delivers none, and ExpectingInput is already true here for a pipeline
+        # that never sends a record. Only a call with neither falls back to every
+        # managed registration.
+        $inputRequested = $PSCmdlet.MyInvocation.ExpectingInput -or $PSBoundParameters.ContainsKey('InputObject')
     }
 
     process
     {
-        if ($PSBoundParameters.ContainsKey('InputObject'))
+        # A null carries no record, so a Get-Completer filter that matches nothing
+        # selects nothing whether it is piped or passed to -InputObject.
+        foreach ($item in $InputObject)
         {
-            $inputBound = $true
-            $records.AddRange([psobject[]] @($InputObject))
+            if ($null -ne $item)
+            {
+                $records.Add($item)
+            }
         }
     }
 
@@ -114,9 +135,14 @@ function Export-CompleterSet
     {
         try
         {
-            if (-not $inputBound)
+            if (-not $inputRequested)
             {
                 $records.AddRange([psobject[]] @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+            }
+            elseif ($records.Count -eq 0)
+            {
+                Write-Warning -Message "No registrations were selected for export, so nothing was written to '$outputPath'."
+                return
             }
 
             $entriesByPath = [ordered] @{}

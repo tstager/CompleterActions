@@ -32,9 +32,20 @@ trust tier and the targets it registers. `Import-CompleterSet` reads the file
 back and registers everything in it, so a profile that imports a completer
 repository becomes one `Import-CompleterSet` call.
 
-Records arrive through `-InputObject`, typically from
-`Get-Completer` or `Import-CompleterScript`. Without `-InputObject`
-the command exports every managed registration that records a `ScriptPath`.
+Records arrive through `-InputObject` or the pipeline, typically from
+`Get-Completer` or `Import-CompleterScript`. When the command comes after a
+pipe or is given `-InputObject`, it exports only the records that arrive that
+way, even when none do. A `Get-Completer` filter that matches nothing selects
+nothing, whether it is piped to the command or passed to `-InputObject`, and so
+do an empty array and `$null`; the command then warns that no registrations
+were selected, writes nothing, and leaves an existing file unchanged. Only a
+call with no pipe before it and no `-InputObject`, such as the command on its
+own or as the first command of a pipeline, exports every managed registration
+that records a `ScriptPath`. The command cannot see a pipe in front of a
+function or script block that calls it, so a wrapper must pass its input on,
+for example as `$input | Export-CompleterSet`; otherwise the inner call has no
+pipe before it and exports every managed registration.
+
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file
 alongside its scripts; paths on another drive stay absolute. The `Trusted` flag of each entry is taken from the records, and
@@ -112,6 +123,8 @@ HelpMessage: ''
 Registration records to export. Each record must describe a target and expose
 the script it came from through a `ScriptPath` or `SourcePath` property.
 Records without a script path cannot be expressed in a set and are rejected.
+A null carries no record and is skipped, so `-InputObject $null`, like the
+output of a `Get-Completer` filter that matches nothing, selects nothing.
 
 ```yaml
 Type: System.Object[]
