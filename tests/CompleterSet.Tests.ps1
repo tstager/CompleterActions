@@ -619,18 +619,36 @@ Describe 'Completer sets' {
             @{ Case = 'an empty pipeline'; Export = { param($Path) @() | Export-CompleterSet -Path $Path -PassThru } }
             @{ Case = 'an empty -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject @() -PassThru } }
             @{ Case = 'a filter that matches nothing under -WhatIf'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru -WhatIf } }
+            @{ Case = 'a filter that matches nothing passed to -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject (Get-Completer -CommandName 'review-does-not-exist' -Native) -PassThru } }
+            @{ Case = '-InputObject $null'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject $null -PassThru } }
+            @{ Case = 'a piped $null'; Export = { param($Path) $null | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'a wrapper that passes an empty $input on'; Export = { param($Path) @() | & { param($SetPath) $input | Export-CompleterSet -Path $SetPath -PassThru } $Path } }
         ) {
             param($Case, $Export)
 
             (Get-Completer -CommandName 'importfixture' -Native).ScriptPath | Should -Be $script:NativeFixturePath -Because "the session must hold a registration that $Case must not export"
 
-            $streamed = @(& $Export -Path $script:SetPath 3>&1)
+            $streamed = @(& $Export -Path $script:SetPath 3>&1 2>&1)
             $warnings = @($streamed | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
-            $output = @($streamed | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+            $errors = @($streamed | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $output = @($streamed | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] -and $_ -isnot [System.Management.Automation.ErrorRecord] })
 
+            $errors | Should -BeNullOrEmpty -Because 'an empty selection is reported by the warning alone'
             @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
             $output | Should -BeNullOrEmpty -Because 'no file was written, so -PassThru has nothing to return'
             (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'skips nulls among the records it is given and exports the rest' {
+            $records = @(Import-CompleterScript -LiteralPath $script:NativeFixturePath)
+
+            $written = @(Export-CompleterSet -Path $script:SetPath -InputObject (@($null) + $records + @($null)) -PassThru | Select-Object -ExpandProperty FullName)
+
+            $written | Should -Be @($script:SetPath)
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1 -Because 'only the records given are exported, not the existing set or every managed registration'
+            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
+            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
         }
 
         It 'does not ask for confirmation when no registrations are selected' {
@@ -730,15 +748,18 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
                 {
                     $maml = [xml] (Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'CompleterActions', 'CompleterActions-Help.xml')) -Raw)
                     $command = $maml.helpItems.command | Where-Object { $_.details.verb -eq 'Export' -and $_.details.noun -eq 'CompleterSet' }
-                    @($command.description.para) -join ' '
+                    $inputObjectParameter = $command.parameters.parameter | Where-Object { $_.name -eq 'InputObject' }
+                    @($command.description.para) + @($inputObjectParameter.description.para) -join ' '
                 }
             }
             $flatText = $text -replace '`', '' -replace '\s+', ' '
 
             foreach ($expectedText in @(
-                    'When the command comes after a pipe or is given -InputObject, it exports only the records that arrive that way, even when none do'
-                    'an empty array piped to the command, or -InputObject @() selects nothing'
+                    'When the command comes after a pipe or is given -InputObject, it exports only the records that arrive that way, even when none do.'
+                    'A Get-Completer filter that matches nothing selects nothing, whether it is piped to the command or passed to -InputObject, and so do an empty array and $null'
                     'Only a call with no pipe before it and no -InputObject, such as the command on its own or as the first command of a pipeline, exports every managed registration that records a ScriptPath.'
+                    'The command cannot see a pipe in front of a function or script block that calls it, so a wrapper must pass its input on, for example as $input | Export-CompleterSet'
+                    'A null carries no record and is skipped, so -InputObject $null, like the output of a Get-Completer filter that matches nothing, selects nothing.'
                 ))
             {
                 $flatText | Should -Match ([regex]::Escape($expectedText))

@@ -12,12 +12,16 @@ becomes one Import-CompleterSet call.
 Records arrive through -InputObject or the pipeline, typically from
 Get-Completer or Import-CompleterScript. When the command comes after a pipe
 or is given -InputObject, it exports only the records that arrive that way,
-even when none do: a Get-Completer filter that matches nothing, an empty array
-piped to the command, or -InputObject @() selects nothing, so the command warns
-that no registrations were selected, writes nothing, and leaves an existing
-file unchanged. Only a call with no pipe before it and no -InputObject, such as
-the command on its own or as the first command of a pipeline, exports every
-managed registration that records a ScriptPath.
+even when none do. A Get-Completer filter that matches nothing selects nothing,
+whether it is piped to the command or passed to -InputObject, and so do an
+empty array and $null; the command then warns that no registrations were
+selected, writes nothing, and leaves an existing file unchanged. Only a call
+with no pipe before it and no -InputObject, such as the command on its own or
+as the first command of a pipeline, exports every managed registration that
+records a ScriptPath. The command cannot see a pipe in front of a function or
+script block that calls it, so a wrapper must pass its input on, for example as
+$input | Export-CompleterSet; otherwise the inner call has no pipe before it
+and exports every managed registration.
 
 Script paths are written relative to the set file when both share a root, so a
 repository can carry its set file alongside its scripts; paths on another drive
@@ -50,7 +54,9 @@ The path of the .psd1 file to write. The parent directory must exist.
 .PARAMETER InputObject
 Registration records to export. Each record must describe a target and expose
 the script it came from through a ScriptPath or SourcePath property. Records
-without a script path cannot be expressed in a set and are rejected.
+without a script path cannot be expressed in a set and are rejected. A null
+carries no record and is skipped, so -InputObject $null, like the output of a
+Get-Completer filter that matches nothing, selects nothing.
 
 .PARAMETER PassThru
 Returns the written file.
@@ -81,7 +87,6 @@ function Export-CompleterSet
         [string] $Path,
 
         [Parameter(ValueFromPipeline)]
-        [ValidateNotNull()]
         [object[]] $InputObject,
 
         [Parameter()]
@@ -115,9 +120,14 @@ function Export-CompleterSet
 
     process
     {
-        if ($PSBoundParameters.ContainsKey('InputObject'))
+        # A null carries no record, so a Get-Completer filter that matches nothing
+        # selects nothing whether it is piped or passed to -InputObject.
+        foreach ($item in $InputObject)
         {
-            $records.AddRange([psobject[]] @($InputObject))
+            if ($null -ne $item)
+            {
+                $records.Add($item)
+            }
         }
     }
 
