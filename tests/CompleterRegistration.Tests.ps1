@@ -277,7 +277,7 @@ namespace CompleterActionsTests
 
             Add-ManagedCompleterRegistration -Registration $registration | Out-Null
 
-            $byKey = Find-ManagedCompleterRegistration -Key 'git:checkout'
+            $byKey = Find-ManagedCompleterRegistration -Target $target
             $byParts = Find-ManagedCompleterRegistration -CommandName 'GIT' -ParameterName 'CHECKOUT'
             $allManaged = @(Find-ManagedCompleterRegistration)
 
@@ -419,9 +419,11 @@ namespace CompleterActionsTests
                 $allRuntime = @(Find-RuntimeCompleterRegistration -Verbose 4>&1)
                 $verboseMessages = @($allRuntime | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object { $_.Message })
                 $discovered = @($allRuntime | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
-                $byNativeKey = Find-RuntimeCompleterRegistration -Key 'completeractionsglobalparam'
+                $nativeTarget = Resolve-CompleterTarget -CommandName 'completeractionsglobalparam' -Native
+                $parameterTarget = Resolve-CompleterTarget -RuntimeKey 'completeractionsparameterruntimetest:name'
+                $byNativeKey = Find-RuntimeCompleterRegistration -Target $nativeTarget
                 $snapshot = Get-CompleterRegistrationSnapshot
-                $states = @(Resolve-CompleterRegistrationState -Key 'completeractionsglobalparam', 'completeractionsparameterruntimetest:name' -Snapshot $snapshot)
+                $states = @(Resolve-CompleterRegistrationState -Target $nativeTarget, $parameterTarget -Snapshot $snapshot)
 
                 [pscustomobject] @{
                     DiscoveredKeys   = @($discovered.Key)
@@ -668,11 +670,15 @@ namespace CompleterActionsTests
         $result = & $module {
             $registration = New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -CommandName 'CaseCmd' -Native) -ScriptBlock { 'case' } -State 'Pending' -ScriptPath 'C:\completers\case_completer.ps1'
             $snapshot = [pscustomobject] @{
-                Managed = @{ 'casecmd' = $registration }
+                Managed = @{ 'native:casecmd' = $registration }
                 Runtime = @()
             }
+            $targets = foreach ($key in 'CASECMD', 'casecmd', 'OtherCmd')
+            {
+                [pscustomobject] @{ Key = $key; RuntimeKey = $key; IsNative = $true }
+            }
 
-            $states = @(Resolve-CompleterRegistrationState -Key 'CASECMD', 'casecmd', 'OtherCmd' -Snapshot $snapshot)
+            $states = @(Resolve-CompleterRegistrationState -Target $targets -Snapshot $snapshot)
 
             [pscustomobject] @{
                 Keys     = @($states.Key)

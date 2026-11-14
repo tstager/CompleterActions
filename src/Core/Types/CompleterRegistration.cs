@@ -21,11 +21,16 @@ public sealed class CompleterRegistration
     private string loadError = string.Empty;
     private string scriptText = string.Empty;
 
-    /// <summary>The module's key for the registration.</summary>
+    /// <summary>
+    /// The module's key for the registration: the lowercase command name of a native target, or
+    /// <c>command:parameter</c> of a parameter target. A native command whose name contains a colon
+    /// shares its key with a parameter target, so the key identifies a registration only together with
+    /// <see cref="IsNative"/>.
+    /// </summary>
     [AllowNull]
     public string Key { get => key; set => key = value ?? string.Empty; }
 
-    /// <summary>The key the module tracks the registration under.</summary>
+    /// <summary>The key the module tracks the registration under, together with <see cref="IsNative"/>.</summary>
     [AllowNull]
     public string RegistrationKey { get => registrationKey; set => registrationKey = value ?? string.Empty; }
 

@@ -90,10 +90,13 @@ BeforeAll {
             foreach ($keyItem in $Key)
             {
                 $runtimeScriptBlock = $null
+                # No fixture's native command name contains a colon, so a key with one is a parameter target.
+                $target = if ($keyItem.Contains(':')) { Resolve-CompleterTarget -RuntimeKey $keyItem } else { Resolve-CompleterTarget -RuntimeKey $keyItem -Native }
+                $identity = Get-CompleterTargetIdentity -Target $target
 
                 foreach ($view in $snapshot.Runtime)
                 {
-                    if ($view.Keys.ContainsKey($keyItem))
+                    if ($view.IsNative -eq $target.IsNative -and $view.Keys.ContainsKey($keyItem))
                     {
                         $runtimeScriptBlock = $view.Dictionary[$view.Keys[$keyItem]]
                         break
@@ -102,7 +105,7 @@ BeforeAll {
 
                 [pscustomobject] @{
                     Key     = $keyItem
-                    Managed = if ($snapshot.Managed.Contains($keyItem)) { $snapshot.Managed[$keyItem] } else { $null }
+                    Managed = if ($snapshot.Managed.Contains($identity)) { $snapshot.Managed[$identity] } else { $null }
                     Runtime = $runtimeScriptBlock
                 }
             }
@@ -1036,10 +1039,10 @@ Describe 'Completer sets' {
 
                 function script:Resolve-CompleterRegistrationState
                 {
-                    param($Key, $Snapshot)
+                    param($Target, $Snapshot)
 
                     $script:TestStateCount++
-                    & $script:TestStateFunction -Key $Key -Snapshot $Snapshot
+                    & $script:TestStateFunction -Target $Target -Snapshot $Snapshot
                 }
             }
 
@@ -1450,10 +1453,10 @@ Describe 'Completer sets' {
 
                 function script:Resolve-CompleterRegistrationState
                 {
-                    param($Key, $Snapshot)
+                    param($Target, $Snapshot)
 
                     $script:TestStateCount++
-                    & $script:TestStateFunction -Key $Key -Snapshot $Snapshot
+                    & $script:TestStateFunction -Target $Target -Snapshot $Snapshot
                 }
 
                 function script:Add-CompleterRegistration
@@ -2140,5 +2143,90 @@ Describe 'Completer sets' {
             $parses = @(& (Get-Module -Name 'CompleterActions') { $script:TestParseCalls })
             $parses | Should -BeExactly @($script:ParameterFixturePath, $script:NativeFixturePath, $script:UnsafeSetScriptPath) -Because 'the grammar and the target derivation share one parse per entry'
         }
+    }
+}
+
+Describe 'Completer sets with a native command that shares a parameter target key' {
+    BeforeAll {
+        $script:SetIdentityCleanupTargets = @(
+            @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = 'Test-SetIdentityTool:Name'; CompleterType = 'Native' }
+        )
+
+        $script:SetIdentityNativeText = @'
+Register-ArgumentCompleter -Native -CommandName 'Test-SetIdentityTool:Name' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+    'native-result'
+}
+'@
+
+        $script:SetIdentityParameterText = @'
+Register-ArgumentCompleter -CommandName 'Test-SetIdentityTool' -ParameterName 'Name' -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+    'parameter-result'
+}
+'@
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:SetIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+        $script:SetIdentityRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $script:SetIdentityRoot
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:SetIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'exports, tests, and imports one script that registers both kinds' {
+        $scriptPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_both_completer.ps1'
+        $setPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity.psd1'
+        Set-Content -LiteralPath $scriptPath -Value ($script:SetIdentityNativeText + [Environment]::NewLine + $script:SetIdentityParameterText) -Encoding utf8
+
+        Import-CompleterScript -LiteralPath $scriptPath | Export-CompleterSet -Path $setPath
+        $data = Import-PowerShellDataFile -LiteralPath $setPath
+
+        @($data.Entries).Count | Should -Be 1
+        @($data.Entries[0].Targets | ForEach-Object { if ($_.Native) { "Native/$($_.CommandName)" } else { "Parameter/$($_.CommandName)/$($_.ParameterName)" } }) |
+            Should -Be @('Native/Test-SetIdentityTool:Name', 'Parameter/Test-SetIdentityTool/Name') -Because 'the native and the parameter target are two targets of the entry'
+        Test-CompleterSet -LiteralPath $setPath | Should -BeNullOrEmpty
+
+        $imported = @(Import-CompleterSet -LiteralPath $setPath)
+
+        @($imported | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending', 'Parameter/Pending')
+    }
+
+    It 'imports two entries whose targets differ only in kind without a DuplicateTarget problem' {
+        $nativePath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_native_completer.ps1'
+        $parameterPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_parameter_completer.ps1'
+        $setPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity.psd1'
+        Set-Content -LiteralPath $nativePath -Value $script:SetIdentityNativeText -Encoding utf8
+        Set-Content -LiteralPath $parameterPath -Value $script:SetIdentityParameterText -Encoding utf8
+        Write-TestCompleterSet -Path $setPath -Entry @(
+            "@{ Path = 'identity_native_completer.ps1' }"
+            "@{ Path = 'identity_parameter_completer.ps1' }"
+        )
+
+        @(Test-CompleterSet -LiteralPath $setPath | ForEach-Object { [string] $_.Construct }) | Should -Be @('MissingHash', 'MissingHash') -Because 'the hand-written entries carry no Hash, and two targets that differ in kind are not a DuplicateTarget'
+
+        $imported = @(Import-CompleterSet -LiteralPath $setPath)
+
+        @($imported | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending', 'Parameter/Pending')
     }
 }

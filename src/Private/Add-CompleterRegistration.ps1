@@ -133,7 +133,7 @@ function Add-CompleterRegistration
                 }
                 else
                 {
-                    $null = Remove-RuntimeCompleterRegistration -Key $Registration[$index].Key
+                    $null = Remove-RuntimeCompleterRegistration -Target $Registration[$index]
                 }
 
                 if ($null -ne $Conflict[$index].ManagedRegistration)
@@ -142,7 +142,7 @@ function Add-CompleterRegistration
                 }
                 else
                 {
-                    $null = Remove-ManagedCompleterRegistration -Key $Registration[$index].Key
+                    $null = Remove-ManagedCompleterRegistration -Target $Registration[$index]
                 }
             }
             catch

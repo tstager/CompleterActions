@@ -49,8 +49,11 @@ came from. A script-backed registration is any managed record with a
 `Register-Completer -Lazy`, or an eager one from
 `Import-CompleterScript | Register-Completer`. The targets are named by native
 command, command parameter target, or pipeline `InputObject` values, and each
-target is decided once per call; a key seen earlier in the same call is
-skipped.
+target is decided once per call; a target seen earlier in the same call is
+skipped. Only the kind of target named is reset: a native command whose name
+contains a colon, such as an alias named `Get-Thing:Name`, shares its key with
+the parameter target `Get-Thing` / `Name`, and resetting one never touches the
+other.
 
 Each target is decided from the managed record and the live runtime value,
 and the first of these rules that applies decides it:

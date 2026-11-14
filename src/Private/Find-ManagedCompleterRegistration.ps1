@@ -4,12 +4,14 @@ Finds managed completer registrations from module state.
 
 .DESCRIPTION
 Returns registration records from the module's in-memory registration table.
-Callers can enumerate all records, resolve a record by its normalized key, or
-look up a record by command and parameter target details using the same key
-resolution logic as registration and removal helpers.
+Callers can enumerate all records, look up the record of a target or of
+another record, or look up a record by command and parameter target details.
+Every lookup names the target kind, because a native target and a parameter
+target can share a Key; the table is keyed by Get-CompleterTargetIdentity.
 
-.PARAMETER Key
-The normalized or runtime key for the registration record to retrieve.
+.PARAMETER Target
+The completer target or registration record whose managed record to retrieve.
+It must expose Key and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name for the registration target.
@@ -41,9 +43,9 @@ function Find-ManagedCompleterRegistration
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -65,9 +67,9 @@ function Find-ManagedCompleterRegistration
         return $registrations.Values
     }
 
-    $resolvedKey = switch ($PSCmdlet.ParameterSetName)
+    $lookupTarget = switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey' { Get-CompleterRegistrationKey -RuntimeKey $Key }
+        'Target' { $Target }
         'Native'
         {
             if (-not $Native)
@@ -75,15 +77,17 @@ function Find-ManagedCompleterRegistration
                 throw 'Native target resolution requires the -Native switch.'
             }
 
-            Get-CompleterRegistrationKey -CommandName $CommandName -Native
+            Resolve-CompleterTarget -CommandName $CommandName -Native
         }
-        'CommandParameter' { Get-CompleterRegistrationKey -CommandName $CommandName -ParameterName $ParameterName }
+        'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
     }
 
-    if (-not $registrations.Contains($resolvedKey))
+    $identity = Get-CompleterTargetIdentity -Target $lookupTarget
+
+    if (-not $registrations.Contains($identity))
     {
         return
     }
 
-    return $registrations[$resolvedKey]
+    return $registrations[$identity]
 }

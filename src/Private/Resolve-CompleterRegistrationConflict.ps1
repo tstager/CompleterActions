@@ -8,14 +8,24 @@ or through the states the caller already resolved for them, and applies the
 module's replacement rules in one place. Without -Force an existing managed
 record blocks a registration when it is stale, when its lazy load failed, or
 when it describes a different completer, and an unmanaged runtime
-registration blocks it as well. A managed record that already
-describes the same completer, the same script block text for an eager
-registration or the same script and tier for a lazy one, is reported as
-existing so the caller can reuse it. A record is lazy when its State is
-'Pending'.
+registration blocks it as well. A managed record that already describes the
+same completer is reported as existing so the caller can reuse it. A record
+is lazy when its State is 'Pending', and a lazy record describes the same
+completer when it loads the same script under the same tier.
+
+An eager record describes the same completer when it holds the very same
+script block, or a script block with exactly the same text, compared case
+sensitively, bound to the same context. A script block imported from a
+script, which carries a ScriptPath, is bound to that script: it matches when
+the ScriptPath and tier match, so importing and registering the same script
+again stays a no-op although every import binds its script blocks to a new
+module. Any other script block matches when it is bound to the same module, or
+to none, and was defined in the same file. A closure is bound to a module of
+its own, so two closures never match even when their text is identical,
+because they run with different captured values.
 
 The records are resolved in order as if each earlier record of the same call
-had already been written: a later record for the same key sees the earlier
+had already been written: a later record for the same target sees the earlier
 one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
 Register-Completer resolves one record at a time, after the
@@ -78,7 +88,7 @@ function Resolve-CompleterRegistrationConflict
 
     if (-not $PSBoundParameters.ContainsKey('RegistrationState'))
     {
-        $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+        $registrationStates = @(Resolve-CompleterRegistrationState -Target $Registration -Snapshot $Snapshot)
     }
 
     $plannedRegistrations = @{}
@@ -88,10 +98,11 @@ function Resolve-CompleterRegistrationConflict
         $registrationItem = $Registration[$index]
         $registrationState = $registrationStates[$index]
         $key = [string] $registrationItem.Key
+        $identity = Get-CompleterTargetIdentity -Target $registrationItem
 
-        if ($plannedRegistrations.Contains($key))
+        if ($plannedRegistrations.Contains($identity))
         {
-            $plannedRegistration = $plannedRegistrations[$key]
+            $plannedRegistration = $plannedRegistrations[$identity]
             $registrationState = [pscustomobject] [ordered] @{
                 Key                 = $key
                 ManagedRegistration = $plannedRegistration
@@ -125,7 +136,16 @@ function Resolve-CompleterRegistrationConflict
                     }
                     else
                     {
-                        $existingManagedRegistration.ScriptText -eq $registrationItem.ScriptText
+                        $existingScriptBlock = $existingManagedRegistration.ScriptBlock
+                        $newScriptBlock = $registrationItem.ScriptBlock
+
+                        [object]::ReferenceEquals($existingScriptBlock, $newScriptBlock) -or (
+                            [string]::Equals($existingManagedRegistration.ScriptText, $registrationItem.ScriptText, [System.StringComparison]::Ordinal) -and
+                            $existingManagedRegistration.ScriptPath -eq $registrationItem.ScriptPath -and
+                            [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted -and
+                            (-not [string]::IsNullOrEmpty($registrationItem.ScriptPath) -or (
+                                [object]::ReferenceEquals($existingScriptBlock.Module, $newScriptBlock.Module) -and
+                                [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, [System.StringComparison]::Ordinal))))
                     }
 
                     if (-not $isExisting)
@@ -142,7 +162,7 @@ function Resolve-CompleterRegistrationConflict
 
         if ($null -eq $problem)
         {
-            $plannedRegistrations[$key] = if ($isExisting) { $existingManagedRegistration } else { $registrationItem }
+            $plannedRegistrations[$identity] = if ($isExisting) { $existingManagedRegistration } else { $registrationItem }
         }
 
         [pscustomobject] [ordered] @{

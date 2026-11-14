@@ -8,8 +8,11 @@ came from. A script-backed registration is any managed record with a
 ScriptPath: a lazy registration from Import-CompleterSet or Register-Completer
 -Lazy, or an eager one from Import-CompleterScript | Register-Completer. The
 targets are named by native command, command parameter target, or pipeline
-InputObject values, and each target is decided once per call; a key seen
-earlier in the same call is skipped.
+InputObject values, and each target is decided once per call; a target seen
+earlier in the same call is skipped. Only the kind of target named is reset: a
+native command whose name contains a colon, such as an alias named
+'Get-Thing:Name', shares its key with the parameter target Get-Thing / Name,
+and resetting one never touches the other.
 
 A Failed record gets a new lazy stub in the runtime and becomes Pending, with
 LoadError cleared and ScriptPath and Trusted kept. An Active record has its
@@ -103,7 +106,7 @@ function Reset-Completer
 
     begin
     {
-        $decidedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $decidedTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
         # A plain function, not an advanced one, so the error is written by
         # Reset-Completer itself: it names Reset-Completer and sets $? to false.
@@ -172,7 +175,7 @@ function Reset-Completer
 
         foreach ($target in $resolvedTargets)
         {
-            if (-not $decidedKeys.Add($target.Key))
+            if (-not $decidedTargets.Add((Get-CompleterTargetIdentity -Target $target)))
             {
                 continue
             }
@@ -184,7 +187,7 @@ function Reset-Completer
 
             try
             {
-                $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                $registrationState = Resolve-CompleterRegistrationState -Target $target
                 $managedRegistration = $registrationState.ManagedRegistration
                 $runtimeRegistration = $registrationState.RuntimeRegistration
                 $managedState = $registrationState.ManagedState
@@ -232,7 +235,7 @@ function Reset-Completer
                     }
                     elseif ($PSCmdlet.ShouldProcess($runtimeKey, 'Reset completer registration'))
                     {
-                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.Key) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
+                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.Key -Native:$managedRegistration.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
                         $conflict = [pscustomobject] [ordered] @{
                             Key                 = $registration.Key
                             ManagedRegistration = $managedRegistration

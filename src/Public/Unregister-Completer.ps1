@@ -20,7 +20,10 @@ decided once per call, so the Conflicted twin of a Stale record is skipped
 rather than confirmed again or reported as missing, and a declined
 confirmation stands. Keys
 are output-only identifiers: a hand-typed key string is not accepted, so name
-the target with -CommandName plus -Native or -ParameterName instead. To reload
+the target with -CommandName plus -Native or -ParameterName instead. Only the
+kind of target named is removed: a native command whose name contains a colon,
+such as an alias named 'Get-Thing:Name', shares its key with the parameter
+target Get-Thing / Name, and removing one never touches the other. To reload
 a Failed or Active script-backed registration instead of removing it, use
 Reset-Completer.
 
@@ -83,7 +86,7 @@ function Unregister-Completer
 
     begin
     {
-        $removedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $removedTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     }
 
     process
@@ -122,7 +125,9 @@ function Unregister-Completer
 
             foreach ($target in $resolvedTargets)
             {
-                if ($removedKeys.Contains($target.Key))
+                $identity = Get-CompleterTargetIdentity -Target $target
+
+                if ($removedTargets.Contains($identity))
                 {
                     continue
                 }
@@ -135,7 +140,7 @@ function Unregister-Completer
 
                 try
                 {
-                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                    $registrationState = Resolve-CompleterRegistrationState -Target $target
                     $managedRegistration = $registrationState.ManagedRegistration
                     $runtimeRegistration = $registrationState.RuntimeRegistration
 
@@ -170,7 +175,7 @@ function Unregister-Completer
                         throw 'No completer registration was found for the requested target.'
                     }
 
-                    $null = $removedKeys.Add($target.Key)
+                    $null = $removedTargets.Add($identity)
 
                     if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
                     {
@@ -179,12 +184,12 @@ function Unregister-Completer
 
                     if ($null -ne $runtimeRegistration)
                     {
-                        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $registrationToRemove.Key
+                        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Target $target
                     }
 
                     if ($null -ne $managedRegistration)
                     {
-                        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
+                        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Target $target
                     }
 
                     if ($PassThru)
@@ -201,12 +206,12 @@ function Unregister-Completer
                 }
                 catch
                 {
-                    if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+                    if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Target $target))
                     {
                         $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
                     }
 
-                    if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Key $target.Key))
+                    if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Target $target))
                     {
                         $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
                     }

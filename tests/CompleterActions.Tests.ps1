@@ -161,7 +161,7 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['test-managedtool:name'] | Should -Not -BeNullOrEmpty
+        $state['Registrations']['parameter:test-managedtool:name'] | Should -Not -BeNullOrEmpty
 
         $inputScript = 'Test-ManagedTool -Name a'
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
@@ -1269,7 +1269,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        [object]::ReferenceEquals($state['Registrations']['test-managedtool:name'], $original) | Should -BeTrue
+        [object]::ReferenceEquals($state['Registrations']['parameter:test-managedtool:name'], $original) | Should -BeTrue
 
         $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
@@ -1309,7 +1309,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['test-managedtool:name'].ScriptText | Should -Match 'old'
+        $state['Registrations']['parameter:test-managedtool:name'].ScriptText | Should -Match 'old'
 
         $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
@@ -1379,7 +1379,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations'].Contains('test-arrayone:name') | Should -BeTrue
+        $state['Registrations'].Contains('parameter:test-arrayone:name') | Should -BeTrue
 
         $kept = Get-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name'
         $kept.Source | Should -Be 'Managed'
@@ -1745,6 +1745,274 @@ Describe 'Removed surface' {
         foreach ($removedFile in 'src/Public/Get-CompleterRegistrationLegacy.ps1', 'src/Public/Register-CompleterRegistrationLegacy.ps1', 'src/Public/Unregister-CompleterRegistrationLegacy.ps1', 'src/Private/Write-CompleterDeprecationWarning.ps1', 'tests/CompleterDeprecation.Tests.ps1')
         {
             Join-Path -Path $repoRoot -ChildPath $removedFile | Should -Not -Exist
+        }
+    }
+}
+
+Describe 'Registration identity' {
+    BeforeAll {
+        $script:IdentityCleanupTargets = @(
+            @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = 'Test-IdentityTool:Name'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+        )
+
+        function Get-TestIdentityCompletion
+        {
+            $inputScript = 'Test-IdentityTool -Name '
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText)
+        }
+
+        function Get-TestIdentityState
+        {
+            param(
+                [Parameter(Mandatory)]
+                [ValidateSet('Parameter', 'Native')]
+                [string] $CompleterType
+            )
+
+            $records = if ($CompleterType -eq 'Native')
+            {
+                @(Get-Completer -CommandName 'Test-IdentityTool:Name' -Native)
+            }
+            else
+            {
+                @(Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name')
+            }
+
+            @($records | ForEach-Object { '{0}/{1}/{2}' -f $_.CompleterType, $_.State, $_.ScriptText.Trim() })
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:IdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+
+        function global:Test-IdentityTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:IdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-IdentityTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    Context 'ownership is the exact script block, not its text' {
+        BeforeAll {
+            function Get-TestIdentityClosure
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [string] $Value
+                )
+
+                { $Value }.GetNewClosure()
+            }
+        }
+
+        It 'reports an equal-text closure that replaced a managed closure as Stale and Conflicted and gates its removal' {
+            $managed = Get-TestIdentityClosure -Value 'alpha'
+            $external = Get-TestIdentityClosure -Value 'beta'
+            $managed.ToString() | Should -BeExactly $external.ToString() -Because 'the closures differ only in their captured value'
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $managed
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $external
+
+            Get-TestIdentityCompletion | Should -Be @('beta')
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Stale/$Value', 'Parameter/Conflicted/$Value')
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            } | Should -Throw '*is stale*-AllowUnmanaged*'
+
+            Get-TestIdentityCompletion | Should -Be @('beta') -Because 'the refused removal leaves the live value alone'
+
+            $removed = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+            [object]::ReferenceEquals($removed.ScriptBlock, $external) | Should -BeTrue
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+        }
+
+        It 'refuses to replace a managed closure with an equal-text closure without -Force' {
+            $first = Get-TestIdentityClosure -Value 'alpha'
+            $second = Get-TestIdentityClosure -Value 'beta'
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $forced = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $second) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('beta')
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$Value')
+        }
+
+        It 'treats script blocks whose text differs only in case as different completers' {
+            $upper = [scriptblock]::Create("'Value'")
+            $lower = [scriptblock]::Create("'value'")
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $upper
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $lower
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -BeExactly @('Value')
+
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $lower
+
+            Get-TestIdentityCompletion | Should -BeExactly @('value')
+            Get-TestIdentityState -CompleterType Parameter | Should -BeExactly @("Parameter/Stale/'Value'", "Parameter/Conflicted/'value'")
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            } | Should -Throw '*is stale*-AllowUnmanaged*'
+        }
+
+        It 'reuses the managed record for equal text bound to the same context and for a re-imported script' {
+            $first = [scriptblock]::Create("'same'")
+            $second = [scriptblock]::Create("'same'")
+
+            $firstRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
+            $secondRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -PassThru
+
+            [object]::ReferenceEquals($secondRecord, $firstRecord) | Should -BeTrue -Because 'two unbound script blocks with the same text are the same completer'
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'same'")
+
+            $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath | Register-Completer -PassThru)
+            $reimported = @(Import-CompleterScript -LiteralPath $fixturePath | Register-Completer -PassThru)
+
+            $imported.Count | Should -Be 2
+            $reimported.Count | Should -Be 2
+
+            for ($index = 0; $index -lt $imported.Count; $index++)
+            {
+                [object]::ReferenceEquals($reimported[$index], $imported[$index]) | Should -BeTrue -Because 'importing and registering the same script again is a no-op, although each import binds its script blocks to a new module'
+            }
+
+            @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | ForEach-Object { [string] $_.State }) | Should -Be @('Active', 'Active')
+        }
+
+        It 'treats equal text defined in another file as a different completer' {
+            $firstPath = Join-Path -Path $TestDrive -ChildPath 'identity-first.ps1'
+            $secondPath = Join-Path -Path $TestDrive -ChildPath 'identity-second.ps1'
+            Set-Content -LiteralPath $firstPath -Value "{ 'same' }" -Encoding utf8
+            Set-Content -LiteralPath $secondPath -Value "{ 'same' }" -Encoding utf8
+            $first = & $firstPath
+            $second = & $secondPath
+            $first.ToString() | Should -BeExactly $second.ToString()
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second
+            } | Should -Throw '*already exists*Use -Force*' -Because '$PSScriptRoot and $PSCommandPath resolve differently in each file'
+        }
+    }
+
+    Context 'a native command whose name has the same key as a parameter target' {
+        It 'returns only the kind each Get-Completer lookup names, and both from an unfiltered lookup' {
+            Register-ArgumentCompleter -Native -CommandName 'Test-IdentityTool:Name' -ScriptBlock { 'native-result' }
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Discovered/'parameter-result'")
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Discovered/'native-result'")
+
+            $all = @(Get-Completer | Where-Object -Property 'CommandName' -Like -Value 'Test-IdentityTool*')
+            @($all | ForEach-Object { [string] $_.CompleterType }) | Should -Be @('Native', 'Parameter')
+            @($all.Key | Select-Object -Unique) | Should -Be @('test-identitytool:name') -Because 'the two targets share the key, which is why the kind is part of their identity'
+        }
+
+        It 'registers both kinds side by side without -Force' {
+            $parameter = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' } -PassThru
+            $native = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' } -PassThru
+
+            $native.CompleterType | Should -Be 'Native'
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool:Name' -Native), $native) | Should -BeTrue
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'parameter-result'")
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
+            Get-TestIdentityCompletion | Should -Be @('parameter-result')
+
+            $state = InModuleScope CompleterActions {
+                Get-CompleterActionState
+            }
+
+            $state['Registrations'].Count | Should -Be 2
+        }
+
+        It 'replaces only the kind Register-Completer -Force names' {
+            $parameter = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' } -PassThru
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-first' } -Force
+
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue -Because 'a forced native registration must not replace the parameter record'
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-first'")
+
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-second' } -Force
+
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-second'")
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('parameter-result')
+
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-second' } -Force
+
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-second'")
+            Get-TestIdentityCompletion | Should -Be @('parameter-second')
+        }
+
+        It 'removes only the kind Unregister-Completer names' {
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' }
+
+            $removed = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false -PassThru
+
+            $removed.CompleterType | Should -Be 'Parameter'
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            } | Should -Throw '*No completer registration was found*'
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool:Name' -Native -Confirm:$false
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool:Name' -Native -Confirm:$false
+            } | Should -Throw '*No completer registration was found*' -Because 'a native removal must not find the parameter registration'
+
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'parameter-result'")
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            Register-ArgumentCompleter -Native -CommandName 'Test-IdentityTool:Name' -ScriptBlock { 'native-result' }
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+
+            $removedUnmanaged = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+
+            $removedUnmanaged.CompleterType | Should -Be 'Parameter'
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Discovered/'native-result'")
         }
     }
 }

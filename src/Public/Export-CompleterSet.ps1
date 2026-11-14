@@ -162,7 +162,7 @@ function Export-CompleterSet
                     throw "The records for '$scriptPath' disagree on Trusted, so the entry's trust tier cannot be written."
                 }
 
-                $entry.Targets[[string] $target.Key] = $target
+                $entry.Targets[(Get-CompleterTargetIdentity -Target $target)] = $target
             }
 
             if ($entriesByPath.Count -eq 0)
@@ -186,22 +186,22 @@ function Export-CompleterSet
                 # checked targets.
                 $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
                 $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
-                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
-                $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
-                $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
+                $derivedTargetsByIdentity = [ordered] @{}
+
+                foreach ($derivedTarget in $derivedTargets)
+                {
+                    $derivedTargetsByIdentity[(Get-CompleterTargetIdentity -Target $derivedTarget)] = $derivedTarget
+                }
+
+                $missingTargets = @($derivedTargetsByIdentity.Keys | Where-Object { -not $entry.Targets.Contains($_) } | ForEach-Object { $derivedTargetsByIdentity[$_] })
+                $unknownTargets = @($entry.Targets.Keys | Where-Object { -not $derivedTargetsByIdentity.Contains($_) })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
-                    # The keys match, so only order and casing can differ. Writing the
-                    # derived targets puts them in script order and script casing,
+                    # The targets match, so only order and casing can differ. Writing
+                    # the derived targets puts them in script order and script casing,
                     # which is what the import fast path reproduces.
-                    $entry.Targets = [ordered] @{}
-
-                    foreach ($derivedTarget in $derivedTargets)
-                    {
-                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
-                    }
-
+                    $entry.Targets = $derivedTargetsByIdentity
                     $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
@@ -210,7 +210,7 @@ function Export-CompleterSet
 
                 if ($missingTargets.Count -gt 0)
                 {
-                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$_'" }) -join ', ')."
+                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$($_.Key)'" }) -join ', ')."
                 }
 
                 if ($unknownTargets.Count -gt 0)

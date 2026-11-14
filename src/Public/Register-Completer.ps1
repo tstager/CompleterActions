@@ -6,16 +6,30 @@ Registers a managed PowerShell argument completer.
 Registers native or command-parameter argument completers with
 Register-ArgumentCompleter and records the registrations in the module's managed
 state. Existing managed or runtime registrations are preserved unless you use
--Force to replace them. Registering the same script for a target that is already
-managed is idempotent only while the managed record still matches the live
-runtime value; when the runtime registration was replaced or removed outside
-this module, the managed record is stale and the command fails until you
-reconcile it with -Force. Each target is updated transactionally: if the
-runtime or managed write fails, the previous runtime and managed state are
-restored and any rollback failure is reported alongside the original error. The
-command supports array inputs for command and parameter targets, and it can
-also accept pipeline InputObject values that describe the target and expose a
-ScriptBlock property.
+-Force to replace them. Registering the same completer for a target that is
+already managed is idempotent only while the managed record still matches the
+live runtime value, which means the runtime still holds the very script block
+the module registered. When the runtime registration was replaced or removed
+outside this module, even by a script block with the same text, the managed
+record is stale and the command fails until you reconcile it with -Force.
+
+The same completer is the same script block, or one with exactly the same
+text, compared case sensitively, bound to the same context. For records
+imported from a script, the context is the script file and its tier, so
+importing and registering the same script again stays a no-op. For any other
+script block, it is the module the block is bound to and the file that defines
+it. A closure created with GetNewClosure() is bound to a module of its own, so
+a second closure is a different completer even when its text is identical,
+and replacing the first one needs -Force.
+
+A native command whose name contains a colon, such as an alias named
+'Get-Thing:Name', is a separate target from the parameter target Get-Thing /
+Name, although the two share a key. Each target is updated transactionally: if
+the runtime or managed write fails, the previous runtime and managed state are
+restored and any rollback failure is reported alongside the original error.
+The command supports array inputs for command and parameter targets, and it
+can also accept pipeline InputObject values that describe the target and
+expose a ScriptBlock property.
 
 With -Path or -LiteralPath and -Lazy the command registers a completer script
 without running it. The runtime entry for each target is a small stub that
@@ -252,9 +266,11 @@ function Register-Completer
                     }
                     else
                     {
+                        $derivedIdentities = @($derivedTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
                         foreach ($explicitTarget in $explicitTargets)
                         {
-                            if (@($derivedTargets.Key) -notcontains $explicitTarget.Key)
+                            if ($derivedIdentities -notcontains (Get-CompleterTargetIdentity -Target $explicitTarget))
                             {
                                 $derivedList = ($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                                 throw "The script '$scriptPath' does not register a completer for '$($explicitTarget.RuntimeKey)'. It registers: $derivedList."
@@ -269,7 +285,7 @@ function Register-Completer
                 {
                     $resolvedInputs += [pscustomobject] [ordered] @{
                         Target = $target
-                        ScriptBlock = New-CompleterLazyStub -Key $target.Key
+                        ScriptBlock = New-CompleterLazyStub -Key $target.Key -Native:$target.IsNative
                         ImportModule = $null
                         ScriptPath = $scriptPath
                         Trusted = [bool] $Trusted

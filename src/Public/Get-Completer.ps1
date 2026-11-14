@@ -24,7 +24,10 @@ arrays for command and parameter lookups, and records piped back from
 Get-Completer or Import-CompleterScript resolve through their Key and IsNative
 properties. Keys are output-only identifiers: a hand-typed key string is not
 accepted, so name the target with -CommandName plus -Native or -ParameterName
-instead.
+instead. A key does not identify a target on its own: a native command whose
+name contains a colon, such as an alias named 'Get-Thing:Name', has the same
+key as the parameter target Get-Thing / Name. The two are separate
+registrations, and a lookup returns only the kind it names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -122,7 +125,7 @@ function Get-Completer
 
     begin
     {
-        $registrationsByKey = [ordered] @{}
+        $registrationsByIdentity = [ordered] @{}
     }
 
     process
@@ -170,8 +173,8 @@ function Get-Completer
             {
                 foreach ($target in $targets)
                 {
-                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
-                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
+                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Target $target)
+                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Target $target)
                 }
             }
 
@@ -184,31 +187,39 @@ function Get-Completer
                     continue
                 }
 
-                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key -Snapshot $snapshot
+                $registrationState = Resolve-CompleterRegistrationState -Target $registration -Snapshot $snapshot
+                $identity = Get-CompleterTargetIdentity -Target $registration
 
                 if ($registrationState.ManagedState -in 'Active', 'Pending', 'Failed')
                 {
-                    $registrationsByKey["Managed:$($registration.Key)"] = $registration
+                    $registrationsByIdentity["Managed:$identity"] = $registration
                 }
                 else
                 {
-                    $registrationsByKey["Managed:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                    $registrationsByIdentity["Managed:$identity"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
                 }
 
                 if ($registrationState.ManagedState -in 'Stale', 'Failed' -and $null -ne $registrationState.RuntimeRegistration)
                 {
-                    $registrationsByKey["Discovered:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                    $registrationsByIdentity["Discovered:$identity"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                 }
             }
 
             foreach ($registration in $discoveredRegistrations)
             {
-                if ($null -eq $registration -or $registrationsByKey.Contains("Managed:$($registration.Key)"))
+                if ($null -eq $registration)
                 {
                     continue
                 }
 
-                $registrationsByKey["Discovered:$($registration.Key)"] = $registration
+                $identity = Get-CompleterTargetIdentity -Target $registration
+
+                if ($registrationsByIdentity.Contains("Managed:$identity"))
+                {
+                    continue
+                }
+
+                $registrationsByIdentity["Discovered:$identity"] = $registration
             }
         }
         catch
@@ -225,7 +236,7 @@ function Get-Completer
 
     end
     {
-        $registrations = @($registrationsByKey.Values)
+        $registrations = @($registrationsByIdentity.Values)
 
         if ($PSBoundParameters.ContainsKey('State'))
         {

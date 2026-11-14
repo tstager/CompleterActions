@@ -161,7 +161,7 @@ function Test-CompleterRegistration
 
             $target = $resolvedTargets[0]
 
-            if ($null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+            if ($null -eq (Find-RuntimeCompleterRegistration -Target $target))
             {
                 throw "No runtime completer registration exists for '$($target.RuntimeKey)'. Register the completer before testing it."
             }

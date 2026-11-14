@@ -4,12 +4,14 @@ Removes a managed completer registration from module state.
 
 .DESCRIPTION
 Deletes a registration record from the module's in-memory registration table and
-returns the removed record. Callers can target an entry by normalized key or by
-command target details, using the same key resolution rules as the other
-registration helpers.
+returns the removed record. Callers name the entry by a target or record, or by
+command target details. Every removal names the target kind, because a native
+target and a parameter target can share a Key; only the record of the named
+kind is removed.
 
-.PARAMETER Key
-The normalized or runtime key for the registration record to remove.
+.PARAMETER Target
+The completer target or registration record whose managed record to remove.
+It must expose Key and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name for the registration target.
@@ -32,14 +34,14 @@ and returns the record that was deleted from module state.
 #>
 function Remove-ManagedCompleterRegistration
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding(DefaultParameterSetName = 'Target')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper removes in-memory module state for higher-level callers.')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -55,9 +57,9 @@ function Remove-ManagedCompleterRegistration
     )
 
     $registrations = Get-ManagedCompleterRegistrationTable
-    $resolvedKey = switch ($PSCmdlet.ParameterSetName)
+    $removalTarget = switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey' { Get-CompleterRegistrationKey -RuntimeKey $Key }
+        'Target' { $Target }
         'Native'
         {
             if (-not $Native)
@@ -65,18 +67,20 @@ function Remove-ManagedCompleterRegistration
                 throw 'Native target resolution requires the -Native switch.'
             }
 
-            Get-CompleterRegistrationKey -CommandName $CommandName -Native
+            Resolve-CompleterTarget -CommandName $CommandName -Native
         }
-        'CommandParameter' { Get-CompleterRegistrationKey -CommandName $CommandName -ParameterName $ParameterName }
+        'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
     }
 
-    if (-not $registrations.Contains($resolvedKey))
+    $identity = Get-CompleterTargetIdentity -Target $removalTarget
+
+    if (-not $registrations.Contains($identity))
     {
         return
     }
 
-    $removedRegistration = $registrations[$resolvedKey]
-    $registrations.Remove($resolvedKey)
+    $removedRegistration = $registrations[$identity]
+    $registrations.Remove($identity)
 
     return $removedRegistration
 }

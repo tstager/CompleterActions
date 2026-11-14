@@ -63,7 +63,9 @@ BeforeAll {
         & (Get-Module -Name 'CompleterActions') {
             param($RuntimeLookupKey)
 
-            $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $RuntimeLookupKey
+            # No fixture's native command name contains a colon, so a key with one is a parameter target.
+            $lookupTarget = if ($RuntimeLookupKey.Contains(':')) { Resolve-CompleterTarget -RuntimeKey $RuntimeLookupKey } else { Resolve-CompleterTarget -RuntimeKey $RuntimeLookupKey -Native }
+            $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $lookupTarget
 
             if ($null -ne $runtimeRegistration)
             {
@@ -605,5 +607,103 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
             $record.State | Should -Be 'Pending'
             & (Get-Module -Name 'CompleterActions') { $script:TestParseCount } | Should -Be 1 -Because 'the grammar and the target derivation share one parse'
         }
+    }
+}
+
+Describe 'Lazy registration of a native command that shares a parameter target key' {
+    BeforeAll {
+        $script:LazyIdentityCleanupTargets = @(
+            @{ CommandName = 'Test-LazyIdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = 'Test-LazyIdentityTool:Name'; CompleterType = 'Native' }
+        )
+
+        $script:LazyIdentityNativeText = @'
+Register-ArgumentCompleter -Native -CommandName 'Test-LazyIdentityTool:Name' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+    'native-result'
+}
+'@
+
+        $script:LazyIdentityParameterText = @'
+Register-ArgumentCompleter -CommandName 'Test-LazyIdentityTool' -ParameterName 'Name' -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+    'parameter-result'
+}
+'@
+
+        function Get-TestLazyIdentityCompletion
+        {
+            $inputScript = 'Test-LazyIdentityTool -Name '
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText)
+        }
+
+        function Get-TestLazyIdentityState
+        {
+            @(
+                @(Get-Completer -CommandName 'Test-LazyIdentityTool:Name' -Native) + @(Get-Completer -CommandName 'Test-LazyIdentityTool' -ParameterName 'Name') |
+                    ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }
+            )
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:LazyIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+
+        function global:Test-LazyIdentityTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:LazyIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-LazyIdentityTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'registers both kinds from one script and swaps each target its own script block' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity_both_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value ($script:LazyIdentityNativeText + [Environment]::NewLine + $script:LazyIdentityParameterText) -Encoding utf8
+
+        $records = @(Register-Completer -LiteralPath $scriptPath -Lazy -PassThru)
+
+        @($records | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending', 'Parameter/Pending')
+
+        Get-TestLazyIdentityCompletion | Should -Be @('parameter-result')
+        Get-TestLazyIdentityState | Should -Be @('Native/Active', 'Parameter/Active') -Because 'one load swaps every Pending target of the script'
+        (Get-Completer -CommandName 'Test-LazyIdentityTool:Name' -Native).ScriptText | Should -Match 'native-result'
+        (Get-Completer -CommandName 'Test-LazyIdentityTool' -ParameterName 'Name').ScriptText | Should -Match 'parameter-result'
+    }
+
+    It 'registers the two kinds from separate scripts and loads only the script of the target pressed' {
+        $nativePath = Join-Path -Path $TestDrive -ChildPath 'identity_native_completer.ps1'
+        $parameterPath = Join-Path -Path $TestDrive -ChildPath 'identity_parameter_completer.ps1'
+        Set-Content -LiteralPath $nativePath -Value $script:LazyIdentityNativeText -Encoding utf8
+        Set-Content -LiteralPath $parameterPath -Value $script:LazyIdentityParameterText -Encoding utf8
+
+        $null = Register-Completer -LiteralPath $nativePath -Lazy
+        $null = Register-Completer -LiteralPath $parameterPath -Lazy
+
+        Get-TestLazyIdentityState | Should -Be @('Native/Pending', 'Parameter/Pending')
+        Get-TestLazyIdentityCompletion | Should -Be @('parameter-result')
+        Get-TestLazyIdentityState | Should -Be @('Native/Pending', 'Parameter/Active')
     }
 }

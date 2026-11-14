@@ -115,19 +115,24 @@ function Get-CompleterSetFinding
 
         # $entry.Targets is the list import checks, so an entry with an Error
         # finding, such as a malformed target, can still report a duplicate.
-        foreach ($target in @($entry.Targets))
+        $entryTargets = @($entry.Targets)
+        $targetIdentities = @($entryTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
+        for ($targetIndex = 0; $targetIndex -lt $entryTargets.Count; $targetIndex++)
         {
-            if ($claimedTargets.Contains([string] $target.Key))
+            $targetIdentity = $targetIdentities[$targetIndex]
+
+            if ($claimedTargets.Contains($targetIdentity))
             {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." -Hint $hints['DuplicateTarget']))
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($entryTargets[$targetIndex].RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." -Hint $hints['DuplicateTarget']))
             }
         }
 
         if ($findings.Count -eq 0)
         {
-            foreach ($target in @($entry.Targets))
+            foreach ($targetIdentity in $targetIdentities)
             {
-                $claimedTargets[[string] $target.Key] = $entryIndex
+                $claimedTargets[$targetIdentity] = $entryIndex
             }
         }
 

@@ -235,7 +235,7 @@ THE HASH AND THE FAST PATH
     - A strict entry with `Targets` and a `Hash` that matches the script
       takes the fast path: the script is neither parsed nor walked by the
       grammar, and its declared `Targets` are registered in the order the
-      entry lists them, each key once.
+      entry lists them, each target once.
 
     A script that cannot be read for its hash falls back to the parse, so
     the problem reported is the one the parse finds. The fast path skips
@@ -256,7 +256,7 @@ THE HASH AND THE FAST PATH
     its casing, and that is how `Export-CompleterSet` writes every strict
     entry. A hand-edited entry whose `Hash` still matches can differ only in
     order and casing: on the fast path its records follow the order it
-    declares rather than the script's, and a key it lists twice keeps the
+    declares rather than the script's, and a target it lists twice keeps the
     first occurrence's casing on the fast path and the last occurrence's
     casing on the parse path. The keys, states, and script paths are the
     same either way.

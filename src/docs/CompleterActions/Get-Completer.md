@@ -73,7 +73,11 @@ The command accepts arrays for command and parameter lookups, and records
 piped back from Get-Completer or Import-CompleterScript resolve
 through their Key and IsNative properties. Keys are output-only identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+plus -Native or -ParameterName instead. A key does not identify a target on its
+own: a native command whose name contains a colon, such as an alias named
+`Get-Thing:Name`, has the same key as the parameter target `Get-Thing` /
+`Name`. The two are separate registrations, and a lookup returns only the kind
+it names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with

@@ -62,7 +62,10 @@ only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
 from Get-Completer output. Keys are output-only identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+plus -Native or -ParameterName instead. Only the kind of target named is
+removed: a native command whose name contains a colon, such as an alias named
+`Get-Thing:Name`, shares its key with the parameter target `Get-Thing` /
+`Name`, and removing one never touches the other.
 To reload a Failed or Active script-backed registration instead of removing
 it, use Reset-Completer.
 

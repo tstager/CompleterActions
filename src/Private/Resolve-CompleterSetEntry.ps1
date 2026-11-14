@@ -285,11 +285,11 @@ function Resolve-CompleterSetEntry
             {
                 $targetSource = 'Hash'
                 $resolutionNote = 'hash matches; targets read from the set.'
-                $seenKeys = [System.Collections.Generic.HashSet[string]]::new()
+                $seenTargets = [System.Collections.Generic.HashSet[string]]::new()
                 $targets = @(
                     foreach ($declaredTarget in $declaredTargets)
                     {
-                        if ($seenKeys.Add([string] $declaredTarget.Key))
+                        if ($seenTargets.Add((Get-CompleterTargetIdentity -Target $declaredTarget)))
                         {
                             $declaredTarget
                         }
@@ -335,9 +335,9 @@ function Resolve-CompleterSetEntry
                 }
                 else
                 {
-                    $declaredKeys = @($declaredTargets | ForEach-Object { [string] $_.Key })
-                    $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
-                    $mismatch = @($declaredKeys | Where-Object { $_ -notin $derivedKeys }).Count -gt 0 -or @($derivedKeys | Where-Object { $_ -notin $declaredKeys }).Count -gt 0
+                    $declaredIdentities = @($declaredTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+                    $derivedIdentities = @($derivedTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+                    $mismatch = @($declaredIdentities | Where-Object { $_ -notin $derivedIdentities }).Count -gt 0 -or @($derivedIdentities | Where-Object { $_ -notin $declaredIdentities }).Count -gt 0
 
                     if ($mismatch)
                     {
