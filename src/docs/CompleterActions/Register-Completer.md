@@ -74,18 +74,22 @@ and the command fails until you reconcile it with `-Force`.
 
 The script block you register is the same completer as the managed record's
 when it is that very script block, or when its text is exactly the same,
-compared case sensitively, and it is bound to the same context. For records
-imported from a script, the context is the script file and its tier, so
-importing and registering the same script again stays a no-op. Only the
-completer's own text is compared, so after you edit other code in the script,
-such as a value it sets at the top, register it again with `-Force` to pick up
-the change. Script paths compare the way the file system does: ignoring case on
-Windows and macOS, and case sensitively elsewhere, where two paths that differ
-only in case are two scripts. For any other script block, the context is the
-module the block is bound to and the file that defines it. A closure created
-with `GetNewClosure()` is bound to a module of its own, so a second closure is
-a different completer even when its text is identical, and replacing the first
-one needs `-Force`.
+compared case sensitively, and it is bound to the same context. For the
+records `Import-CompleterScript` emits, the context is the script file and its
+tier, so importing and registering the same script again stays a no-op. A
+`ScriptPath` on an input object does not vouch for its script block: a script
+block that is not bound to the module `Import-CompleterScript` created for the
+script is compared by its own context. Only the completer's own text is
+compared, so after you edit other code in the script, such as a value it sets
+at the top, register it again with `-Force` to pick up the change. Script paths
+compare the way the file system does: ignoring case on Windows and macOS, and
+case sensitively elsewhere, where two paths that differ only in case are two
+scripts. For any other script block, the context is the file that defines it
+and the module the block is bound to, compared by name, so a module that is
+imported again and registers the same text again gets the existing record. A
+closure created with `GetNewClosure()` is bound to a module of its own, so a
+second closure is a different completer even when its text is identical, and
+replacing the first one needs `-Force`.
 
 A target is its kind and its runtime key, the name PowerShell stores the
 completer under, compared ordinally ignoring case as PowerShell compares it. A
@@ -113,7 +117,10 @@ before anything is registered, under `-WhatIf` too; it runs again when the
 script loads, and a script that no longer conforms by then moves to `Failed`.
 With `-Trusted` the script is dot-sourced as-is on first use and cannot be
 parsed safely, so the targets must be supplied with `-CommandName` and
-`-Native` or `-ParameterName`.
+`-Native` or `-ParameterName`. Registering the script lazily again under the
+same tier is a no-op while the managed record is `Pending` for that script or
+holds what the script imported; a record that only names the script's path is
+replaced only with `-Force`.
 
 If the script fails to load on the first tab press, the press returns no
 completions, the runtime entry is removed so the completion engine's default
@@ -262,7 +269,9 @@ and must expose a `ScriptBlock` property whose value is a script block. A key
 without a native indicator is rejected; keys are output-only identifiers and
 are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
-records, are carried onto the managed record.
+records, are carried onto the managed record. `IsNative`, `Native`, and
+`Trusted` take a Boolean value or the text `True` or `False`, as `Export-Csv`
+writes it; other text is rejected.
 
 ```yaml
 Type: System.Object[]

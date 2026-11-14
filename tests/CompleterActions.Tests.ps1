@@ -2165,4 +2165,172 @@ Describe 'Registration identity' {
             [object]::ReferenceEquals($lazyAgain, $lazy) | Should -BeTrue
         }
     }
+
+    Context 'a script path on an input object does not vouch for its script block' {
+        It 'refuses an equal-text script block that is not bound to the imported script without -Force' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-trusted.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+$value = 'alpha'
+Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $value }
+'@
+
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $record = $imported | Register-Completer -PassThru
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $closure = & {
+                param(
+                    [string] $value
+                )
+
+                [scriptblock]::Create($record.ScriptText).GetNewClosure()
+            } 'beta'
+            $unbound = [scriptblock]::Create($record.ScriptText)
+            $closure.ToString() | Should -BeExactly $record.ScriptText
+            $pathClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; ScriptPath = $scriptPath; Trusted = $true }
+            $moduleClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; ScriptPath = $scriptPath; Trusted = $true; ImportModule = $imported[0].ImportModule }
+
+            { $pathClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*'
+            { $moduleClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*' -Because 'the closure is not bound to the module the import created'
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $unbound
+            } | Should -Throw '*already exists*Use -Force*' -Because 'an unbound block does not see the $value the script set'
+
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $record.ScriptBlock) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $reimported = Import-CompleterScript -LiteralPath $scriptPath -Trusted | Register-Completer -PassThru
+            [object]::ReferenceEquals($reimported, $record) | Should -BeTrue -Because 'importing and registering the same script again is still a no-op'
+
+            $forced = $pathClaim | Register-Completer -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $closure) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+
+        It 'refuses a lazy registration over an active record that only names the script path without -Force' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-lazy.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-file' }"
+
+            $claim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = { 'hand-built' }; ScriptPath = $scriptPath }
+            $null = $claim | Register-Completer
+
+            {
+                Register-Completer -LiteralPath $scriptPath -Lazy
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -Be @('hand-built')
+
+            $imported = Import-CompleterScript -LiteralPath $scriptPath | Register-Completer -Force -PassThru
+            $lazy = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+
+            [object]::ReferenceEquals($lazy, $imported) | Should -BeTrue -Because 'the active record already loaded that script under the same tier'
+            $lazy.State | Should -Be 'Active'
+            Get-TestIdentityCompletion | Should -Be @('from-file')
+        }
+    }
+
+    Context 'a module that registers its completer again' {
+        It 'reuses the managed record when the module is imported again, and refuses its closures without -Force' {
+            $modulePath = Join-Path -Path $TestDrive -ChildPath 'TestIdentityProbe.psm1'
+            Set-Content -LiteralPath $modulePath -Encoding utf8 -Value @'
+function Register-TestIdentityProbe
+{
+    Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'probe' } -PassThru
+}
+
+function Register-TestIdentityProbeClosure
+{
+    Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'probe' }.GetNewClosure() -PassThru
+}
+'@
+
+            try
+            {
+                $probe = Import-Module -Name $modulePath -Force -PassThru
+                $first = Register-TestIdentityProbe
+                [object]::ReferenceEquals($first.ScriptBlock.Module, $probe) | Should -BeTrue
+
+                $reimportedProbe = Import-Module -Name $modulePath -Force -PassThru
+                [object]::ReferenceEquals($reimportedProbe, $probe) | Should -BeFalse
+                $second = Register-TestIdentityProbe
+
+                [object]::ReferenceEquals($second, $first) | Should -BeTrue -Because 'the module imported again binds the same text to a module with the same name, defined in the same file'
+                Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'probe'")
+
+                {
+                    Register-TestIdentityProbeClosure
+                } | Should -Throw '*already exists*Use -Force*' -Because 'a closure is bound to a module of its own'
+            }
+            finally
+            {
+                Remove-Module -Name 'TestIdentityProbe' -Force -ErrorAction SilentlyContinue
+            }
+
+            Get-TestIdentityCompletion | Should -Be @('probe')
+        }
+
+        It 'treats equal text from one file bound to modules with different names as different completers' {
+            $makerBody = {
+                function Get-TestIdentityBlock { { 'same' } }
+            }
+
+            $firstMaker = New-Module -Name 'TestIdentityMakerA' -ScriptBlock $makerBody
+            $againMaker = New-Module -Name 'TestIdentityMakerA' -ScriptBlock $makerBody
+            $otherMaker = New-Module -Name 'TestIdentityMakerB' -ScriptBlock $makerBody
+            $first = & $firstMaker { Get-TestIdentityBlock }
+            $again = & $againMaker { Get-TestIdentityBlock }
+            $other = & $otherMaker { Get-TestIdentityBlock }
+            $other.File | Should -BeExactly $first.File
+
+            $record = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
+            [object]::ReferenceEquals((Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again -PassThru), $record) | Should -BeTrue
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $other
+            } | Should -Throw '*already exists*Use -Force*'
+        }
+    }
+
+    Context 'kind and tier written as text' {
+        It 'reads IsNative from a record exported with Export-Csv and acts on that kind only' {
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' }
+            $csvPath = Join-Path -Path $TestDrive -ChildPath 'identity.csv'
+            Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' | Export-Csv -LiteralPath $csvPath
+            $row = Import-Csv -LiteralPath $csvPath
+
+            $row.IsNative | Should -BeExactly 'False'
+            @($row | Get-Completer | ForEach-Object { [string] $_.CompleterType }) | Should -Be @('Parameter')
+
+            $removed = $row | Unregister-Completer -Confirm:$false -PassThru
+
+            $removed.CompleterType | Should -Be 'Parameter'
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
+        }
+
+        It 'reads Trusted written as text and rejects text that is not a Boolean' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-text.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-row' }"
+
+            $strict = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'false'; ScriptBlock = { 'from-row' }; ScriptPath = $scriptPath; Trusted = 'FALSE' } |
+                Register-Completer -PassThru
+            $strict.CompleterType | Should -Be 'Parameter'
+            $strict.Trusted | Should -BeFalse
+
+            $trusted = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'False'; ScriptBlock = { 'from-row' }; ScriptPath = $scriptPath; Trusted = ' True ' } |
+                Register-Completer -Force -PassThru
+            $trusted.Trusted | Should -BeTrue
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'no' } | Get-Completer
+            } | Should -Throw "*'no' for IsNative, which is not a Boolean value*"
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = { 'from-row' }; Trusted = 'yes' } | Register-Completer -Force
+            } | Should -Throw "*'yes' for Trusted, which is not a Boolean value*"
+
+            Get-TestIdentityState -CompleterType Native | Should -BeNullOrEmpty
+        }
+    }
 }

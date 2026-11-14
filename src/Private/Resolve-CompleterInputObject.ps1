@@ -17,6 +17,11 @@ A ScriptBlock, ImportModule,
 ScriptPath or SourcePath, and Trusted property are carried through when present
 so imported and managed records round-trip into Register-Completer.
 
+IsNative, Native, and Trusted take a Boolean, a number, or the text 'True' or
+'False' in any casing, as Export-Csv writes a Boolean, and empty text counts
+as false. Any other text is rejected: a cast to Boolean would turn the text
+'False' into true and select the other kind of target, or the trusted tier.
+
 .PARAMETER InputObject
 The object to resolve into a completer target.
 
@@ -45,6 +50,36 @@ function Resolve-CompleterInputObject
         [Parameter()]
         [switch] $RequireScriptBlock
     )
+
+    begin
+    {
+        function ConvertTo-InputObjectBoolean
+        {
+            param(
+                [string] $PropertyName,
+                [object] $Value
+            )
+
+            if ($Value -isnot [string])
+            {
+                return [bool] $Value
+            }
+
+            if ([string]::IsNullOrWhiteSpace($Value))
+            {
+                return $false
+            }
+
+            $parsedValue = $false
+
+            if (-not [bool]::TryParse($Value.Trim(), [ref] $parsedValue))
+            {
+                throw "InputObject supplies '$Value' for $PropertyName, which is not a Boolean value. Use True or False."
+            }
+
+            $parsedValue
+        }
+    }
 
     process
     {
@@ -98,7 +133,7 @@ function Resolve-CompleterInputObject
                 if ($null -ne $property)
                 {
                     $hasNativeIndicator = $true
-                    $isNative = [bool] $property.Value
+                    $isNative = ConvertTo-InputObjectBoolean -PropertyName $propertyName -Value $property.Value
                     break
                 }
             }
@@ -128,7 +163,7 @@ function Resolve-CompleterInputObject
             $trustedProperty = $InputObject.PSObject.Properties['Trusted']
             if ($null -ne $trustedProperty)
             {
-                $trusted = [bool] $trustedProperty.Value
+                $trusted = ConvertTo-InputObjectBoolean -PropertyName 'Trusted' -Value $trustedProperty.Value
             }
 
             if ($RequireScriptBlock -and $null -eq $scriptBlock)

@@ -9,22 +9,32 @@ module's replacement rules in one place. Without -Force an existing managed
 record blocks a registration when it is stale, when its lazy load failed, or
 when it describes a different completer, and an unmanaged runtime
 registration blocks it as well. A managed record that already describes the
-same completer is reported as existing so the caller can reuse it. A record
-is lazy when its State is 'Pending', and a lazy record describes the same
-completer when it loads the same script under the same tier. Script paths
-compare the way the file system does: ignoring case on Windows and macOS, and
-ordinally elsewhere, where two paths that differ only in case name two files.
+same completer is reported as existing so the caller can reuse it. Script
+paths compare the way the file system does: ignoring case on Windows and
+macOS, and ordinally elsewhere, where two paths that differ only in case name
+two files.
+
+A record is imported when it carries a ScriptPath and its script block is
+bound to the record's ImportModule, the module Import-CompleterScript created
+to run that script. Records that Import-CompleterScript emits and records a
+lazy load activated are imported; a record that only names a ScriptPath is
+not, because the path alone does not show where its script block came from.
+
+A record is lazy when its State is 'Pending'. A lazy record describes the
+same completer as a managed record that loads, or already loaded, the same
+script under the same tier: a Pending record, or an imported record.
 
 An eager record describes the same completer when it holds the very same
 script block, or a script block with exactly the same text, compared case
-sensitively, bound to the same context. A script block imported from a
-script, which carries a ScriptPath, is bound to that script: it matches when
-the ScriptPath and tier match, so importing and registering the same script
-again stays a no-op although every import binds its script blocks to a new
-module. Any other script block matches when it is bound to the same module, or
-to none, and was defined in the same file. A closure is bound to a module of
-its own, so two closures never match even when their text is identical,
-because they run with different captured values.
+sensitively, with the same ScriptPath and tier, defined in the same file and
+bound to the same context. Two imported records of the same script are bound
+to the same context, so importing and registering the same script again stays
+a no-op although every import binds its script blocks to a new module. Any
+other two script blocks are bound to the same context when they are bound to
+the same module, to modules with the same name, as when a module is imported
+again, or to none. A closure is bound to a module of its own with a unique
+name, so two closures never match even when their text is identical, because
+they run with different captured values.
 
 The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same target sees the earlier
@@ -93,6 +103,17 @@ function Resolve-CompleterRegistrationConflict
         $registrationStates = @(Resolve-CompleterRegistrationState -Target $Registration -Snapshot $Snapshot)
     }
 
+    function Test-ImportedCompleterRecord
+    {
+        param(
+            [psobject] $Record
+        )
+
+        -not [string]::IsNullOrEmpty($Record.ScriptPath) -and
+            $null -ne $Record.ImportModule -and
+            [object]::ReferenceEquals($Record.ScriptBlock.Module, $Record.ImportModule)
+    }
+
     $plannedRegistrations = @{}
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
@@ -133,23 +154,28 @@ function Resolve-CompleterRegistrationConflict
                 }
                 else
                 {
-                    $isSameScript = [string]::Equals($existingManagedRegistration.ScriptPath, $registrationItem.ScriptPath, $pathComparison)
+                    $isSameScript = [string]::Equals($existingManagedRegistration.ScriptPath, $registrationItem.ScriptPath, $pathComparison) -and
+                        [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
+                    $isExistingImported = Test-ImportedCompleterRecord -Record $existingManagedRegistration
                     $isExisting = if ($registrationItem.State -eq 'Pending')
                     {
-                        $isSameScript -and [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
+                        $isSameScript -and ($existingManagedRegistration.State -eq 'Pending' -or $isExistingImported)
                     }
                     else
                     {
                         $existingScriptBlock = $existingManagedRegistration.ScriptBlock
                         $newScriptBlock = $registrationItem.ScriptBlock
+                        $existingModule = $existingScriptBlock.Module
+                        $newModule = $newScriptBlock.Module
 
                         [object]::ReferenceEquals($existingScriptBlock, $newScriptBlock) -or (
                             [string]::Equals($existingManagedRegistration.ScriptText, $registrationItem.ScriptText, [System.StringComparison]::Ordinal) -and
                             $isSameScript -and
-                            [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted -and
-                            (-not [string]::IsNullOrEmpty($registrationItem.ScriptPath) -or (
-                                [object]::ReferenceEquals($existingScriptBlock.Module, $newScriptBlock.Module) -and
-                                [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, $pathComparison))))
+                            [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, $pathComparison) -and (
+                                ($isExistingImported -and (Test-ImportedCompleterRecord -Record $registrationItem)) -or
+                                [object]::ReferenceEquals($existingModule, $newModule) -or (
+                                    $null -ne $existingModule -and $null -ne $newModule -and
+                                    [string]::Equals($existingModule.Name, $newModule.Name, [System.StringComparison]::OrdinalIgnoreCase))))
                     }
 
                     if (-not $isExisting)
