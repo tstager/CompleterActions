@@ -604,6 +604,81 @@ Describe 'Completer sets' {
         }
     }
 
+    Context 'Export-CompleterSet input selection' {
+        BeforeEach {
+            # An existing set for one script, plus a managed registration from another
+            # script that only the no-input fallback may export.
+            Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path $script:SetPath
+            $script:ExistingSetHash = (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash
+            $null = Import-CompleterScript -LiteralPath $script:NativeFixturePath | Register-Completer
+            $script:EmptySelectionWarning = "No registrations were selected for export, so nothing was written to '$script:SetPath'."
+        }
+
+        It 'leaves an existing set byte-identical and warns when <Case> selects no registrations' -TestCases @(
+            @{ Case = 'a Get-Completer filter that matches nothing'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'an empty pipeline'; Export = { param($Path) @() | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'an empty -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject @() -PassThru } }
+            @{ Case = 'a filter that matches nothing under -WhatIf'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru -WhatIf } }
+        ) {
+            param($Case, $Export)
+
+            (Get-Completer -CommandName 'importfixture' -Native).ScriptPath | Should -Be $script:NativeFixturePath -Because "the session must hold a registration that $Case must not export"
+
+            $streamed = @(& $Export -Path $script:SetPath 3>&1)
+            $warnings = @($streamed | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $output = @($streamed | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] })
+
+            @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
+            $output | Should -BeNullOrEmpty -Because 'no file was written, so -PassThru has nothing to return'
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'does not ask for confirmation when no registrations are selected' {
+            $scriptedHost = [CompleterActionsTests.ScriptedHost]::new()
+            $scriptedHost.ScriptedUI.Answers.Enqueue('Yes')
+            $runspace = [runspacefactory]::CreateRunspace($scriptedHost)
+            $powerShell = [powershell]::Create()
+
+            try
+            {
+                $runspace.Open()
+                $powerShell.Runspace = $runspace
+                $null = $powerShell.AddScript({
+                        param($ModulePath, $FixturePath, $SetPath)
+
+                        Import-Module -Name $ModulePath -Force
+                        $null = Import-CompleterScript -LiteralPath $FixturePath | Register-Completer
+                        Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $SetPath -Confirm
+                    }).AddArgument((Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1')).AddArgument($script:NativeFixturePath).AddArgument($script:SetPath)
+                $result = @($powerShell.Invoke())
+                $errors = @($powerShell.Streams.Error)
+                $warnings = @($powerShell.Streams.Warning)
+            }
+            finally
+            {
+                $powerShell.Dispose()
+                $runspace.Dispose()
+            }
+
+            $errors | Should -BeNullOrEmpty
+            $result | Should -BeNullOrEmpty
+            $scriptedHost.ScriptedUI.Prompts | Should -BeNullOrEmpty -Because 'an empty selection writes nothing, so there is nothing to confirm'
+            $scriptedHost.ScriptedUI.Answers.Count | Should -Be 1
+            @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'exports every managed registration when nothing is piped, also as the first command of a pipeline' {
+            $written = @(Export-CompleterSet -Path $script:SetPath -PassThru | Select-Object -ExpandProperty FullName)
+
+            $written | Should -Be @($script:SetPath)
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1
+            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
+            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+        }
+    }
+
     Context 'Import-CompleterSet' {
         It 'restores the same targets as Pending records after an Export then Import round trip and loads them on first tab' {
             $imported = @(Import-CompleterScript -Path $script:ParameterFixturePath) +
