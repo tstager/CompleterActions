@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Register-Completer.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -521,8 +521,6 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 When -PassThru is used, returns `CompleterActions.CompleterRegistration`
 records. Lazy registrations carry `State` `Pending`, the `ScriptPath` they
 load, and `Trusted`.
-
-### System.Management.Automation.PSObject
 
 ## NOTES
 

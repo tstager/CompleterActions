@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Unregister-Completer.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -274,14 +274,11 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### CompleterActions.CompleterRegistration
 
-When -PassThru is used
-
-### System.Management.Automation.PSObject
+When `-PassThru` is used, returns the removed
+`CompleterActions.CompleterRegistration` records.
 
 ## NOTES
 
 ## RELATED LINKS
-
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md)
 
 [Reset-Completer](Reset-Completer.md)

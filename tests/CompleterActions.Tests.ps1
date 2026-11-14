@@ -1807,4 +1807,67 @@ Describe 'Packaged command help' {
             $text | Should -Match ([regex]::Escape($phrase))
         }
     }
+
+    It 'links every packaged command online to its maintained markdown page and to no relative or pinned URI' {
+        $links = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    foreach ($link in (Get-Help -Name $command.Name -Full -ErrorAction Stop).relatedLinks.navigationLink)
+                    {
+                        [pscustomobject] @{
+                            Name     = $command.Name
+                            LinkText = [string] $link.linkText
+                            Uri      = [string] $link.uri
+                        }
+                    }
+                }
+            }
+        )
+        $projectUri = (Import-PowerShellDataFile -Path (Join-Path -Path $PSScriptRoot -ChildPath '../CompleterActions.psd1')).PrivateData.PSData.ProjectUri
+        $publicCommands = @(Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+
+        foreach ($name in $publicCommands)
+        {
+            $onlineLink = @($links | Where-Object { $_.Name -eq $name })[0]
+
+            $onlineLink.LinkText | Should -BeExactly 'Online Version' -Because "Get-Help -Online $name uses the first related link"
+            $onlineLink.Uri | Should -BeExactly "$projectUri/blob/main/src/docs/CompleterActions/$name.md"
+            Join-Path -Path $PSScriptRoot -ChildPath "../src/docs/CompleterActions/$name.md" | Should -Exist
+        }
+
+        foreach ($link in $links | Where-Object { $_.Uri })
+        {
+            $link.Uri | Should -Match '^https?://' -Because "Get-Help stops on a related link of $($link.Name) that is not absolute"
+            $link.Uri | Should -Not -Match '/blob/[0-9a-f]{40}/' -Because "a related link of $($link.Name) must not point at one old commit"
+        }
+    }
+
+    It 'documents in a full sentence each output type a packaged command declares, and no other' {
+        $outputs = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $returnValues = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).returnValues.returnValue)
+
+                    [pscustomobject] @{
+                        Name         = $command.Name
+                        Declared     = @($command.OutputType.Name | Sort-Object)
+                        Documented   = @($returnValues | ForEach-Object { [string] $_.type.name } | Sort-Object)
+                        Descriptions = @($returnValues | ForEach-Object { ($_.description | ForEach-Object Text) -join ' ' })
+                    }
+                }
+            }
+        )
+
+        $outputs | Should -Not -BeNullOrEmpty
+        foreach ($command in $outputs)
+        {
+            @($command.Documented) | Should -Be @($command.Declared) -Because "the OUTPUTS of the packaged $($command.Name) must list its OutputType"
+            foreach ($description in $command.Descriptions)
+            {
+                $description | Should -Match '\.\s*$' -Because "each OUTPUTS entry of $($command.Name) must say what the command returns"
+            }
+        }
+    }
 }

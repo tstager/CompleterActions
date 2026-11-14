@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterSet.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026

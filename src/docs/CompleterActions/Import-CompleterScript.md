@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterScript.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/10/2026
@@ -217,5 +217,3 @@ then verify the real completion behavior with `Test-CompleterRegistration` in
 a `pwsh -NoProfile` session before treating a completer as complete.
 
 ## RELATED LINKS
-
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Import-CompleterScript.md)
