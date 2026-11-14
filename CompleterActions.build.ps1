@@ -105,11 +105,48 @@ task build clean, compile, external_help, {
 
     ForEach ($file in ($files)) {
 
-        $fileAndHelp = Get-Content -Path $file.FullName
-        $fileBody = [System.Collections.Generic.List[string]]::new()
-        $encounteredFunction = $false
+        $tokens = $null
+        $parseErrors = $null
+        $fileAst = [System.Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref] $tokens, [ref] $parseErrors)
 
-        foreach ($line in $fileAndHelp) {
+        if ($parseErrors.Count -gt 0) {
+            throw "build: '$($file.FullName)' does not parse at line $($parseErrors[0].Extent.StartLineNumber): $($parseErrors[0].Message)"
+        }
+
+        # The parser finds the function, so a help line that starts with the word 'function' is not taken for it.
+        $functionAst = $fileAst.EndBlock.Statements |
+            Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] } |
+            Select-Object -First 1
+        $functionLine = if ($null -eq $functionAst) { [int]::MaxValue } else { $functionAst.Extent.StartLineNumber }
+        $helpStartLine = $functionLine
+
+        # Only public commands are in the generated MAML, so a private function keeps its comment help.
+        $isPublic = $null -ne $functionAst -and $public.FullName -contains $file.FullName
+
+        if ($isPublic) {
+            # PowerShell reads help from the comments directly before the function, never from between the name and
+            # the opening brace, and those comments outrank help in the body. Every comment that leads into a public
+            # function, block or line comments and any blank lines between, is therefore replaced with the directive,
+            # so Get-Help selects the MAML built from the markdown.
+            $leadingTokens = @($tokens | Where-Object { $_.Extent.EndOffset -le $functionAst.Extent.StartOffset })
+
+            for ($index = $leadingTokens.Count - 1; $index -ge 0 -and $leadingTokens[$index].Kind -in 'Comment', 'NewLine'; $index--) {
+                if ($leadingTokens[$index].Kind -eq 'Comment') {
+                    $helpStartLine = $leadingTokens[$index].Extent.StartLineNumber
+                }
+            }
+        }
+
+        $fileBody = [System.Collections.Generic.List[string]]::new()
+        $lineNumber = 0
+
+        foreach ($line in Get-Content -Path $file.FullName) {
+            $lineNumber++
+
+            if ($lineNumber -ge $helpStartLine -and $lineNumber -lt $functionLine) {
+                continue
+            }
+
             if ($line -match '^\s*using\s+(namespace|module|assembly)\b') {
                 if (-not $usingStatements.Contains($line)) {
                     $usingStatements.Add($line)
@@ -118,46 +155,20 @@ task build clean, compile, external_help, {
                 continue
             }
 
-            if (-not $encounteredFunction -and $line -match '^\s*function\b') {
-                $encounteredFunction = $true
+            if ($lineNumber -lt $functionLine -and $line -match $sourceDotSourcingPattern) {
+                continue
             }
 
-            if (-not $encounteredFunction -and $line -match $sourceDotSourcingPattern) {
-                continue
+            if ($isPublic -and $lineNumber -eq $functionLine) {
+                $fileBody.Add('<#')
+                $fileBody.Add(".EXTERNALHELP $modulename-help.xml")
+                $fileBody.Add('#>')
             }
 
             $fileBody.Add($line)
         }
 
-        $functionLine = ($fileBody | Select-String -Pattern '^\s*function\b' | Select-Object -First 1).LineNumber
-
-        # Only public commands are in the generated MAML, so a private function keeps its comment help.
-        if ($null -eq $functionLine -or $public.FullName -notcontains $file.FullName) {
-            $fileBody | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
-            continue
-        }
-
-        # PowerShell reads help from the comment block directly before the function, never from one between
-        # the name and the opening brace, and that block outranks one in the body. The directive therefore
-        # replaces the source comment help, so Get-Help selects the MAML built from the markdown.
-        $functionIndex = $functionLine - 1
-        $helpStart = $functionIndex
-
-        if ($functionIndex -gt 0 -and $fileBody[$functionIndex - 1] -match '^\s*#>\s*$') {
-            $helpStart = $functionIndex - 1
-
-            while ($helpStart -gt 0 -and $fileBody[$helpStart] -notmatch '^\s*<#') {
-                $helpStart--
-            }
-        }
-
-        @(
-            if ($helpStart -gt 0) { $fileBody[0..($helpStart - 1)] }
-            '<#'
-            ".EXTERNALHELP $modulename-help.xml"
-            '#>'
-            $fileBody[$functionIndex..($fileBody.Count - 1)]
-        ) | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
+        $fileBody | Out-File -FilePath $moduleFilePath -Append -Encoding utf8
 
     }
 
@@ -263,8 +274,11 @@ task external_help {
         ForEach-Object {
             # Get-Help reads the first non-empty related-link URI on every view and stops with "The specified URI ...
             # is not valid" unless it is absolute, so a link to another command's markdown page keeps its text but no URI.
+            # Only http and https links keep theirs: a path such as /docs/x.md is an absolute file URI on Linux alone.
             foreach ($link in $_.RelatedLinks) {
-                if (-not [uri]::TryCreate($link.Uri, [System.UriKind]::Absolute, [ref] $null)) {
+                $linkUri = $null
+
+                if (-not ([uri]::TryCreate($link.Uri, [System.UriKind]::Absolute, [ref] $linkUri) -and $linkUri.Scheme -in 'http', 'https')) {
                     $link.Uri = ''
                 }
             }

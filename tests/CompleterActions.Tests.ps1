@@ -1870,4 +1870,100 @@ Describe 'Packaged command help' {
             }
         }
     }
+
+    It 'replaces every comment that leads into a public function, in any form, and keeps private comment help' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # The build derives the module name from its folder, so the inputs are staged under a folder with that name.
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'CompleterActions'
+        New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+        foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
+        {
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+        }
+
+        foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+        {
+            Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        $publicRoot = Join-Path -Path $stagingRoot -ChildPath 'src/Public'
+        $helpLineLikeDeclaration = 'function names in this description are informational only.'
+
+        # A help line that starts with the word 'function', which a line pattern takes for the declaration.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Get-Completer.ps1'
+        $lines = [System.Collections.Generic.List[string]] @(Get-Content -LiteralPath $path)
+        $lines.IndexOf('.DESCRIPTION') | Should -BeGreaterOrEqual 0
+        $lines.Insert($lines.IndexOf('.DESCRIPTION') + 1, $helpLineLikeDeclaration)
+        Set-Content -LiteralPath $path -Value $lines
+
+        # A blank line between the help block and the declaration.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Unregister-Completer.ps1'
+        $lines = [System.Collections.Generic.List[string]] @(Get-Content -LiteralPath $path)
+        $lines.IndexOf('function Unregister-Completer') | Should -BeGreaterThan 0
+        $lines.Insert($lines.IndexOf('function Unregister-Completer'), '')
+        Set-Content -LiteralPath $path -Value $lines
+
+        # Help written as line comments instead of a block.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterScript.ps1'
+        $lines = @(Get-Content -LiteralPath $path)
+        $helpEnd = [array]::IndexOf($lines, '#>')
+        $lines[0] | Should -BeExactly '<#'
+        Set-Content -LiteralPath $path -Value @(@($lines[1..($helpEnd - 1)] | ForEach-Object { "# $_" }) + $lines[($helpEnd + 1)..($lines.Count - 1)])
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+
+        $packagedPath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $packagedAst = [System.Management.Automation.Language.Parser]::ParseFile($packagedPath, [ref] $tokens, [ref] $parseErrors)
+
+        @($parseErrors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }) | Should -BeNullOrEmpty
+        Get-Content -LiteralPath $packagedPath -Raw | Should -Not -Match ([regex]::Escape($helpLineLikeDeclaration))
+
+        $functions = @($packagedAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+        $publicNames = @(Get-ChildItem -LiteralPath $publicRoot -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+        $privateNames = @(Get-ChildItem -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private') -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+
+        @($functions | Where-Object Name -in $publicNames).Count | Should -Be $publicNames.Count
+        @($functions | Where-Object Name -in $privateNames).Count | Should -Be $privateNames.Count
+
+        foreach ($function in $functions | Where-Object Name -in $publicNames)
+        {
+            $leadingTokens = @($tokens | Where-Object { $_.Extent.EndOffset -le $function.Extent.StartOffset })
+            $leadingComments = @(
+                for ($index = $leadingTokens.Count - 1; $index -ge 0 -and $leadingTokens[$index].Kind -in 'Comment', 'NewLine'; $index--)
+                {
+                    if ($leadingTokens[$index].Kind -eq 'Comment')
+                    {
+                        $leadingTokens[$index].Text
+                    }
+                }
+            )
+
+            $leadingComments | Should -HaveCount 1 -Because "only the directive may lead into the packaged $($function.Name)"
+            $leadingComments[0] -replace '\r', '' | Should -BeExactly "<#`n.EXTERNALHELP CompleterActions-help.xml`n#>"
+            $function.GetHelpContent().MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml'
+        }
+
+        foreach ($function in $functions | Where-Object Name -in $privateNames)
+        {
+            $help = $function.GetHelpContent()
+
+            $help.MamlHelpFile | Should -BeNullOrEmpty
+            $help.Synopsis | Should -Not -BeNullOrEmpty -Because "the packaged private $($function.Name) keeps its comment help"
+        }
+    }
 }
