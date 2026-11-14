@@ -60,7 +60,10 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-Completer output. Keys are output-only identifiers: a
+from Get-Completer output; each target is decided once per call, so the
+Conflicted twin of a Stale record is skipped rather than confirmed again or
+reported as missing, and a declined confirmation stands. Keys are output-only
+identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.
 To reload a Failed or Active script-backed registration instead of removing
@@ -72,7 +75,9 @@ it, use Reset-Completer.
 
 ### -AllowUnmanaged
 
-Allows removal of runtime registrations that are not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
