@@ -511,6 +511,12 @@ THE STRICT GRAMMAR
       not supported.
     - Keep `-CommandName` and `-ParameterName` literal: a literal string, a
       literal string array, or a literal `@('tool', 'tool.exe')` expression.
+      An array with a redirection or a trailing `&` inside it, such as
+      `@('tool' 2> $null)` or `@('tool' &)`, is not literal, because a
+      redirection there would write a file while the script is imported.
+      `Test-CompleterScript` reports it, and `Import-CompleterScript` and
+      `Register-Completer -Lazy` refuse the script, even when the
+      redirection writes nothing.
     - Keep `-ScriptBlock` a literal `{ ... }` block, not a variable.
     - Move cache initialization, alias bootstrap, tool discovery, generated
       completion loading, and every other piece of setup into functions that
