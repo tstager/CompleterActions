@@ -3351,6 +3351,22 @@ function Register-TestIdentitySameArgument
             } | Should -Throw "*'nope' for Trusted, which is not a Boolean value*"
             Test-Path -LiteralPath $badSetPath | Should -BeFalse
         }
+
+        It 'reads True or False with white space around it and counts white-space text as False' {
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' }
+
+            @([pscustomobject] @{ CommandName = 'Test-IdentityTool:Name'; IsNative = " True`t" } | Get-Completer | ForEach-Object { [string] $_.CompleterType }) |
+                Should -Be @('Native')
+            @([pscustomobject] @{ RuntimeKey = 'Test-IdentityTool:Name'; IsNative = ' false ' } | Get-Completer | ForEach-Object { [string] $_.CompleterType }) |
+                Should -Be @('Parameter')
+            @([pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; Native = " `t " } | Get-Completer | ForEach-Object { [string] $_.CompleterType }) |
+                Should -Be @('Parameter') -Because 'text that is only white space counts as False'
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = ' yes ' } | Get-Completer
+            } | Should -Throw "*' yes ' for IsNative, which is not a Boolean value*"
+        }
     }
 }
 
