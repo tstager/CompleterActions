@@ -1,25 +1,26 @@
 <#
 .SYNOPSIS
-Returns the capture module Import-CompleterScript ran a script in, when a script block is bound to it.
+Returns the capture module Import-CompleterScript ran a script in, when a script block is one the import emitted.
 
 .DESCRIPTION
 Import-CompleterScript runs each script in a capture module of its own and
-records that module, with the script's path and tier, in the module's
-CompleterImportModules table. This helper returns the capture module a script
-block is bound to when the table holds that module for the given script path
-and tier, and nothing otherwise.
+records every script block it emits, with that capture module, the script's
+path, and the tier, in the module's CompleterImportedScriptBlocks table, keyed
+on the script block object itself. This helper returns the capture module of a
+script block the table holds for the given script path and tier, and nothing
+otherwise.
 
 That is how the module tells an imported script block from any other. A
 record's ImportModule, ScriptPath, SourcePath, and Trusted properties are
-claims that any caller can set, so none of them establishes provenance: a
-closure of an imported block is bound to a module of its own, and a module
-that a caller creates, whatever its name, is never in the table. Script paths
-compare the way the file system does: ignoring case on Windows and macOS, and
-ordinally elsewhere.
+claims that any caller can set, so none of them establishes provenance, and
+neither does a block's binding: the capture module is public on every
+imported record, so a caller can bind a script block of its own to it, but
+only the objects the import emitted are in the table. A closure of an imported
+block is a new object too. Script paths compare the way the file system does:
+ignoring case on Windows and macOS, and ordinally elsewhere.
 
 .PARAMETER ScriptBlock
-The script block whose binding to check. A null script block, or one bound to
-no module, has no capture module.
+The script block to look up. A null script block has no capture module.
 
 .PARAMETER ScriptPath
 The script the block must have been imported from.
@@ -29,8 +30,8 @@ The tier the script must have been imported under.
 
 .OUTPUTS
 System.Management.Automation.PSModuleInfo
-Returns the capture module, or nothing when the script block was not imported
-from that script under that tier.
+Returns the capture module, or nothing when the script block is not one the
+import emitted for that script under that tier.
 
 .EXAMPLE
 PS> Get-CompleterImportModule -ScriptBlock $record.ScriptBlock -ScriptPath $record.ScriptPath -Trusted $record.Trusted
@@ -56,14 +57,14 @@ function Get-CompleterImportModule
         [bool] $Trusted
     )
 
-    if ($null -eq $ScriptBlock -or $null -eq $ScriptBlock.Module -or [string]::IsNullOrEmpty($ScriptPath))
+    if ($null -eq $ScriptBlock -or [string]::IsNullOrEmpty($ScriptPath))
     {
         return
     }
 
     $importedScript = $null
 
-    if (-not $script:CompleterImportModules.TryGetValue($ScriptBlock.Module, [ref] $importedScript))
+    if (-not $script:CompleterImportedScriptBlocks.TryGetValue($ScriptBlock, [ref] $importedScript))
     {
         return
     }
@@ -72,6 +73,6 @@ function Get-CompleterImportModule
 
     if ([string]::Equals($importedScript.ScriptPath, $ScriptPath, $pathComparison) -and $importedScript.Trusted -eq $Trusted)
     {
-        return $ScriptBlock.Module
+        return $importedScript.Module
     }
 }

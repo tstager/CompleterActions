@@ -2358,6 +2358,28 @@ Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name
             $strictClaim.ImportModule | Should -BeNullOrEmpty -Because 'the import ran the script under the trusted tier, not the tier the record now claims'
         }
 
+        It 'does not take a script block bound to the capture module as one the import emitted' {
+            $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath)
+            $capture = $imported[0].ImportModule
+            $minted = $capture.NewBoundScriptBlock({ 'minted' })
+            [object]::ReferenceEquals($minted.Module, $capture) | Should -BeTrue -Because 'any caller can bind a script block to the capture module an imported record exposes'
+
+            $claim = [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; ScriptBlock = $minted; SourcePath = $imported[0].SourcePath; Trusted = $false; ImportModule = $capture }
+            $record = $claim | Register-Completer -PassThru
+
+            $record.ImportModule | Should -BeNullOrEmpty -Because 'the import did not emit the minted script block'
+            {
+                Register-Completer -LiteralPath $fixturePath -Lazy
+            } | Should -Throw '*already exists*Use -Force*' -Because 'the record does not hold what the script imported, so registering the script lazily is not a no-op over it'
+            @((TabExpansion2 -InputScript 'importfixture ' -CursorColumn 14).CompletionMatches.CompletionText) | Should -Be @('minted')
+
+            $own = @($imported | Register-Completer -Force -PassThru)
+            [object]::ReferenceEquals($own[0].ImportModule, $capture) | Should -BeTrue -Because 'the script blocks the import emitted are still its own'
+            $lazy = @(Register-Completer -LiteralPath $fixturePath -Lazy -PassThru)
+            [object]::ReferenceEquals($lazy[0], $own[0]) | Should -BeTrue -Because 'the record now holds what the script imported under the same tier'
+        }
+
         It 'refuses a lazy registration over an active record that only names the script path without -Force' {
             $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-lazy.ps1'
             Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-file' }"

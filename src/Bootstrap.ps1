@@ -2,5 +2,5 @@
 Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-$script:CompleterImportModules = [System.Runtime.CompilerServices.ConditionalWeakTable[System.Management.Automation.PSModuleInfo, psobject]]::new()
+$script:CompleterImportedScriptBlocks = [System.Runtime.CompilerServices.ConditionalWeakTable[scriptblock, psobject]]::new()
 $script:CompleterHelpProbeTimeoutSeconds = 5

@@ -15,14 +15,15 @@ paths compare the way the file system does: ignoring case on Windows and
 macOS, and ordinally elsewhere, where two paths that differ only in case name
 two files.
 
-A record is imported when its script block is bound to the capture module
-Import-CompleterScript created to run the record's ScriptPath under the
-record's tier, as Get-CompleterImportModule finds it in the table the import
-writes. Records that Import-CompleterScript emits and records a lazy load
-activated are imported. A record that only names a ScriptPath is not, and
-neither is one whose ImportModule property names the module its own script
-block is bound to, such as a closure of an imported block: provenance comes
-from the module's table, never from a property the caller can set.
+A record is imported when its script block is one Import-CompleterScript
+emitted for the record's ScriptPath under the record's tier, as
+Get-CompleterImportModule finds it in the table the import writes. Records
+that Import-CompleterScript emits and records a lazy load activated are
+imported. A record that only names a ScriptPath is not, and neither is one
+whose ImportModule property names the module its own script block is bound
+to, such as a closure of an imported block, or one whose script block a caller
+bound to the capture module: provenance comes from the module's table, never
+from a property or a binding the caller can set.
 
 A record is lazy when its State is 'Pending'. A lazy record describes the
 same completer as a managed record that loads, or already loaded, the same
@@ -43,8 +44,9 @@ A script block with that same text, ScriptPath, tier and file that is bound to
 another instance of a module with the same name, as when a module is imported
 again, comes from the module that owns the managed record. It is not the same
 completer, because the new instance holds its own state, so it is not reported
-as existing, but it is not a problem either: it replaces the record from the
-earlier instance without -Force.
+as existing, but it is not a problem either: it replaces a live record from
+the earlier instance without -Force. A Stale or Failed record is checked
+first and still needs -Force.
 
 The records are resolved in order as if each earlier record of the same call
 had already been written: a later record for the same target sees the earlier
