@@ -33,7 +33,8 @@ pipe before it and exports every managed registration.
 Script paths are written relative to the set file when both share a root, with
 forward slashes so the file is portable, so a repository can carry its set file
 alongside its scripts; paths on another drive stay absolute. The `Trusted` flag of each entry is taken from the records, and
-records for the same script must agree on it.
+records for the same script must agree on it. A record without a `Trusted`
+property is strict.
 
 A strict entry must list every target its script registers, because
 `Import-CompleterSet` compares a strict entry's `Targets` with the targets
@@ -54,7 +55,19 @@ checkout. The hash is a cache key for the entry's targets, not a signature,
 and readers that do not know the key ignore it. A strict script is read once
 for both its targets and its hash. When a trusted script cannot be read, its
 entry is written without a `Hash`, a warning names the script, and the export
-still succeeds.</maml:para>
+still succeeds.
+
+A set file can be at most 128 KB (131072 bytes), roughly 400 entries of one
+target each as this command writes them, with a `Hash`, fewer when their paths
+are long or they list several targets, because `Import-CompleterSet` and
+`Test-CompleterSet` refuse a larger file. The command measures the set it
+would write, under `-WhatIf` too, and refuses a larger one with an error that
+names its size and the limit, writing nothing, so an existing file is left
+unchanged; export the registrations as several sets instead. The limit also
+bounds the time a set takes to parse: a valid set at the limit parses in
+milliseconds, and a malformed one, which the command never writes, can take
+minutes to refuse, because the parser's time grows with the square of the
+syntax errors and a file can hold about one per byte.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -67,7 +80,7 @@ still succeeds.</maml:para>
             <maml:name>System.String</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
@@ -115,7 +128,19 @@ still succeeds.</maml:para>
 the script it came from through a `ScriptPath` or `SourcePath` property.
 Records without a script path cannot be expressed in a set and are rejected.
 A null carries no record and is skipped, so `-InputObject $null`, like the
-output of a `Get-Completer` filter that matches nothing, selects nothing.</maml:para>
+output of a `Get-Completer` filter that matches nothing, selects nothing.
+`Trusted`, `IsNative` and `Native` take a Boolean value, a number, where zero
+is `False`, or the text `True` or `False` in any letter case, as `Export-Csv`
+writes a Boolean, so rows read back with `Import-Csv` export with the tier and
+kind they were written with. A null value or empty text counts as `False`,
+and any other text is rejected.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
@@ -212,19 +237,19 @@ current session.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Export-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterSet</maml:linkText>
-        <maml:uri>Import-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -258,9 +283,14 @@ stable while unrelated targets change; only a target that sorts before the
 current window can shift it.
 The command accepts arrays for command and parameter lookups, and records
 piped back from Get-Completer or Import-CompleterScript resolve
-through their Key and IsNative properties. Keys are output-only identifiers: a
-hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+through their CommandName, ParameterName, and IsNative properties. Keys are
+output-only identifiers: a hand-typed key string is not accepted, so name the
+target with -CommandName plus -Native or -ParameterName instead. A key does
+not identify a target on its own: a native command whose name contains a
+colon, such as an alias named
+`Get-Thing:Name`, has the same key as the parameter target `Get-Thing` /
+`Name`. The two are separate registrations, and a lookup returns only the kind
+it names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -286,7 +316,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -315,7 +345,7 @@ registrations from being listed.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Get-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -336,7 +366,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -394,7 +424,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -451,7 +481,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -480,7 +510,7 @@ registrations from being listed.</maml:para>
       </command:syntaxItem>
     </command:syntax>
     <command:parameters>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>CommandName</maml:name>
         <maml:description>
           <maml:para>Limits results to one or more command names for native or command-parameter
@@ -514,16 +544,25 @@ completers.</maml:para>
         <maml:name>InputObject</maml:name>
         <maml:description>
           <maml:para>Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-Completer or Import-CompleterScript. An
-input object exposes CommandName with IsNative/Native or ParameterName, or a
-Key, RegistrationKey, or RuntimeKey together with IsNative/Native.</maml:para>
+records returned by Get-Completer or Import-CompleterScript. Every piped
+object binds here. An input object describes one target: it exposes
+CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
+or RuntimeKey together with IsNative/Native. To look up several targets at
+once, pass arrays to -CommandName and -ParameterName instead.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
           <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="IsNative">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="IsNative">
         <maml:name>Native</maml:name>
         <maml:description>
           <maml:para>Indicates that the lookup target is a native command completer instead of a
@@ -533,7 +572,7 @@ command parameter completer.</maml:para>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ParameterName</maml:name>
         <maml:description>
           <maml:para>Limits results to one or more parameter completer targets.</maml:para>
@@ -568,9 +607,9 @@ union.</maml:para>
           <command:parameterValue required="false" variableLength="false">Failed</command:parameterValue>
           <command:parameterValue required="false" variableLength="false">Discovered</command:parameterValue>
         </command:parameterValueGroup>
-        <command:parameterValue required="true" variableLength="true">CompleterState[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">CompleterActions.CompleterState[]</command:parameterValue>
         <dev:type>
-          <maml:name>CompleterState[]</maml:name>
+          <maml:name>CompleterActions.CompleterState[]</maml:name>
         </dev:type>
       </command:parameter>
     </command:parameters>
@@ -671,11 +710,7 @@ piping its import records back in.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
-      </maml:navigationLink>
-      <maml:navigationLink>
-        <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-Completer.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Get-Completer.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -746,7 +781,7 @@ remain importable through the strict tier without redesign. Run
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Import-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -764,7 +799,7 @@ remain importable through the strict tier without redesign. Run
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Import-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -792,7 +827,7 @@ remain importable through the strict tier without redesign. Run
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="none">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
         <maml:name>Path</maml:name>
         <maml:description>
           <maml:para>One or more paths to completer script files. Wildcards are supported.</maml:para>
@@ -896,11 +931,7 @@ grammar, then registers it. The imported records carry `Trusted` set to
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
-      </maml:navigationLink>
-      <maml:navigationLink>
-        <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Import-CompleterScript.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterScript.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -916,9 +947,12 @@ grammar, then registers it. The imported records carry `Trusted` set to
     <maml:description>
       <maml:para>Reads a completer set, a `.psd1` data file written by `Export-CompleterSet` or
 by hand, validates every entry up front, and then registers each valid entry's
-targets as managed registrations. The set is read with
-`Import-PowerShellDataFile`, which evaluates data only, and validation never
-executes a completer script.
+targets as managed registrations. The set file is read once and evaluated as
+data only, with the evaluator `Import-PowerShellDataFile` uses, and validation
+never executes a completer script. A set file that holds more than 128 KB
+(131072 bytes) is refused before it is parsed, as `Export-CompleterSet` refuses
+to write one, and nothing from it is registered; split a larger set into
+several.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because
@@ -978,9 +1012,10 @@ holds the manifest as its only `.psd1`. The module is found the way
 that has the module wins, and within it the highest version, which is used
 even when its set is broken. The manifest is read as data, so the package's
 `RootModule`, `ScriptsToProcess`, `NestedModules`, and `RequiredModules` never
-load or run. Every name is resolved before any set is imported, and the set is
-then imported as `-LiteralPath` imports it, with two rules for packages. An
-entry whose script resolves outside the module folder is an invalid entry. A
+load or run, and a manifest larger than 128 KB, the set file limit, is refused
+before it is parsed. Every name is resolved before any set is imported, and the
+set is then imported as `-LiteralPath` imports it, with two rules for packages.
+An entry whose script resolves outside the module folder is an invalid entry. A
 set with trusted entries writes one warning per name that counts them.
 Installing a completer set package and importing it by name is a decision to
 run its scripts: each one runs at its first tab, under its entry's trust tier.</maml:para>
@@ -988,7 +1023,7 @@ run its scripts: each one runs at its first tab, under its entry's trust tier.</
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Import-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1027,7 +1062,7 @@ run its scripts: each one runs at its first tab, under its entry's trust tier.</
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Import-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1264,23 +1299,23 @@ needs, with no path.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Export-CompleterSet</maml:linkText>
-        <maml:uri>Export-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Register-Completer</maml:linkText>
-        <maml:uri>Register-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -1445,7 +1480,7 @@ path.</maml:para>
             <maml:name>System.String</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>HelpText</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1713,23 +1748,23 @@ New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -F
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/New-CompleterScript.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Register-Completer</maml:linkText>
-        <maml:uri>Register-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Export-CompleterSet</maml:linkText>
-        <maml:uri>Export-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -1746,12 +1781,60 @@ New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -F
       <maml:para>Registers native or command-parameter argument completers with
 `Register-ArgumentCompleter` and records the registrations in the module's
 managed state. Existing managed or runtime registrations are preserved unless
-you use `-Force` to replace them. Registering the same script for a target that
-is already managed is idempotent only while the managed record still matches
-the live runtime value; when the runtime registration was replaced or removed
-outside this module, the managed record is stale and the command fails until
-you reconcile it with `-Force`. Each target is updated transactionally: if the
-runtime or managed write fails, the previous runtime and managed state are
+you use `-Force` to replace them. The one exception is a script block from a
+new instance of the module that registered a live managed record, which
+replaces that record without `-Force`, as described below.
+
+Registering the same completer again for a target that is already managed is a
+no-op that returns the managed record, but only while that record is live,
+which means the runtime still holds the very script block the module
+registered. When the runtime registration was replaced or removed outside this
+module, even by a script block with the same text, the managed record is stale
+and the command fails until you reconcile it with `-Force`.
+
+The script block you register is the same completer as the managed record's
+when it is that very script block, or when its text is exactly the same,
+compared case sensitively, and it is bound to the same context. For the
+records `Import-CompleterScript` emits, the context is the script file and its
+tier, so importing and registering the same script again stays a no-op. The
+module recognises an imported script block as one of the very script block
+objects `Import-CompleterScript` emitted for that script under that tier. A
+`ScriptPath`, `SourcePath`, or `ImportModule` property on an input object does
+not vouch for its script block, and neither does binding a new script block
+to the capture module, so any other script block, a closure of an imported
+one included, is compared by its own context. Only the completer's own text is
+compared, so after you edit other code in the script, such as a value it sets
+at the top, register it again with `-Force` to pick up the change. Script paths
+compare the way the file system does: ignoring case on Windows and macOS, and
+case sensitively elsewhere, where two paths that differ only in case are two
+scripts. For any other script block, the context is the file that defines it
+and the module instance the block is bound to. A closure created with
+`GetNewClosure()` is bound to a module of its own, so a second closure is a
+different completer even when its text is identical, and replacing the first
+one needs `-Force`.
+
+A script block bound to a different instance of a module with the same name,
+as after `Import-Module -Force` or from a second `New-Module` with that name, is
+not the same completer, because the new instance holds its own state, but it
+comes from the module that owns the managed record. While that record is
+live, and when the block's text, compared case sensitively, the file that
+defines it, its `ScriptPath`, and its tier all equal the managed record's, it
+replaces the managed record and the runtime script block without `-Force`, so
+completion runs in the module that is loaded now. That holds even when the
+module is imported again with the same arguments: the registration replaces
+the record instead of being a no-op, and `-PassThru` returns the new record. A
+script block from a module with another name, or one that differs in text,
+file, `ScriptPath`, or tier, still needs `-Force`, and so does any registration
+over a stale record or a `Failed` lazy record.
+
+A target is its kind and its runtime key, the name PowerShell stores the
+completer under, compared ordinally ignoring case as PowerShell compares it. A
+native command whose name contains a colon, such as an alias named
+`Get-Thing:Name`, is therefore a separate target from the parameter target
+`Get-Thing` / `Name`, although the two share a key, and so are two names that
+the key's lowercasing merges, such as one spelled with the Kelvin sign
+(U+212A) and one with the letter K. Each target is updated transactionally:
+if the runtime or managed write fails, the previous runtime and managed state are
 restored and any rollback failure is reported alongside the original error. The
 command supports array inputs for command and parameter targets, and it can
 also accept pipeline `InputObject` values that describe the target and expose a
@@ -1770,7 +1853,11 @@ before anything is registered, under `-WhatIf` too; it runs again when the
 script loads, and a script that no longer conforms by then moves to `Failed`.
 With `-Trusted` the script is dot-sourced as-is on first use and cannot be
 parsed safely, so the targets must be supplied with `-CommandName` and
-`-Native` or `-ParameterName`.
+`-Native` or `-ParameterName`. Registering the script lazily again under the
+same tier is a no-op while the managed record is `Pending` for that script or
+holds a script block `Import-CompleterScript` emitted for that script under
+that tier; over any other record, one that only names the script's path
+included, it needs `-Force`.
 
 If the script fails to load on the first tab press, the press returns no
 completions, the runtime entry is removed so the completion engine's default
@@ -1784,7 +1871,7 @@ the ordinary completer call; it never hooks key handlers, replaces
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Register-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1792,7 +1879,7 @@ the ordinary completer call; it never hooks key handlers, replaces
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1839,7 +1926,7 @@ the ordinary completer call; it never hooks key handlers, replaces
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Register-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
@@ -2030,7 +2117,7 @@ the ordinary completer call; it never hooks key handlers, replaces
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Register-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2038,7 +2125,7 @@ the ordinary completer call; it never hooks key handlers, replaces
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -2112,7 +2199,9 @@ be one the script registers.</maml:para>
           <maml:para>Replaces an existing managed or runtime registration for the same target with
 the new completer, including a stale managed record whose live runtime value
 was changed outside this module and a `Failed` lazy record whose load should be
-retried; `Reset-Completer` retries that load without registering it again.</maml:para>
+retried; `Reset-Completer` retries that load without registering it again.
+A script block from a new instance of the module that registered a live
+managed record replaces it without `-Force`; see the description.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -2128,7 +2217,19 @@ and must expose a `ScriptBlock` property whose value is a script block. A key
 without a native indicator is rejected; keys are output-only identifiers and
 are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
-records, are carried onto the managed record.</maml:para>
+records, are carried onto the managed record. `IsNative`, `Native`, and
+`Trusted` take a Boolean value, a number, where zero is `False`, or the text
+`True` or `False` in any letter case, as `Export-Csv` writes a Boolean. A null
+value or empty text counts as `False`, and any other text is rejected.
+An `ImportModule` property is ignored: the managed record's `ImportModule` is
+the capture module `Import-CompleterScript` ran the script in, and only for a
+script block the import emitted. `CommandName`, or `RuntimeKey`, names the
+target exactly. `Key` and `RegistrationKey` are folded to lowercase, so an
+object that has only one of them names the target whose runtime key is that
+key, apart from letter case, whether or not it is registered. Such an object
+is rejected while a registered target of its kind has the key under a name
+that the lowercasing merged into it, such as a name spelled with the Kelvin
+sign (U+212A) for a key spelled with the letter k.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
@@ -2181,7 +2282,9 @@ registrations.</maml:para>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>PassThru</maml:name>
         <maml:description>
-          <maml:para>Returns the managed registration records that were created or reused.</maml:para>
+          <maml:para>Returns the managed registration records that were created or reused. A
+reused record keeps its own `ScriptPath` and `Trusted` values; those of the
+input are not applied to it.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -2269,14 +2372,6 @@ records. Lazy registrations carry `State` `Pending`, the `ScriptPath` they
 load, and `Trusted`.</maml:para>
         </maml:description>
       </command:returnValue>
-      <command:returnValue>
-        <dev:type>
-          <maml:name>System.Management.Automation.PSObject</maml:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
-        </maml:description>
-      </command:returnValue>
     </command:returnValues>
     <maml:alertSet>
       <maml:alert>
@@ -2341,19 +2436,19 @@ have been fixed.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Register-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -2373,8 +2468,11 @@ came from. A script-backed registration is any managed record with a
 `Register-Completer -Lazy`, or an eager one from
 `Import-CompleterScript | Register-Completer`. The targets are named by native
 command, command parameter target, or pipeline `InputObject` values, and each
-target is decided once per call; a key seen earlier in the same call is
-skipped.
+target is decided once per call; a target seen earlier in the same call is
+skipped. Only the kind of target named is reset: a native command whose name
+contains a colon, such as an alias named `Get-Thing:Name`, shares its key with
+the parameter target `Get-Thing` / `Name`, and resetting one never touches the
+other.
 
 Each target is decided from the managed record and the live runtime value,
 and the first of these rules that applies decides it:
@@ -2424,7 +2522,7 @@ use `Unregister-Completer`.</maml:para>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Reset-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2432,7 +2530,7 @@ use `Unregister-Completer`.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2464,7 +2562,7 @@ use `Unregister-Completer`.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Reset-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -2496,7 +2594,7 @@ use `Unregister-Completer`.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Reset-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2504,7 +2602,7 @@ use `Unregister-Completer`.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -2562,7 +2660,14 @@ records from `Get-Completer`, `Register-Completer -PassThru`, or
 `Import-CompleterSet`. Input objects expose CommandName with IsNative/Native
 or ParameterName, or a Key, RegistrationKey, or RuntimeKey together with
 IsNative/Native. Each object is resolved on its own, so an object that cannot
-be resolved is reported and the rest are still reset.</maml:para>
+be resolved is reported and the rest are still reset.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
@@ -2696,23 +2801,23 @@ Get-Completer -State Active, Failed | Where-Object ScriptPath -eq $path | Reset-
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Reset-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Register-Completer</maml:linkText>
-        <maml:uri>Register-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Unregister-Completer</maml:linkText>
-        <maml:uri>Unregister-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterSet</maml:linkText>
-        <maml:uri>Import-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -2744,7 +2849,7 @@ registration, and it never touches PSReadLine.</maml:para>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2752,7 +2857,7 @@ registration, and it never touches PSReadLine.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2779,7 +2884,7 @@ registration, and it never touches PSReadLine.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -2806,7 +2911,7 @@ registration, and it never touches PSReadLine.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2814,7 +2919,7 @@ registration, and it never touches PSReadLine.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -2868,7 +2973,14 @@ default is the end of the input.</maml:para>
           <maml:para>Supplies an object that describes the completer target, such as a record
 returned by `Get-Completer` or `Import-CompleterScript`. The object
 must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
-`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.</maml:para>
+`Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
@@ -2994,15 +3106,15 @@ $matches.CompletionText | Should -Contain 'checkout'
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterRegistration.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -3031,7 +3143,7 @@ not checked further. `Test-CompleterScript` never executes the script.</maml:par
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Test-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3042,7 +3154,7 @@ not checked further. `Test-CompleterScript` never executes the script.</maml:par
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3158,15 +3270,15 @@ Describe 'completer conformance' {
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterScript.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterRegistration</maml:linkText>
-        <maml:uri>Test-CompleterRegistration.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -3186,14 +3298,21 @@ full against the scripts on disk, and returns one
 matches its folder produces no output, so a gate can assert that the command
 returns nothing, the same shape `Test-CompleterScript` uses.
 
-The set is read with `Import-PowerShellDataFile`, which evaluates data only,
-and the set file is also parsed, never evaluated, to point each finding at a
-line and column of the set. Every strict entry is parsed once, whether or not
-its `Hash` matches, because the command verifies rather than takes the fast
-path. A trusted entry is never parsed, as at import, so it can report only
-`MissingScript`, `InvalidEntry`, `DuplicateTarget`, and the three `Hash` kinds.
-No script is executed, and the session's registrations are neither read nor
-changed, so a conflict with what the session has registered is not drift.
+The set file is read once and evaluated as data only, as `Import-CompleterSet`
+reads it, and each finding points at a line and column of that same read, so
+the set file is not read by its own path again and a set rewritten during the
+test cannot change the entries checked or the positions reported. The module
+manifests `-Name` reads or the folder above the set's folder holds are read by
+their own paths, held to the same 128 KB limit, and the scripts the entries
+name by theirs, parsed in full, because a completer script can be larger than
+a set. When a link makes one of those paths another name for the set file,
+that read sees the file as it is then. Every strict entry is parsed once,
+whether or not its `Hash` matches, because the command verifies rather than
+takes the fast path. A trusted entry is never parsed, as at import, so it can
+report only `MissingScript`, `InvalidEntry`, `DuplicateTarget`, and the three
+`Hash` kinds. No script is executed, and the session's registrations are
+neither read nor changed, so a conflict with what the session has registered
+is not drift.
 
 `Construct` names the kind of drift, and `Severity` is `Error` when
 `Import-CompleterSet` without `-SkipInvalid` would reject the set because of
@@ -3228,13 +3347,13 @@ at line 1, column 1 of the set.
 
 A set is a package set when its module manifest is known: through `-Name`, or,
 for `-Path` and `-LiteralPath`, when the folder above the set file's folder
-holds a `.psd1` that reads as data and whose `PrivateData.CompleterSet`
-resolves to the set file, as in a staged package before it is published. When
-more than one `.psd1` there declares the set, the first in ordinal order of
-file name is the manifest. A `.psd1` that is not data declares nothing, and a
-folder that cannot be listed holds no manifest. A set that no manifest
-declares gets no `PackageLayout` finding. A package set is checked for four
-things, reported in this order:
+holds a `.psd1` of at most 128 KB that reads as data and whose
+`PrivateData.CompleterSet` resolves to the set file, as in a staged package
+before it is published. When more than one `.psd1` there declares the set, the
+first in ordinal order of file name is the manifest. A `.psd1` that is not data
+or is larger than 128 KB declares nothing, and a folder that cannot be listed
+holds no manifest. A set that no manifest declares gets no `PackageLayout`
+finding. A package set is checked for four things, reported in this order:
 
 - `Error`, one per entry in set order, at the entry's `Path`: the `Path` is
   fully qualified, or resolves outside the module folder, so an installed copy
@@ -3256,21 +3375,32 @@ A `RootModule` in the manifest is not a finding.
 With `-Name` the set comes from an installed completer set package, found
 exactly as `Import-CompleterSet -Name` finds it: the first `$env:PSModulePath`
 root that has the module wins, and within it the highest version. The manifest
-is read as data, so nothing in the package runs. Each name is taken literally,
-and a name that does not resolve fails the call.
+is read as data, so nothing in the package runs, and a manifest larger than
+128 KB fails the call before it is parsed. Each name is taken literally, and a
+name that does not resolve fails the call.
 
 Every `-Path`, `-LiteralPath`, or `-Name` value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
 are written before the next set is read. A set that cannot be read, such as
-one without `Version = 1`, stops the call with a terminating error after the
-findings of the earlier sets. A folder under a set's directory that cannot be
-read also stops the call with a terminating error, after that set's entry
-findings, because the scan for unlisted scripts would be incomplete.</maml:para>
+one without `Version = 1` or one larger than the 128 KB (131072-byte) limit
+that `Import-CompleterSet` also applies, stops the call with a terminating
+error after the findings of the earlier sets. A folder under a set's
+directory that cannot be read also stops the call with a terminating error,
+after that set's entry findings, because the scan for unlisted scripts would
+be incomplete.
+
+The size limit also bounds the time a set takes to parse, though a malformed
+file at the limit can still take minutes to refuse. A valid set at the limit
+parses in milliseconds, but the time the PowerShell parser takes to refuse a
+malformed file grows with the square of its syntax errors, and a file can
+hold about one per byte: at the limit, a file that repeats a short key on
+every line took 70 seconds to refuse, and one of nothing but closing
+parentheses about two minutes.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Test-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3289,7 +3419,7 @@ findings, because the scan for unlisted scripts would be incomplete.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3443,19 +3573,19 @@ package layout, by the same name the profile's `Import-CompleterSet` line uses.<
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterSet</maml:linkText>
-        <maml:uri>Import-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Export-CompleterSet</maml:linkText>
-        <maml:uri>Export-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -3485,16 +3615,22 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-Completer output. Keys are output-only identifiers: a
+from Get-Completer output; each target is decided once per call, so the
+Conflicted twin of a Stale record is skipped rather than confirmed again or
+reported as missing, and a declined confirmation stands. Keys are output-only
+identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+plus -Native or -ParameterName instead. Only the kind of target named is
+removed: a native command whose name contains a colon, such as an alias named
+`Get-Thing:Name`, shares its key with the parameter target `Get-Thing` /
+`Name`, and removing one never touches the other.
 To reload a Failed or Active script-backed registration instead of removing
 it, use Reset-Completer.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Unregister-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3502,7 +3638,7 @@ it, use Reset-Completer.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3541,7 +3677,7 @@ it, use Reset-Completer.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Unregister-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -3580,7 +3716,7 @@ it, use Reset-Completer.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Unregister-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3588,7 +3724,7 @@ it, use Reset-Completer.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -3629,7 +3765,9 @@ it, use Reset-Completer.</maml:para>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>AllowUnmanaged</maml:name>
         <maml:description>
-          <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
+          <maml:para>Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -3659,7 +3797,14 @@ it, use Reset-Completer.</maml:para>
         <maml:description>
           <maml:para>Supplies one or more objects that describe registrations to remove.
 Input objects expose CommandName with IsNative/Native or ParameterName, or a
-Key, RegistrationKey, or RuntimeKey together with IsNative/Native.</maml:para>
+Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
@@ -3737,15 +3882,8 @@ targets.</maml:para>
           <maml:name>CompleterActions.CompleterRegistration</maml:name>
         </dev:type>
         <maml:description>
-          <maml:para>When -PassThru is used</maml:para>
-        </maml:description>
-      </command:returnValue>
-      <command:returnValue>
-        <dev:type>
-          <maml:name>System.Management.Automation.PSObject</maml:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
+          <maml:para>When `-PassThru` is used, returns the removed
+`CompleterActions.CompleterRegistration` records.</maml:para>
         </maml:description>
       </command:returnValue>
     </command:returnValues>
@@ -3758,15 +3896,11 @@ targets.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
-      </maml:navigationLink>
-      <maml:navigationLink>
-        <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Unregister-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Reset-Completer</maml:linkText>
-        <maml:uri>Reset-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>

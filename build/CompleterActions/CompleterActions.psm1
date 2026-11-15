@@ -1,86 +1,8 @@
-<#
-.SYNOPSIS
-Writes a completer set file from registrations that came from scripts.
 
-.DESCRIPTION
-Groups registration records by the completer script they came from and writes
-a completer set: a .psd1 data file that lists each script once with its trust
-tier and the targets it registers. Import-CompleterSet reads the file back and
-registers everything in it, so a profile that imports a completer repository
-becomes one Import-CompleterSet call.
-
-Records arrive through -InputObject or the pipeline, typically from
-Get-Completer or Import-CompleterScript. When the command comes after a pipe
-or is given -InputObject, it exports only the records that arrive that way,
-even when none do. A Get-Completer filter that matches nothing selects nothing,
-whether it is piped to the command or passed to -InputObject, and so do an
-empty array and $null; the command then warns that no registrations were
-selected, writes nothing, and leaves an existing file unchanged. Only a call
-with no pipe before it and no -InputObject, such as the command on its own or
-as the first command of a pipeline, exports every managed registration that
-records a ScriptPath. The command cannot see a pipe in front of a function or
-script block that calls it, so a wrapper must pass its input on, for example as
-$input | Export-CompleterSet; otherwise the inner call has no pipe before it
-and exports every managed registration.
-
-Script paths are written relative to the set file when both share a root, so a
-repository can carry its set file alongside its scripts; paths on another drive
-stay absolute. The Trusted flag of each entry is taken from the records, and
-records for the same script must agree on it.
-
-A strict entry must list every target its script registers, because
-Import-CompleterSet compares a strict entry's Targets with the targets derived
-from the parsed script and rejects a mismatch. The command derives those
-targets the same way before writing and refuses, naming the missing targets
-and leaving the output untouched, when the records for a strict script cover
-only some of them, as they do after Register-Completer -Lazy
--CommandName selected a subset. A strict entry's targets are written in the
-order the script registers them, with the script's casing. Trusted entries are
-written with the targets the records carry, in record order, so a subset of a
-trusted script's targets exports and imports as given.
-
-Every entry also records a Hash of its script: 'SHA256:' followed by the
-SHA-256 of the script's text with CR LF and lone CR line endings normalised to
-LF, so the same script hashes to the same value on a Windows and a Linux
-checkout. The hash is a cache key for the entry's targets, not a signature, and
-readers that do not know the key ignore it. A strict script is read once for
-both its targets and its hash. When a trusted script cannot be read, its entry
-is written without a Hash, a warning names the script, and the export still
-succeeds.
-
-.PARAMETER Path
-The path of the .psd1 file to write. The parent directory must exist.
-
-.PARAMETER InputObject
-Registration records to export. Each record must describe a target and expose
-the script it came from through a ScriptPath or SourcePath property. Records
-without a script path cannot be expressed in a set and are rejected. A null
-carries no record and is skipped, so -InputObject $null, like the output of a
-Get-Completer filter that matches nothing, selects nothing.
-
-.PARAMETER PassThru
-Returns the written file.
-
-.OUTPUTS
-System.IO.FileInfo
-When -PassThru is used, returns the written set file.
-
-.EXAMPLE
-PS> Export-CompleterSet -Path ~\Completers\completers.psd1
-
-Writes every managed registration that came from a script into a set file next
-to the scripts.
-
-.EXAMPLE
-PS> Get-ChildItem ~\Completers -Recurse -Filter *_completer.ps1 | Import-CompleterScript | Export-CompleterSet -Path ~\Completers\completers.psd1
-
-Builds a set from a completer repository without registering anything in the
-current session.
-#>
-function Export-CompleterSet
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Export-CompleterSet
 {
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Low')]
     [OutputType([System.IO.FileInfo])]
@@ -170,9 +92,9 @@ function Export-CompleterSet
                     throw 'InputObject must expose the script it came from through a ScriptPath or SourcePath property; registrations created from an in-memory script block cannot be exported to a set.'
                 }
 
-                $target = ($record | Resolve-CompleterInputObject).Target
-                $trustedProperty = $record.PSObject.Properties['Trusted']
-                $trusted = $null -ne $trustedProperty -and [bool] $trustedProperty.Value
+                $resolvedInput = $record | Resolve-CompleterInputObject
+                $target = $resolvedInput.Target
+                $trusted = $resolvedInput.Trusted
 
                 if (-not $entriesByPath.Contains($scriptPath))
                 {
@@ -191,7 +113,7 @@ function Export-CompleterSet
                     throw "The records for '$scriptPath' disagree on Trusted, so the entry's trust tier cannot be written."
                 }
 
-                $entry.Targets[[string] $target.Key] = $target
+                $entry.Targets[(Get-CompleterTargetIdentity -Target $target)] = $target
             }
 
             if ($entriesByPath.Count -eq 0)
@@ -215,22 +137,22 @@ function Export-CompleterSet
                 # checked targets.
                 $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
                 $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
-                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
-                $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
-                $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
+                $derivedTargetsByIdentity = [ordered] @{}
+
+                foreach ($derivedTarget in $derivedTargets)
+                {
+                    $derivedTargetsByIdentity[(Get-CompleterTargetIdentity -Target $derivedTarget)] = $derivedTarget
+                }
+
+                $missingTargets = @($derivedTargetsByIdentity.Keys | Where-Object { -not $entry.Targets.Contains($_) } | ForEach-Object { $derivedTargetsByIdentity[$_] })
+                $unknownTargets = @($entry.Targets.Keys | Where-Object { -not $derivedTargetsByIdentity.Contains($_) })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
-                    # The keys match, so only order and casing can differ. Writing the
-                    # derived targets puts them in script order and script casing,
+                    # The targets match, so only order and casing can differ. Writing
+                    # the derived targets puts them in script order and script casing,
                     # which is what the import fast path reproduces.
-                    $entry.Targets = [ordered] @{}
-
-                    foreach ($derivedTarget in $derivedTargets)
-                    {
-                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
-                    }
-
+                    $entry.Targets = $derivedTargetsByIdentity
                     $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
@@ -239,7 +161,7 @@ function Export-CompleterSet
 
                 if ($missingTargets.Count -gt 0)
                 {
-                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$_'" }) -join ', ')."
+                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$($_.Key)'" }) -join ', ')."
                 }
 
                 if ($unknownTargets.Count -gt 0)
@@ -307,6 +229,16 @@ function Export-CompleterSet
             $lines.Add('    )')
             $lines.Add('}')
 
+            # Import-CompleterSetDefinition refuses a file over this size, so a set
+            # that would be larger is refused here, before anything is written.
+            # Set-Content writes every line followed by a newline, in UTF-8.
+            $byteCount = [System.Text.Encoding]::UTF8.GetByteCount(($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+
+            if ($byteCount -gt $script:CompleterSetMaxFileBytes)
+            {
+                throw "The set would be $byteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
+            }
+
             if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
             {
                 return
@@ -325,105 +257,11 @@ function Export-CompleterSet
         }
     }
 }
-<#
-.SYNOPSIS
-Gets completer registrations known to the module or discovered at runtime.
 
-.DESCRIPTION
-Returns completer registration records for all registrations, native command
-completers, command parameter completers, or the targets described by piped
-registration records.
-The command merges module-managed registrations with runtime-discovered
-registrations and reports each record's State once, so -State can select any
-subset. A managed record whose stored script is the live runtime value is
-'Active', or 'Pending' while a lazy registration still waits for its first tab
-press. A runtime value that no managed record describes is 'Discovered'. When
-the runtime registration was replaced outside this module, the managed record
-is returned with State 'Stale' and the live value with State 'Conflicted';
-when it was removed outside this module, the managed record is 'Stale' with
-IsRuntimeRegistered false. A lazy registration whose script failed to load is
-'Failed'; it has no runtime entry and carries the error in LoadError. Without
--State every record is returned. Records are sorted by CompleterType, then
-CommandName, then ParameterName before -Skip and -First are applied, so paging
-across several calls stays stable while unrelated targets change; only a
-target that sorts before the current window can shift it. The command accepts
-arrays for command and parameter lookups, and records piped back from
-Get-Completer or Import-CompleterScript resolve through their Key and IsNative
-properties. Keys are output-only identifiers: a hand-typed key string is not
-accepted, so name the target with -CommandName plus -Native or -ParameterName
-instead.
-
-Discovery covers the two target kinds this module manages: command-parameter
-completers and native command completers. A completer registered with
-Register-ArgumentCompleter -ParameterName alone, without -CommandName, applies
-to every command with that parameter and is stored under the bare parameter
-name; such registrations are not returned and are reported with -Verbose as
-they are skipped, so they never prevent the supported registrations from being
-listed.
-
-.PARAMETER InputObject
-Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-Completer or Import-CompleterScript. Every piped
-object binds here. An input object describes one target: it exposes
-CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
-or RuntimeKey together with IsNative/Native. To look up several targets at
-once, pass arrays to -CommandName and -ParameterName instead.
-
-.PARAMETER CommandName
-Limits results to one or more command names for native or command-parameter
-completers.
-
-.PARAMETER ParameterName
-Limits results to one or more parameter completer targets.
-
-.PARAMETER Native
-Indicates that the lookup target is a native command completer instead of a
-command parameter completer.
-
-.PARAMETER State
-Returns only the records whose State is one of the given values: Active,
-Stale, Conflicted, Pending, Failed, or Discovered. Several values return the
-union.
-
-.OUTPUTS
-CompleterActions.CompleterRegistration
-Returns CompleterActions.CompleterRegistration records. The State property is
-'Active' for managed records that describe the live runtime value,
-'Discovered' for runtime values that no managed record describes, 'Pending'
-for lazy registrations whose script has not loaded yet, 'Failed' for lazy
-registrations whose script failed to load, 'Stale' for managed records that no
-longer match the runtime, and 'Conflicted' for live runtime values that
-replaced a managed registration outside this module. ScriptPath names the
-completer script behind a lazy or imported registration and LoadError holds
-the failure message of a Failed record.
-
-.EXAMPLE
-PS> Get-Completer -CommandName 'git' -Native
-
-Gets the registration record for the native completer currently associated with
-git.
-
-.EXAMPLE
-PS> Get-Completer -CommandName 'git' -ParameterName 'checkout', 'branch'
-
-Gets multiple command-parameter completer registrations in a single call.
-
-.EXAMPLE
-PS> Get-Completer -State Pending, Failed
-
-Lists the lazy registrations that have not loaded yet and the ones whose script
-failed to load, with the failure message in LoadError.
-
-.EXAMPLE
-PS> Import-CompleterScript -LiteralPath .\git_completer.ps1 | Get-Completer
-
-Gets the live registrations for the targets a completer script defines by
-piping its import records back in.
-#>
-function Get-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Get-Completer
 {
     [CmdletBinding(DefaultParameterSetName = 'All', SupportsPaging)]
     [OutputType('CompleterActions.CompleterRegistration')]
@@ -452,7 +290,7 @@ function Get-Completer
 
     begin
     {
-        $registrationsByKey = [ordered] @{}
+        $registrationsByIdentity = [ordered] @{}
     }
 
     process
@@ -500,8 +338,8 @@ function Get-Completer
             {
                 foreach ($target in $targets)
                 {
-                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
-                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
+                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Target $target)
+                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Target $target)
                 }
             }
 
@@ -514,31 +352,39 @@ function Get-Completer
                     continue
                 }
 
-                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key -Snapshot $snapshot
+                $registrationState = Resolve-CompleterRegistrationState -Target $registration -Snapshot $snapshot
+                $identity = Get-CompleterTargetIdentity -Target $registration
 
                 if ($registrationState.ManagedState -in 'Active', 'Pending', 'Failed')
                 {
-                    $registrationsByKey["Managed:$($registration.Key)"] = $registration
+                    $registrationsByIdentity["Managed:$identity"] = $registration
                 }
                 else
                 {
-                    $registrationsByKey["Managed:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                    $registrationsByIdentity["Managed:$identity"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
                 }
 
                 if ($registrationState.ManagedState -in 'Stale', 'Failed' -and $null -ne $registrationState.RuntimeRegistration)
                 {
-                    $registrationsByKey["Discovered:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                    $registrationsByIdentity["Discovered:$identity"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                 }
             }
 
             foreach ($registration in $discoveredRegistrations)
             {
-                if ($null -eq $registration -or $registrationsByKey.Contains("Managed:$($registration.Key)"))
+                if ($null -eq $registration)
                 {
                     continue
                 }
 
-                $registrationsByKey["Discovered:$($registration.Key)"] = $registration
+                $identity = Get-CompleterTargetIdentity -Target $registration
+
+                if ($registrationsByIdentity.Contains("Managed:$identity"))
+                {
+                    continue
+                }
+
+                $registrationsByIdentity["Discovered:$identity"] = $registration
             }
         }
         catch
@@ -555,7 +401,7 @@ function Get-Completer
 
     end
     {
-        $registrations = @($registrationsByKey.Values)
+        $registrations = @($registrationsByIdentity.Values)
 
         if ($PSBoundParameters.ContainsKey('State'))
         {
@@ -602,92 +448,11 @@ function Get-Completer
         $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
     }
 }
-<#
-.SYNOPSIS
-Imports self-contained completer scripts into registration input objects.
 
-.DESCRIPTION
-Parses and validates one or more completer scripts, executes them inside a
-temporary module that shadows Register-ArgumentCompleter, and emits objects that
-can be piped directly to Register-Completer -InputObject.
-
-Import-CompleterScript has two tiers. The strict tier is the default: it
-validates the script against a closed grammar before executing it, rejects
-every unsupported construct with the same findings Test-CompleterScript
-reports, and avoids mutating the live runtime completer tables during import.
-The trusted tier, selected with -Trusted, skips the grammar and dot-sources the
-script as-is inside the same capture module, so use it only for scripts you
-wrote or reviewed. Imported ScriptBlock objects keep the temporary module
-context that contains helper functions and script-scope state defined by the
-source script under either tier, and they keep the script as their source
-file, so $PSScriptRoot and $PSCommandPath inside a completer name the script's
-directory and path exactly as they do when the script is dot-sourced.
-
-Compatible strict-tier completer scripts must be self-contained and must keep script scope
-limited to Set-StrictMode, function definitions, importer-safe if statements,
-and script-scope Register-ArgumentCompleter calls. Register-ArgumentCompleter
-usage must use explicit parameter names and only the supported import-time
-surface: -CommandName, -ParameterName, the bare -Native switch, and
--ScriptBlock.
-
-Target metadata must stay literal. -CommandName and -ParameterName may be a
-single literal string, a literal string array, or a literal @('...') array
-expression. -ScriptBlock must be a literal script block. Positional arguments,
-argument splatting, custom Register-ArgumentCompleter wrappers, dot-sourcing,
-top-level assignments, loops, try/catch blocks, alias bootstrap, cache
-initialization, and external command execution are not import-compatible and
-should be moved into lazy helper paths reached from the registered script block.
-'#requires -Modules', '#requires -Assembly', 'using module', and 'using
-assembly' are rejected because they load code when the script is dot-sourced.
-
-.PARAMETER Path
-One or more paths to completer script files. Wildcards are supported.
-
-.PARAMETER LiteralPath
-One or more literal paths to completer script files. Wildcards are not expanded.
-
-.PARAMETER Trusted
-Skips the strict grammar validation and dot-sources the script as-is inside the
-capture module. Everything at script scope runs at import time, exactly as it
-would when the script is dot-sourced from a profile. The emitted records carry
-Trusted set to true.
-
-.OUTPUTS
-CompleterActions.ImportedCompleterRegistration
-Returns CompleterActions.ImportedCompleterRegistration records compatible with
-Register-Completer -InputObject. The Trusted property records which
-tier produced the record.
-
-.EXAMPLE
-PS> Import-CompleterScript -Path .\7z_completer.ps1 | Register-Completer -PassThru
-
-Imports a supported completer script and immediately registers the imported
-completer definitions through the module's managed registration API.
-
-.EXAMPLE
-PS> Import-CompleterScript -Path .\git_completer.ps1 -Trusted | Register-Completer
-
-Imports a completer script you own without validating it against the strict
-grammar, then registers it.
-
-.NOTES
-Use this compatibility specification when authoring future standalone completer
-scripts for import:
-
-- Keep the script self-contained; do not dot-source other scripts.
-- Register completers at script scope with literal Register-ArgumentCompleter
-  calls.
-- Use only -CommandName, -ParameterName, bare -Native, and -ScriptBlock.
-- Keep -CommandName and -ParameterName literal; use literal @('name','name.exe')
-  when multiple command names are required.
-- Move alias bootstrap, cache initialization, generated completion loading, and
-  tool discovery into lazy helper logic invoked during completion rather than at
-  import time.
-#>
-function Import-CompleterScript
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Import-CompleterScript
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType('CompleterActions.ImportedCompleterRegistration')]
@@ -723,6 +488,12 @@ function Import-CompleterScript
 
                 foreach ($definition in $importSession.Definitions)
                 {
+                    # The module, not the emitted record, records where each script block it
+                    # emits came from, keyed on that very object: Register-Completer looks a
+                    # block up in this table, so neither a property a caller sets nor a new
+                    # block the caller binds to the capture module can claim an import.
+                    $script:CompleterImportedScriptBlocks.Add($definition.ScriptBlock, [pscustomobject] @{ Module = $importSession.Module; ScriptPath = $resolvedPath; Trusted = [bool] $Trusted })
+
                     $targetParameters = @{
                         CommandName = $definition.CommandName
                     }
@@ -751,130 +522,11 @@ function Import-CompleterScript
         }
     }
 }
-<#
-.SYNOPSIS
-Validates a completer set file and registers every script it lists.
 
-.DESCRIPTION
-Reads a completer set, a .psd1 data file written by Export-CompleterSet or by
-hand, validates every entry up front, and then registers each valid entry's
-targets as managed registrations. The set is read with
-Import-PowerShellDataFile, which evaluates data only, and validation never
-executes a completer script.
-
-Every entry is checked before anything is registered: the script file must
-exist and be a .ps1, Trusted entries must declare their Targets because the
-script is not parsed, strict entries must name their targets with literal
-Register-ArgumentCompleter arguments so the targets can be derived from the
-parsed script and compared against any Targets the entry declares, no target
-may be listed by two entries of the set, and without -Force no target may
-already carry a managed or runtime registration for a different completer. An
-entry that repeats a registration the session already has is reused.
-Validating a strict entry parses its script once and runs the strict import
-grammar on that parse, and registration reuses the targets that validation
-derived, so a set import parses and walks each strict script once, unless its
-Hash matches, in which case the grammar first runs when the script loads. A
-script that fails the grammar is an invalid entry whose message names the
-first finding; run Test-CompleterScript over the repository to see every
-finding ahead of time. When one or more entries are invalid the command
-throws a single error that lists every problem and registers nothing. With
--SkipInvalid each problem is written as a warning instead and the valid
-entries register.
-
-A strict entry that declares Targets and carries a Hash, as
-Export-CompleterSet writes it, is not parsed when the Hash matches the
-script's text: its declared Targets are registered as they are, and the
-parse errors, the literal-argument check, and the comparison with the
-script's targets are skipped because the export ran them against the same
-text. Every other check still runs. An absent, unrecognised, or different
-Hash, or a script that cannot be read for it, falls back to the parse, and a
-stale Hash is not a warning. A hand-edited entry whose Hash still matches
-registers its targets in the order and with the casing it declares, keeping
-the first occurrence of a repeated key, where the parse would use the
-script's order and casing. A trusted entry's Hash is ignored. With -Verbose
-the command writes one line per valid entry saying how its targets were
-read, and one summary line per set.
-
-Relative Path values resolve against the directory of the set file, so a
-completer repository can carry its set file next to its scripts.
-
-Registering a set does not run its scripts. Every valid entry is registered
-lazily under the entry's trust tier, exactly as Register-Completer
--Lazy registers a script, so each target gets a stub and a managed record in
-state Pending. The whole set is one transaction against one snapshot of the
-session's registrations: validation and registration read the managed table
-and the runtime dictionaries once, and if any runtime or managed write fails,
-every change the set made is rolled back and nothing from it stays registered.
-The first tab press for a target loads the script and moves the record to
-Active; a script that fails to load moves to Failed with the message in
-LoadError, and the completion engine's default completion applies as if no
-completer were registered. -Force replaces existing registrations for the
-set's targets and retries Failed ones; Reset-Completer retries them without
-re-importing the set.
-
-With -Name the set comes from an installed completer set package: a module
-whose manifest names its set file in PrivateData.CompleterSet, as
-'<folder>/<file>.psd1' in a folder directly below the module folder, which
-holds the manifest as its only .psd1. The module is found the way
-Import-Module finds it, without loading it: the first $env:PSModulePath root
-that has the module wins, and within it the highest version, which is used
-even when its set is broken. The manifest is read as data, so the package's
-RootModule, ScriptsToProcess, NestedModules, and RequiredModules never load or
-run. Every name is resolved before any set is imported, and the set is then
-imported as -LiteralPath imports it, with two rules for packages. An entry
-whose script resolves outside the module folder is an invalid entry. A set
-with trusted entries writes one warning per name that counts them. Installing
-a completer set package and importing it by name is a decision to run its
-scripts: each one runs at its first tab, under its entry's trust tier.
-
-.PARAMETER Path
-The path to a completer set file. Wildcards are supported.
-
-.PARAMETER LiteralPath
-The literal path to a completer set file. Wildcards are not expanded.
-
-.PARAMETER Name
-The names of installed completer set modules. Each name is taken literally: a
-name containing *, ?, [, or ] fails the call before any name is resolved. The
-parameter takes no pipeline input.
-
-.PARAMETER SkipInvalid
-Writes each invalid entry as a warning and registers the valid entries instead
-of failing the whole set.
-
-.PARAMETER Force
-Replaces existing managed or runtime registrations for the targets in the set,
-including Failed lazy records whose load should be retried; Reset-Completer
-retries them without re-importing the set.
-
-.OUTPUTS
-CompleterActions.CompleterRegistration
-Returns the CompleterActions.CompleterRegistration records that were created
-or reused for the set's targets, in state Pending until each script loads.
-
-.EXAMPLE
-PS> Import-CompleterSet -Path ~\Completers\completers.psd1
-
-Registers every completer script listed in the set. This is the one line a
-profile needs for a whole completer repository.
-
-.EXAMPLE
-PS> Import-CompleterSet -Path ~\Completers\completers.psd1 -SkipInvalid -Force
-
-Registers the valid entries, warns about the rest, and replaces any existing
-registration for the same targets.
-
-.EXAMPLE
-PS> Import-CompleterSet -Name PS_Completers
-
-Registers every completer script in the set of the installed PS_Completers
-package. After Install-PSResource PS_Completers this is the one line a profile
-needs, with no path.
-#>
-function Import-CompleterSet
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Import-CompleterSet
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
     [OutputType('CompleterActions.CompleterRegistration')]
@@ -1044,112 +696,11 @@ function Import-CompleterSet
         }
     }
 }
-<#
-.SYNOPSIS
-Writes a completer script skeleton for a native command that passes Test-CompleterScript as written.
 
-.DESCRIPTION
-Writes a native completer script for one or more command names: a guarded,
-literal-only table of subcommands, a Complete-<Stem> function that offers them
-in the first argument position, and one bare Register-ArgumentCompleter call
-that names every target. The file passes Test-CompleterScript and imports with
-Import-CompleterScript and Register-Completer -Lazy before the author edits it.
-
-The first -CommandName value is the primary name: it names the functions and
-the state variable, and it is the one probed. Every name must be a bare command
-name. The target list follows the -CommandName order, and a name that does not
-end in .exe, .cmd, .bat, .ps1, or .com is followed by the same name with .exe
-appended, so -CommandName rg registers 'rg' and 'rg.exe'.
-
-The subcommand table is seeded in one of three ways. By default the command
-runs the primary name's help and parses its commands section. -HelpText parses
-help text the author already captured and runs nothing. -NoProbe runs nothing
-and writes an empty table.
-
-The probe runs only an application that Get-Command resolves; a function,
-alias, cmdlet, or script of that name is never run. On Windows it runs only
-a .exe whose PE header marks a console program, so GUI programs, shims such as
-npm.cmd, and app execution aliases are refused with a warning. The program
-runs with the help argument alone, standard input closed, the temporary
-directory as its working directory, and NO_COLOR set, under a 5-second limit.
-Without -HelpArgument the probe passes --help; on Windows, when --help ran to
-completion, gave no subcommand, and printed fewer than five non-blank lines,
-/? runs once and its result is used. A run that does not exit in time, or that
-leaves a process holding its output, is stopped and its output is not used.
--WhatIf and -Confirm name the program before anything runs.
-
-Before anything is resolved, probed, or written, every -CommandName value,
--HelpArgument, and the -Path are checked: a name must keep a letter or digit
-outside a trailing .exe, .cmd, .bat, .ps1, or .com, -HelpArgument must not
-contain a line break, the path must end in .ps1, must not be a directory, and
-its folder must exist, and the file must not exist unless -Force is given. The
-script is written to a temporary file beside the target, checked with the
-strict grammar Test-CompleterScript applies, and moved into place only when it
-conforms and registers exactly the target list; otherwise nothing is written.
-The file is UTF-8 without a byte-order mark, with the platform newline and a
-final newline.
-
-Every failure is a terminating error that begins 'Failed to create completer
-script.', and a failed call leaves nothing at the path.
-
-.PARAMETER CommandName
-The native command names. The first is the primary name: it names the
-functions and state, and it is the one probed.
-
-.PARAMETER Path
-The .ps1 file to write. A relative path is resolved against the current
-location. The parent directory must exist.
-
-.PARAMETER HelpArgument
-The one argument the probe passes. When omitted the probe passes --help and,
-on Windows, may fall back to /?. It must not contain a line break, because
-line 2 of the script names it in a comment.
-
-.PARAMETER HelpText
-Help text the author already captured. Lines are accumulated across pipeline
-input, joined with LF, cleaned, and parsed; nothing is run.
-winget --help | New-CompleterScript winget .\winget_completer.ps1 binds here.
-
-.PARAMETER NoProbe
-Runs nothing and writes an empty subcommand table.
-
-.PARAMETER Force
-Overwrites an existing file.
-
-.PARAMETER PassThru
-Returns the written file as System.IO.FileInfo, so it pipes into
-Test-CompleterScript and Import-CompleterScript. Without -PassThru the
-command returns nothing.
-
-.INPUTS
-System.String
-Help text lines, bound to -HelpText.
-
-.OUTPUTS
-System.IO.FileInfo
-When -PassThru is used, returns the written script file.
-
-.EXAMPLE
-PS> New-CompleterScript -CommandName cargo -Path .\cargo_completer\cargo_completer.ps1 -PassThru | Test-CompleterScript
-
-Writes the cargo skeleton seeded from 'cargo --help' and checks it; the
-pipeline is empty.
-
-.EXAMPLE
-PS> winget --help | New-CompleterScript -CommandName winget -Path .\winget_completer\winget_completer.ps1
-
-Seeds the table from help the author ran, for a command the probe will not
-run.
-
-.EXAMPLE
-PS> New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -Force
-
-Writes an empty skeleton without running anything, replacing an existing file.
-#>
-function New-CompleterScript
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function New-CompleterScript
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Probe', ConfirmImpact = 'Low')]
     [OutputType([System.IO.FileInfo])]
@@ -1342,138 +893,11 @@ function New-CompleterScript
         }
     }
 }
-<#
-.SYNOPSIS
-Registers a managed PowerShell argument completer.
 
-.DESCRIPTION
-Registers native or command-parameter argument completers with
-Register-ArgumentCompleter and records the registrations in the module's managed
-state. Existing managed or runtime registrations are preserved unless you use
--Force to replace them. Registering the same script for a target that is already
-managed is idempotent only while the managed record still matches the live
-runtime value; when the runtime registration was replaced or removed outside
-this module, the managed record is stale and the command fails until you
-reconcile it with -Force. Each target is updated transactionally: if the
-runtime or managed write fails, the previous runtime and managed state are
-restored and any rollback failure is reported alongside the original error. The
-command supports array inputs for command and parameter targets, and it can
-also accept pipeline InputObject values that describe the target and expose a
-ScriptBlock property.
-
-With -Path or -LiteralPath and -Lazy the command registers a completer script
-without running it. The runtime entry for each target is a small stub that
-imports the script through Import-CompleterScript on the first tab press,
-replaces itself with the real completer, and delegates that first call to it.
-The managed record reports State 'Pending' until then and 'Active' afterwards.
-Under the default strict tier the targets are read from the script's literal
-Register-ArgumentCompleter arguments, so the script is parsed but never
-executed at registration time. The strict grammar runs on that parse, so a
-script that fails it is refused with one line per finding before anything is
-registered, under -WhatIf too; it runs again when the script loads, and a
-script that no longer conforms by then moves to 'Failed'. With -Trusted the
-script is dot-sourced as-is on first use and cannot be parsed safely, so the
-targets must be supplied with -CommandName and -Native or -ParameterName.
-
-If the script fails to load on the first tab press, the press returns no
-completions, the runtime entry is removed so the completion engine's default
-completion applies exactly as with no completer registered, and the managed
-record moves to State 'Failed' with the error message in LoadError. Nothing is
-written to the host. Registering the same target again with -Force retries the
-load, or use Reset-Completer. Lazy loading runs entirely inside the ordinary
-completer call; it never hooks key handlers, replaces TabExpansion2, or changes
-PSReadLine options.
-
-.PARAMETER InputObject
-Supplies one or more objects that describe completer targets. Input objects must
-expose CommandName with IsNative/Native or ParameterName, or a Key,
-RegistrationKey, or RuntimeKey together with IsNative/Native, and must expose a
-ScriptBlock property whose value is a script block. A key without a native
-indicator is rejected; keys are output-only identifiers and are never
-classified by their shape. ScriptPath or SourcePath and
-Trusted properties, such as those on Import-CompleterScript records, are
-carried onto the managed record.
-
-.PARAMETER CommandName
-Specifies one or more command names whose completers should be registered.
-With -Lazy the parameter names the targets the script owns; it is required
-with -Trusted and optional under the strict tier, where every name given must
-be one the script registers.
-
-.PARAMETER ParameterName
-Specifies one or more parameter names for command-parameter completer
-registrations.
-
-.PARAMETER Native
-Registers native completers for the commands instead of parameter completers.
-
-.PARAMETER ScriptBlock
-Provides the completer script block to register. When multiple targets are
-supplied through arrays, the same script block is reused for each target.
-
-.PARAMETER Path
-The path to one completer script file to register lazily. Wildcards are
-supported but must resolve to a single file.
-
-.PARAMETER LiteralPath
-The literal path to one completer script file to register lazily. Wildcards
-are not expanded.
-
-.PARAMETER Lazy
-Registers a stub for each target of the script instead of running the script
-now. The script is imported on the first tab press for any of its targets.
-Under the strict tier the script is checked against the grammar before any
-stub is registered.
-
-.PARAMETER Trusted
-Imports the script through the trusted tier on first use, dot-sourcing it as-is
-without the strict grammar. The targets must be supplied with -CommandName and
--Native or -ParameterName because a trusted script is not parsed. The default
-is the strict tier, which validates the script against the grammar when it is
-registered and again when it loads.
-
-.PARAMETER Force
-Replaces an existing managed or runtime registration for the same target with
-the new completer, including a stale managed record whose live runtime value was
-changed outside this module and a Failed lazy record whose load should be
-retried; Reset-Completer retries that load without registering it again.
-
-.PARAMETER PassThru
-Returns the managed registration records that were created or reused.
-
-.OUTPUTS
-CompleterActions.CompleterRegistration
-When -PassThru is used, returns CompleterActions.CompleterRegistration records.
-
-.EXAMPLE
-PS> Register-Completer -CommandName demoexe -Native -ScriptBlock $nativeScriptBlock
-
-Registers a native completer for demoexe with a script block that is already in
-memory.
-
-.EXAMPLE
-PS> Register-Completer -Path .\git_completer.ps1 -Lazy -PassThru
-
-Reads the targets from the script's Register-ArgumentCompleter calls, registers
-a stub for each of them, and returns the Pending records. The script runs the
-first time tab completion is requested for one of its targets.
-
-.EXAMPLE
-PS> Register-Completer -Path .\git_completer.ps1 -Lazy -Trusted -CommandName git, git.exe -Native
-
-Registers a script that needs the trusted tier lazily. The targets are named
-explicitly because a trusted script is not parsed.
-
-.EXAMPLE
-PS> Get-Completer -State Failed | Reset-Completer
-
-Retries every lazy registration whose script failed to load, after the scripts
-have been fixed.
-#>
-function Register-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Register-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType('CompleterActions.CompleterRegistration')]
@@ -1599,9 +1023,16 @@ function Register-Completer
                     }
                     else
                     {
+                        $derivedIdentities = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+                        foreach ($derivedTarget in $derivedTargets)
+                        {
+                            $null = $derivedIdentities.Add((Get-CompleterTargetIdentity -Target $derivedTarget))
+                        }
+
                         foreach ($explicitTarget in $explicitTargets)
                         {
-                            if (@($derivedTargets.Key) -notcontains $explicitTarget.Key)
+                            if (-not $derivedIdentities.Contains((Get-CompleterTargetIdentity -Target $explicitTarget)))
                             {
                                 $derivedList = ($derivedTargets | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                                 throw "The script '$scriptPath' does not register a completer for '$($explicitTarget.RuntimeKey)'. It registers: $derivedList."
@@ -1616,7 +1047,7 @@ function Register-Completer
                 {
                     $resolvedInputs += [pscustomobject] [ordered] @{
                         Target = $target
-                        ScriptBlock = New-CompleterLazyStub -Key $target.Key
+                        ScriptBlock = New-CompleterLazyStub -Key $target.RuntimeKey -Native:$target.IsNative
                         ImportModule = $null
                         ScriptPath = $scriptPath
                         Trusted = [bool] $Trusted
@@ -1687,87 +1118,11 @@ function Register-Completer
         }
     }
 }
-<#
-.SYNOPSIS
-Returns a Failed or Active script-backed completer to Pending, so its script loads again on the next tab press.
 
-.DESCRIPTION
-Re-arms a script-backed managed registration without re-importing the set it
-came from. A script-backed registration is any managed record with a
-ScriptPath: a lazy registration from Import-CompleterSet or Register-Completer
--Lazy, or an eager one from Import-CompleterScript | Register-Completer. The
-targets are named by native command, command parameter target, or pipeline
-InputObject values, and each target is decided once per call; a key seen
-earlier in the same call is skipped.
-
-A Failed record gets a new lazy stub in the runtime and becomes Pending, with
-LoadError cleared and ScriptPath and Trusted kept. An Active record has its
-live script block replaced by the stub and becomes Pending, with ImportModule
-cleared. A Pending record is left alone without a confirmation prompt, and
--PassThru returns it unchanged. The next tab press follows the ordinary lazy
-path: it imports the script under the record's tier, swaps in every Pending
-sibling of the same script and tier, and moves them to Active, or moves the
-pressed target to Failed again with the new LoadError. Only the targets named
-are reset, so an Active sibling keeps its loaded script block until it is
-reset itself. The script is not parsed and its targets are not re-derived.
-
-A target that cannot be reset is reported as a non-terminating error, and the
-command goes on with the next target or piped record: a registration the
-module does not manage, a target with nothing registered, a stale record, a
-Failed record whose live runtime value was created outside this module, a
-record registered from a script block rather than a script file, and a record
-whose script file no longer exists. Use -ErrorAction Stop to stop at the first
-error. Each target is its own transaction: if writing the stub or the record
-fails, the previous runtime value and managed record are restored. The command
-writes only the runtime completer dictionaries and the module's managed table;
-it never hooks key handlers, replaces TabExpansion2, or changes PSReadLine
-options. To remove a registration instead of reloading it, use
-Unregister-Completer.
-
-.PARAMETER InputObject
-Supplies one or more objects that describe registrations to reset. Input
-objects expose CommandName with IsNative/Native or ParameterName, or a Key,
-RegistrationKey, or RuntimeKey together with IsNative/Native.
-
-.PARAMETER CommandName
-Specifies one or more command names whose completers should be reset.
-
-.PARAMETER ParameterName
-Specifies one or more parameter names for command-parameter completer reset
-targets.
-
-.PARAMETER Native
-Targets native completer registrations instead of command parameter completers.
-
-.PARAMETER PassThru
-Returns the Pending record of each target that was reset, and the unchanged
-record of each target that was already Pending.
-
-.OUTPUTS
-CompleterActions.CompleterRegistration
-When -PassThru is used, returns CompleterActions.CompleterRegistration records.
-
-.EXAMPLE
-PS> Get-Completer -State Failed | Reset-Completer
-
-Re-arms every failed script-backed registration after the scripts were fixed,
-and reports each record that cannot be reset.
-
-.EXAMPLE
-PS> Reset-Completer -CommandName git, git.exe -Native -PassThru
-
-Reloads the git completer on the next tab press after the script was edited,
-and returns the two Pending records.
-
-.EXAMPLE
-PS> Get-Completer -State Active, Failed | Where-Object ScriptPath -eq $path | Reset-Completer
-
-Resets every target of one script.
-#>
-function Reset-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Reset-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType('CompleterActions.CompleterRegistration')]
@@ -1795,7 +1150,7 @@ function Reset-Completer
 
     begin
     {
-        $decidedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $decidedTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
 
         # A plain function, not an advanced one, so the error is written by
         # Reset-Completer itself: it names Reset-Completer and sets $? to false.
@@ -1864,7 +1219,7 @@ function Reset-Completer
 
         foreach ($target in $resolvedTargets)
         {
-            if (-not $decidedKeys.Add($target.Key))
+            if (-not $decidedTargets.Add((Get-CompleterTargetIdentity -Target $target)))
             {
                 continue
             }
@@ -1876,7 +1231,7 @@ function Reset-Completer
 
             try
             {
-                $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                $registrationState = Resolve-CompleterRegistrationState -Target $target
                 $managedRegistration = $registrationState.ManagedRegistration
                 $runtimeRegistration = $registrationState.RuntimeRegistration
                 $managedState = $registrationState.ManagedState
@@ -1924,7 +1279,7 @@ function Reset-Completer
                     }
                     elseif ($PSCmdlet.ShouldProcess($runtimeKey, 'Reset completer registration'))
                     {
-                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.Key) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
+                        $registration = New-CompleterRegistrationRecord -Target $managedRegistration -ScriptBlock (New-CompleterLazyStub -Key $managedRegistration.RuntimeKey -Native:$managedRegistration.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $managedRegistration.ScriptPath -Trusted:([bool] $managedRegistration.Trusted)
                         $conflict = [pscustomobject] [ordered] @{
                             Key                 = $registration.Key
                             ManagedRegistration = $managedRegistration
@@ -1955,81 +1310,11 @@ function Reset-Completer
         }
     }
 }
-<#
-.SYNOPSIS
-Runs tab completion for an input against a registered completer target.
 
-.DESCRIPTION
-Resolves a completer target, confirms that it has a live runtime registration,
-and runs TabExpansion2 for the supplied input text. The completion matches are
-returned as CompleterActions.CompletionMatch records that carry the target key
-alongside CompletionText, ListItemText, ResultType, and ToolTip, so the same
-check that used to be done by hand after every registration can be scripted
-and asserted on.
-
-One input text invokes one completer, so each call tests exactly one target.
-The target parameters accept the same shapes as Get-Completer so
-registration records and property-bound values pipe in, but the command throws
-when more than one target resolves in a single call.
-
-The command only reads the completion engine. It does not change any
-registration, and it never touches PSReadLine.
-
-.PARAMETER InputObject
-Supplies an object that describes the completer target, such as a record
-returned by Get-Completer or Import-CompleterScript. The object
-must expose CommandName with IsNative/Native or ParameterName, or a Key,
-RegistrationKey, or RuntimeKey together with IsNative/Native.
-
-.PARAMETER CommandName
-Specifies the command name of the native or command-parameter completer
-target.
-
-.PARAMETER ParameterName
-Specifies the parameter name of the command-parameter completer target.
-
-.PARAMETER Native
-Indicates that the target is a native command completer instead of a command
-parameter completer.
-
-.PARAMETER InputText
-The command line to complete, exactly as it would be typed at the prompt. It
-must invoke the target's command, because the matches come from whatever
-command the text names.
-
-.PARAMETER CursorPosition
-The zero-based cursor position within InputText at which completion runs. The
-default is the end of the input.
-
-.OUTPUTS
-CompleterActions.CompletionMatch
-Returns CompleterActions.CompletionMatch records, one per completion match,
-with Key, RuntimeKey, CommandName, ParameterName, CompleterType, InputText,
-CursorPosition, CompletionText, ListItemText, ResultType, and ToolTip
-properties. Nothing is returned when the completer yields no matches.
-
-.EXAMPLE
-PS> Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
-
-Returns the completion matches the registered git completer produces for
-'git che', such as checkout, cherry, and cherry-pick.
-
-.EXAMPLE
-PS> Get-Completer -CommandName Invoke-DemoTool -ParameterName Name | Test-CompleterRegistration -InputText 'Invoke-DemoTool -Name a'
-
-Verifies a registration record returned by Get-Completer by
-completing an argument for its parameter.
-
-.NOTES
-Completion runs from the module's scope, so the commands named in InputText
-must be resolvable from the global scope, as they are in an interactive
-session. Functions defined in a script's local scope are not visible to the
-completion engine when it is invoked from this command.
-#>
-function Test-CompleterRegistration
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Test-CompleterRegistration
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
     [OutputType('CompleterActions.CompletionMatch')]
@@ -2121,7 +1406,7 @@ function Test-CompleterRegistration
 
             $target = $resolvedTargets[0]
 
-            if ($null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+            if ($null -eq (Find-RuntimeCompleterRegistration -Target $target))
             {
                 throw "No runtime completer registration exists for '$($target.RuntimeKey)'. Register the completer before testing it."
             }
@@ -2143,51 +1428,11 @@ function Test-CompleterRegistration
         }
     }
 }
-<#
-.SYNOPSIS
-Checks completer scripts against the strict import grammar and reports findings.
 
-.DESCRIPTION
-Parses one or more completer scripts and runs the same validation that
-Import-CompleterScript applies before it executes a script. Instead of stopping
-at the first problem, the command returns one
-CompleterActions.CompleterScriptFinding record per unsupported construct with
-the line and column, the construct type, a message, and a hint that describes
-how to change the script so it imports under the strict tier.
-
-A conforming script produces no output, so a conformance test can assert that
-the command returns nothing, or filter on Severity the way the strict importer
-does. A script that cannot be parsed yields one finding per parse error and is
-not checked further. Test-CompleterScript never executes the script.
-
-.PARAMETER Path
-One or more paths to completer script files. Wildcards are supported.
-
-.PARAMETER LiteralPath
-One or more literal paths to completer script files. Wildcards are not expanded.
-
-.OUTPUTS
-CompleterActions.CompleterScriptFinding
-Returns CompleterActions.CompleterScriptFinding records with Path, Line,
-Column, Severity, Construct, Message, and Hint properties. Every finding the
-strict grammar produces has Severity 'Error'.
-
-.EXAMPLE
-PS> Test-CompleterScript -Path .\tool_completer.ps1
-
-Reports each construct that keeps the script from importing under the strict
-tier, or nothing when the script conforms.
-
-.EXAMPLE
-PS> Get-ChildItem -Path ~\Completers -Recurse -Filter *.ps1 | Test-CompleterScript | Where-Object Severity -eq Error
-
-Runs the conformance check over a completer repository. The pipeline is empty
-when every script conforms.
-#>
-function Test-CompleterScript
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Test-CompleterScript
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType('CompleterActions.CompleterScriptFinding')]
@@ -2220,139 +1465,11 @@ function Test-CompleterScript
         }
     }
 }
-<#
-.SYNOPSIS
-Reports drift between a completer set file and the scripts on disk.
 
-.DESCRIPTION
-Reads a completer set the way Import-CompleterSet does, checks every entry
-in full against the scripts on disk, and returns one
-CompleterActions.CompleterScriptFinding record per problem. A set that
-matches its folder produces no output, so a gate can assert that the command
-returns nothing, the same shape Test-CompleterScript uses.
-
-The set is read with Import-PowerShellDataFile, which evaluates data only,
-and the set file is also parsed, never evaluated, to point each finding at a
-line and column of the set. Every strict entry is parsed once, whether or not
-its Hash matches, because the command verifies rather than takes the fast
-path. A trusted entry is never parsed, as at import, so it can report only
-MissingScript, InvalidEntry, DuplicateTarget, and the three Hash kinds. No
-script is executed, and the session's registrations are neither read nor
-changed, so a conflict with what the session has registered is not drift.
-
-Construct names the kind of drift, and Severity is Error when
-Import-CompleterSet without -SkipInvalid would reject the set because of it,
-or Warning when the set still imports but is stale or slower:
-
-- MissingScript (Error): Path does not resolve to an existing file.
-- InvalidEntry (Error): any other problem Import-CompleterSet reports for the
-  entry itself, with its text word for word.
-- UnreadableTargets (Error): a strict script does not parse or does not name
-  its targets with literal arguments.
-- TargetMismatch (Error): a strict entry's Targets differ from the targets its
-  script registers.
-- DuplicateTarget (Error): an earlier entry already lists the target, under
-  import's rule that only an entry with no Error claims its targets.
-- HashMismatch (Warning): the script changed since the Hash was written.
-- MissingHash (Warning): the entry has no Hash.
-- InvalidHash (Warning): the Hash is not 'SHA256:' and 64 hexadecimal digits.
-- PackageLayout (Error or Warning): the set belongs to a completer set
-  package that breaks the package layout. Error when the package would fail
-  to publish, install, or import, and Warning when it installs but a clean
-  machine is missing a piece, as listed below.
-- UnlistedScript (Warning): a file under the set's directory matches -Filter
-  and no entry lists it.
-
-Findings come in set order, each entry's in the order above, then the
-PackageLayout findings, and the UnlistedScript findings follow, sorted by
-path. Path is the set file for every finding, because the fix is always made
-in the set, usually by regenerating it with Export-CompleterSet; a finding
-about the manifest or the module folder names the file in Message and points
-at line 1, column 1 of the set.
-
-A set is a package set when its module manifest is known: through -Name, or,
-for -Path and -LiteralPath, when the folder above the set file's folder holds
-a .psd1 that reads as data and whose PrivateData.CompleterSet resolves to the
-set file, as in a staged package before it is published. When more than
-one .psd1 there declares the set, the first in ordinal order of file name is
-the manifest. A .psd1 that is not data declares nothing, and a folder that
-cannot be listed holds no manifest. A set that no manifest declares gets no
-PackageLayout finding. A package set is checked for four things, reported
-in this order:
-
-- Error, one per entry in set order, at the entry's Path: the Path is fully
-  qualified, or resolves outside the module folder, so an installed copy of
-  the package does not contain the script. A fully qualified path is an
-  error even inside the module folder, because it names the source tree, not
-  the installed copy.
-- Error, one per file in ordinal order of file name: the module folder holds
-  a .psd1 other than the manifest, so Publish-PSResource can take the wrong
-  file as the manifest.
-- Error: the set file's base name equals the module name, compared
-  case-insensitively, so PSResourceGet can take the set as the module
-  manifest when it saves or installs the package, even from a subfolder.
-- Warning: RequiredModules does not list CompleterActions as a hashtable
-  with a ModuleVersion or RequiredVersion of 2.2.0 or later, so installing
-  the package does not install Import-CompleterSet -Name.
-
-A RootModule in the manifest is not a finding.
-
-With -Name the set comes from an installed completer set package, found
-exactly as Import-CompleterSet -Name finds it: the first $env:PSModulePath
-root that has the module wins, and within it the highest version. The
-manifest is read as data, so nothing in the package runs. Each name is taken
-literally, and a name that does not resolve fails the call.
-
-Every -Path, -LiteralPath, or -Name value is resolved before any set is
-tested. The sets are then tested in the order given, and each set's findings
-are written before the next set is read. A set that cannot be read, such as
-one without Version = 1, stops the call with a terminating error after the
-findings of the earlier sets. A folder under a set's directory that cannot be
-read also stops the call with a terminating error, after that set's entry
-findings, because the scan for unlisted scripts would be incomplete.
-
-.PARAMETER Path
-The path to a completer set file. Wildcards are supported.
-
-.PARAMETER LiteralPath
-The literal path to a completer set file. Wildcards are not expanded.
-
-.PARAMETER Name
-The names of installed completer set modules. Each name is taken literally: a
-name containing *, ?, [, or ] fails the call before any name is resolved. The
-parameter takes no pipeline input.
-
-.PARAMETER Filter
-The file-name pattern of the scan for scripts that no entry lists. The scan
-is recursive under the set file's directory. The default is *_completer.ps1.
-
-.OUTPUTS
-CompleterActions.CompleterScriptFinding
-Returns CompleterActions.CompleterScriptFinding records with Path, Line,
-Column, Severity, Construct, Message, and Hint properties, or nothing when
-the set matches its folder.
-
-.EXAMPLE
-PS> Test-CompleterSet -Path ~\Completers\completers.psd1
-
-Reports every entry that no longer matches its script and every completer
-script the set does not list, or nothing when the set is current.
-
-.EXAMPLE
-PS> Test-CompleterSet -LiteralPath .\completers.psd1 | Where-Object Severity -eq Error
-
-Lists only the drift that would make Import-CompleterSet reject the set.
-
-.EXAMPLE
-PS> Test-CompleterSet -Name PS_Completers
-
-Checks the installed PS_Completers package's set against its scripts and the
-package layout, by the same name the profile's Import-CompleterSet line uses.
-#>
-function Test-CompleterSet
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Test-CompleterSet
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType('CompleterActions.CompleterScriptFinding')]
@@ -2436,64 +1553,11 @@ function Test-CompleterSet
         }
     }
 }
-<#
-.SYNOPSIS
-Removes completer registrations from runtime and, when applicable, module state.
 
-.DESCRIPTION
-Removes completer registrations identified by native command, command
-parameter target, or pipeline InputObject values. Managed registrations
-are removed from both the PowerShell runtime and the module's registration
-table. Runtime-only registrations require -AllowUnmanaged before they can be
-removed. The same gate applies when a managed record is stale because the
-runtime registration was replaced outside this module: the live value is only
-removed with -AllowUnmanaged, and the stale managed record is dropped with it.
-When the runtime registration was already removed outside this module, only
-the stale managed record remains and it is removed without the gate. A Pending
-lazy registration is removed like any managed registration, stub and record
-together. A Failed lazy registration has no runtime entry of its own, so only
-its managed record is removed. The command supports array inputs for the
-target fields, plus pipeline input from Get-Completer output; each target is
-decided once per call, so the Conflicted twin of a Stale record is skipped
-rather than confirmed again or reported as missing, and a declined
-confirmation stands. Keys
-are output-only identifiers: a hand-typed key string is not accepted, so name
-the target with -CommandName plus -Native or -ParameterName instead. To reload
-a Failed or Active script-backed registration instead of removing it, use
-Reset-Completer.
-
-.PARAMETER InputObject
-Supplies one or more objects that describe registrations to remove. Input
-objects expose CommandName with IsNative/Native or ParameterName, or a Key,
-RegistrationKey, or RuntimeKey together with IsNative/Native.
-
-.PARAMETER CommandName
-Specifies one or more command names whose completers should be removed.
-
-.PARAMETER ParameterName
-Specifies one or more parameter names for command-parameter completer removal
-targets.
-
-.PARAMETER Native
-Targets native completer registrations instead of command parameter completers.
-
-.PARAMETER AllowUnmanaged
-Allows removal of runtime registrations that are not tracked by this module,
-including a live value that replaced a managed registration outside this
-module.
-
-.PARAMETER PassThru
-Returns the registration records that were removed.
-
-.OUTPUTS
-CompleterActions.CompleterRegistration
-When -PassThru is used, returns removed CompleterActions.CompleterRegistration
-records.
-#>
-function Unregister-Completer
 <#
 .EXTERNALHELP CompleterActions-help.xml
 #>
+function Unregister-Completer
 {
     [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'CommandParameter', ConfirmImpact = 'Medium')]
     [OutputType('CompleterActions.CompleterRegistration')]
@@ -2524,7 +1588,7 @@ function Unregister-Completer
 
     begin
     {
-        $removedKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        $removedTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     }
 
     process
@@ -2563,7 +1627,9 @@ function Unregister-Completer
 
             foreach ($target in $resolvedTargets)
             {
-                if ($removedKeys.Contains($target.Key))
+                $identity = Get-CompleterTargetIdentity -Target $target
+
+                if ($removedTargets.Contains($identity))
                 {
                     continue
                 }
@@ -2576,7 +1642,7 @@ function Unregister-Completer
 
                 try
                 {
-                    $registrationState = Resolve-CompleterRegistrationState -Key $target.Key
+                    $registrationState = Resolve-CompleterRegistrationState -Target $target
                     $managedRegistration = $registrationState.ManagedRegistration
                     $runtimeRegistration = $registrationState.RuntimeRegistration
 
@@ -2611,7 +1677,7 @@ function Unregister-Completer
                         throw 'No completer registration was found for the requested target.'
                     }
 
-                    $null = $removedKeys.Add($target.Key)
+                    $null = $removedTargets.Add($identity)
 
                     if (-not $PSCmdlet.ShouldProcess($registrationToRemove.RuntimeKey, 'Unregister completer registration'))
                     {
@@ -2620,12 +1686,12 @@ function Unregister-Completer
 
                     if ($null -ne $runtimeRegistration)
                     {
-                        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Key $registrationToRemove.Key
+                        $removedRuntimeRegistration = Remove-RuntimeCompleterRegistration -Target $target
                     }
 
                     if ($null -ne $managedRegistration)
                     {
-                        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Key $registrationToRemove.Key
+                        $removedManagedRegistration = Remove-ManagedCompleterRegistration -Target $target
                     }
 
                     if ($PassThru)
@@ -2642,12 +1708,12 @@ function Unregister-Completer
                 }
                 catch
                 {
-                    if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+                    if ($null -ne $removedRuntimeRegistration -and $null -eq (Find-RuntimeCompleterRegistration -Target $target))
                     {
                         $null = Add-RuntimeCompleterRegistration -Target $removedRuntimeRegistration -ScriptBlock $removedRuntimeRegistration.ScriptBlock
                     }
 
-                    if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Key $target.Key))
+                    if ($null -ne $removedManagedRegistration -and $null -eq (Find-ManagedCompleterRegistration -Target $target))
                     {
                         $null = Add-ManagedCompleterRegistration -Registration $removedManagedRegistration
                     }
@@ -2720,9 +1786,6 @@ existing registration, otherwise the record as stored in the managed
 registration table.
 #>
 function Add-CompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -2808,7 +1871,7 @@ function Add-CompleterRegistration
                 }
                 else
                 {
-                    $null = Remove-RuntimeCompleterRegistration -Key $Registration[$index].Key
+                    $null = Remove-RuntimeCompleterRegistration -Target $Registration[$index]
                 }
 
                 if ($null -ne $Conflict[$index].ManagedRegistration)
@@ -2817,7 +1880,7 @@ function Add-CompleterRegistration
                 }
                 else
                 {
-                    $null = Remove-ManagedCompleterRegistration -Key $Registration[$index].Key
+                    $null = Remove-ManagedCompleterRegistration -Target $Registration[$index]
                 }
             }
             catch
@@ -2841,14 +1904,16 @@ function Add-CompleterRegistration
 Adds or replaces a managed registration record in module state.
 
 .DESCRIPTION
-Stores a registration object in the module's in-memory registration table using
-its Key property as the dictionary key. Existing entries with the same key are
-replaced, which lets higher-level registration code refresh an internal record
-after re-registering a completer.
+Stores a registration object in the module's in-memory registration table
+under its Get-CompleterTargetIdentity, which combines its RuntimeKey with its
+kind, so records whose Key is the same, such as a native and a parameter record,
+are stored side by side. An existing entry for the same target is replaced,
+which lets higher-level registration code refresh an internal record after
+re-registering a completer.
 
 .PARAMETER Registration
 The registration record to store. The object must expose a non-empty Key
-property.
+property, a RuntimeKey property, and an IsNative property.
 
 .PARAMETER Table
 The managed registration table to write to, as a registration snapshot
@@ -2863,12 +1928,9 @@ Returns the record that is stored in the managed registration table.
 PS> $record | Add-ManagedCompleterRegistration
 
 Adds a newly created internal registration record to the module state, replacing
-any prior record for the same target key.
+any prior record for the same target.
 #>
 function Add-ManagedCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -2897,9 +1959,10 @@ function Add-ManagedCompleterRegistration
                 $registrations = Get-ManagedCompleterRegistrationTable
             }
 
-            $registrations[[string] $Registration.Key] = $Registration
+            $identity = Get-CompleterTargetIdentity -Target $Registration
+            $registrations[$identity] = $Registration
 
-            return $registrations[[string] $Registration.Key]
+            return $registrations[$identity]
         }
         catch
         {
@@ -2932,9 +1995,6 @@ creates one only when the context still has none. Either way the dictionary is
 stored on this object, so every later write of the same batch reuses it.
 #>
 function Add-RuntimeCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only mutates the live completer runtime dictionaries on behalf of public commands.')]
@@ -3032,9 +2092,6 @@ message explicit about both the engine version and the unresolved members so a f
 runtime change is diagnosable from the import failure alone.
 #>
 function Assert-CompleterRuntimeCapability
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([void])]
@@ -3088,9 +2145,6 @@ parse it also derives the script's targets from.
 None
 #>
 function Assert-CompleterScriptConformance
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([void])]
@@ -3139,9 +2193,6 @@ The captured bytes of one output stream.
 System.String
 #>
 function ConvertFrom-CompleterHelpOutput
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([string])]
@@ -3217,9 +2268,6 @@ Help text already cleaned by ConvertTo-CompleterCleanHelpText.
 System.Management.Automation.PSCustomObject
 #>
 function ConvertFrom-CompleterHelpText
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -3354,9 +2402,6 @@ The decoded help text.
 System.String
 #>
 function ConvertTo-CompleterCleanHelpText
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([string])]
@@ -3425,9 +2470,6 @@ The primary command name, already checked by ConvertTo-CompleterTargetName.
 System.String
 #>
 function ConvertTo-CompleterScriptStem
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([string])]
@@ -3470,9 +2512,6 @@ The text to escape.
 System.String
 #>
 function ConvertTo-CompleterSingleQuotedText
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([string])]
@@ -3516,9 +2555,6 @@ The command names, primary name first.
 System.String
 #>
 function ConvertTo-CompleterTargetName
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([string])]
@@ -3575,12 +2611,14 @@ Finds managed completer registrations from module state.
 
 .DESCRIPTION
 Returns registration records from the module's in-memory registration table.
-Callers can enumerate all records, resolve a record by its normalized key, or
-look up a record by command and parameter target details using the same key
-resolution logic as registration and removal helpers.
+Callers can enumerate all records, look up the record of a target or of
+another record, or look up a record by command and parameter target details.
+Every lookup names the target kind, because a native target and a parameter
+target can share a Key; the table is keyed by Get-CompleterTargetIdentity.
 
-.PARAMETER Key
-The normalized or runtime key for the registration record to retrieve.
+.PARAMETER Target
+The completer target or registration record whose managed record to retrieve.
+It must expose Key and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name for the registration target.
@@ -3607,17 +2645,14 @@ PS> Find-ManagedCompleterRegistration
 Enumerates every managed registration record currently tracked in module state.
 #>
 function Find-ManagedCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding(DefaultParameterSetName = 'All')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -3639,9 +2674,9 @@ function Find-ManagedCompleterRegistration
         return $registrations.Values
     }
 
-    $resolvedKey = switch ($PSCmdlet.ParameterSetName)
+    $lookupTarget = switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey' { Get-CompleterRegistrationKey -RuntimeKey $Key }
+        'Target' { $Target }
         'Native'
         {
             if (-not $Native)
@@ -3649,17 +2684,19 @@ function Find-ManagedCompleterRegistration
                 throw 'Native target resolution requires the -Native switch.'
             }
 
-            Get-CompleterRegistrationKey -CommandName $CommandName -Native
+            Resolve-CompleterTarget -CommandName $CommandName -Native
         }
-        'CommandParameter' { Get-CompleterRegistrationKey -CommandName $CommandName -ParameterName $ParameterName }
+        'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
     }
 
-    if (-not $registrations.Contains($resolvedKey))
+    $identity = Get-CompleterTargetIdentity -Target $lookupTarget
+
+    if (-not $registrations.Contains($identity))
     {
         return
     }
 
-    return $registrations[$resolvedKey]
+    return $registrations[$identity]
 }
 <#
 .SYNOPSIS
@@ -3671,21 +2708,25 @@ registration records for discovered entries. Maintainers use this helper to
 inspect the registrations that PowerShell is actually using, rather than only
 the module's cached or intended state.
 
-The lookup can enumerate all discovered registrations, resolve a specific
-command-parameter or native target, or search by the module's normalized key.
-Because the underlying data comes from PowerShell runtime internals, the result
-represents the current session only and depends on internal dictionary shapes
-remaining stable.
+The lookup can enumerate all discovered registrations, or resolve one
+command-parameter or native target, named by its parts or by a target or
+record. A lookup searches only the runtime dictionary of the target's kind, so
+a native command whose name has the same key as a parameter target, such as
+'Get-Thing:Name' and Get-Thing / Name, never resolves to the other's entry.
+The record carries the key casing the dictionary stores. Because the
+underlying data comes from PowerShell runtime internals, the result represents
+the current session only and depends on internal dictionary shapes remaining
+stable.
 
 A completer registered with Register-ArgumentCompleter -ParameterName alone,
 without -CommandName, sits in the custom dictionary under the bare parameter
 name. The module does not manage that target kind, so enumeration skips such
-entries with a verbose message and key lookups never match them; they cannot
-abort discovery of the supported targets.
+entries with a verbose message and parameter lookups never match them; they
+cannot abort discovery of the supported targets.
 
-.PARAMETER Key
-The normalized registration key used by the module when matching a discovered
-runtime registration.
+.PARAMETER Target
+The completer target or registration record to look up. It must expose
+RuntimeKey and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name that identifies the runtime completer
@@ -3713,10 +2754,10 @@ Find-RuntimeCompleterRegistration -CommandName git -Native
 Looks up the discovered runtime registration for a native completer target.
 
 .EXAMPLE
-Find-RuntimeCompleterRegistration -Key 'get-item:path'
+Find-RuntimeCompleterRegistration -Target $registration
 
-Shows how maintainers can search for a runtime registration by the module's
-normalized key instead of by raw runtime key shape.
+Looks up the live runtime registration for the target of a managed record, in
+the dictionary of that record's kind.
 
 .NOTES
 This helper reads PowerShell's live completer dictionaries through
@@ -3725,17 +2766,14 @@ results as implementation details for maintainers, not as a stable public
 contract.
 #>
 function Find-RuntimeCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding(DefaultParameterSetName = 'All')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [OutputType([pscustomobject], [System.Collections.Generic.List[object]])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -3783,42 +2821,9 @@ function Find-RuntimeCompleterRegistration
         return $registrations
     }
 
-    $target = switch ($PSCmdlet.ParameterSetName)
+    $lookupTarget = switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey'
-        {
-            $normalizedKey = Get-CompleterRegistrationKey -RuntimeKey $Key
-
-            if ($null -ne $runtime.NativeArgumentCompleters)
-            {
-                foreach ($entryKey in $runtime.NativeArgumentCompleters.Keys)
-                {
-                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
-                    {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
-                    }
-                }
-            }
-
-            if ($null -ne $runtime.CustomArgumentCompleters)
-            {
-                foreach ($entryKey in $runtime.CustomArgumentCompleters.Keys)
-                {
-                    if ((Test-CompleterParameterOnlyKey -Key ([string] $entryKey)))
-                    {
-                        continue
-                    }
-
-                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
-                    {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
-                    }
-                }
-            }
-
-            return
-        }
-
+        'Target' { $Target }
         'Native'
         {
             if (-not $Native)
@@ -3827,24 +2832,27 @@ function Find-RuntimeCompleterRegistration
             }
 
             Resolve-CompleterTarget -CommandName $CommandName -Native
-            break
         }
-
-        'CommandParameter'
-        {
-            Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
-            break
-        }
+        'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
     }
 
-    $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+    $isNative = [bool] $lookupTarget.IsNative
+    $dictionary = if ($isNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
 
-    if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
+    if ($null -eq $dictionary)
     {
         return
     }
 
-    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered' -State Discovered
+    foreach ($entryKey in @($dictionary.Keys))
+    {
+        if ([string]::Equals([string] $entryKey, [string] $lookupTarget.RuntimeKey, [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            $storedTarget = if ($isNative) { Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native } else { Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) }
+
+            return New-CompleterRegistrationRecord -Target $storedTarget -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
+        }
+    }
 }
 <#
 .SYNOPSIS
@@ -3867,9 +2875,6 @@ Retrieves the current in-memory state table so a maintainer can inspect or
 update registration bookkeeping during module development.
 #>
 function Get-CompleterActionState
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([System.Collections.Specialized.OrderedDictionary])]
@@ -3963,9 +2968,6 @@ when no run exited; a /? run that does not exit leaves it at --help),
 Warnings, and VerboseLines.
 #>
 function Get-CompleterHelpSubcommand
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -4057,6 +3059,84 @@ function Get-CompleterHelpSubcommand
 }
 <#
 .SYNOPSIS
+Returns the capture module Import-CompleterScript ran a script in, when a script block is one the import emitted.
+
+.DESCRIPTION
+Import-CompleterScript runs each script in a capture module of its own and
+records every script block it emits, with that capture module, the script's
+path, and the tier, in the module's CompleterImportedScriptBlocks table, keyed
+on the script block object itself. This helper returns the capture module of a
+script block the table holds for the given script path and tier, and nothing
+otherwise.
+
+That is how the module tells an imported script block from any other. A
+record's ImportModule, ScriptPath, SourcePath, and Trusted properties are
+claims that any caller can set, so none of them establishes provenance, and
+neither does a block's binding: the capture module is public on every
+imported record, so a caller can bind a script block of its own to it, but
+only the objects the import emitted are in the table. A closure of an imported
+block is a new object too. Script paths compare the way the file system does:
+ignoring case on Windows and macOS, and ordinally elsewhere.
+
+.PARAMETER ScriptBlock
+The script block to look up. A null script block has no capture module.
+
+.PARAMETER ScriptPath
+The script the block must have been imported from.
+
+.PARAMETER Trusted
+The tier the script must have been imported under.
+
+.OUTPUTS
+System.Management.Automation.PSModuleInfo
+Returns the capture module, or nothing when the script block is not one the
+import emitted for that script under that tier.
+
+.EXAMPLE
+PS> Get-CompleterImportModule -ScriptBlock $record.ScriptBlock -ScriptPath $record.ScriptPath -Trusted $record.Trusted
+
+Returns the capture module of an Import-CompleterScript record, or nothing for
+a script block that only claims to come from the script.
+#>
+function Get-CompleterImportModule
+{
+    [CmdletBinding()]
+    [OutputType([System.Management.Automation.PSModuleInfo])]
+    param(
+        [Parameter()]
+        [AllowNull()]
+        [scriptblock] $ScriptBlock,
+
+        [Parameter()]
+        [AllowNull()]
+        [AllowEmptyString()]
+        [string] $ScriptPath,
+
+        [Parameter()]
+        [bool] $Trusted
+    )
+
+    if ($null -eq $ScriptBlock -or [string]::IsNullOrEmpty($ScriptPath))
+    {
+        return
+    }
+
+    $importedScript = $null
+
+    if (-not $script:CompleterImportedScriptBlocks.TryGetValue($ScriptBlock, [ref] $importedScript))
+    {
+        return
+    }
+
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+
+    if ([string]::Equals($importedScript.ScriptPath, $ScriptPath, $pathComparison) -and $importedScript.Trusted -eq $Trusted)
+    {
+        return $importedScript.Module
+    }
+}
+<#
+.SYNOPSIS
 Reads the Subsystem field of a Windows program's PE header.
 
 .DESCRIPTION
@@ -4081,9 +3161,6 @@ System.Int32
 Returns the Subsystem value, or null when the header cannot be read.
 #>
 function Get-CompleterPESubsystem
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([int])]
@@ -4149,94 +3226,6 @@ function Get-CompleterPESubsystem
 }
 <#
 .SYNOPSIS
-Normalizes a completer target into the module's registration key format.
-
-.DESCRIPTION
-Builds the lowercase lookup key used by the private registration table. For
-parameter completers the key is command and parameter name joined with a colon;
-for native completers the command name alone is used. When a runtime key is
-already available, the helper normalizes and returns it unchanged apart from
-case folding.
-
-.PARAMETER CommandName
-The command or native executable name that identifies the completer target.
-
-.PARAMETER ParameterName
-The parameter name for a PowerShell command completer target.
-
-.PARAMETER RuntimeKey
-An existing runtime key to normalize for table lookups.
-
-.PARAMETER Native
-Indicates that the target represents a native command completer.
-
-.PARAMETER CompleterType
-An alternate way to indicate whether the target should be treated as a native
-or parameter completer when resolving the key.
-
-.OUTPUTS
-System.String
-Returns the normalized registration key used for internal lookups.
-
-.EXAMPLE
-PS> Get-CompleterRegistrationKey -CommandName Get-Widget -ParameterName Name
-
-Returns the normalized key used to store or retrieve a parameter completer
-registration for Get-Widget:Name.
-
-.EXAMPLE
-PS> Get-CompleterRegistrationKey -RuntimeKey 'Git'
-
-Normalizes a previously captured runtime key before using it against the
-registration table.
-#>
-function Get-CompleterRegistrationKey
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
-{
-    [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
-    [OutputType([string])]
-    param(
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
-        [ValidateNotNullOrEmpty()]
-        [string] $CommandName,
-
-        [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
-        [ValidateNotNullOrEmpty()]
-        [string] $ParameterName,
-
-        [Parameter(Mandatory, ParameterSetName = 'RuntimeKey')]
-        [Parameter(Mandatory, ParameterSetName = 'NativeRuntimeKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $RuntimeKey,
-
-        [Parameter(Mandatory, ParameterSetName = 'Native')]
-        [Parameter(Mandatory, ParameterSetName = 'NativeRuntimeKey')]
-        [switch] $Native,
-
-        [Parameter()]
-        [ValidateSet('Parameter', 'Native')]
-        [string] $CompleterType
-    )
-
-    $isNative = $Native.IsPresent -or $CompleterType -eq 'Native'
-
-    if ($PSBoundParameters.ContainsKey('RuntimeKey'))
-    {
-        return $RuntimeKey.ToLowerInvariant()
-    }
-
-    if ($isNative)
-    {
-        return $CommandName.ToLowerInvariant()
-    }
-
-    return ('{0}:{1}' -f $CommandName, $ParameterName).ToLowerInvariant()
-}
-<#
-.SYNOPSIS
 Captures the managed registration table and the live runtime completer dictionaries once for a batch of lookups.
 
 .DESCRIPTION
@@ -4253,17 +3242,17 @@ are meant to be consumed before the same batch writes, and the batch then
 writes through its RuntimeContext and Managed table instead of looking them
 up again for every target. Parameter-only entries of the
 custom dictionary, registered with Register-ArgumentCompleter -ParameterName
-alone, are left out of the index because the module does not manage them and
-a native-shaped key must never resolve against one.
+alone, are left out of the index because the module does not manage them.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
-Returns an object with Managed, the managed registration table; Runtime, one
-view per runtime dictionary in the order Find-RuntimeCompleterRegistration
-searches them, native first; and RuntimeContext, the
-CompleterActions.CompleterRuntime object the views were read from. Each view
-carries IsNative, the Dictionary, and Keys, a case-insensitive map from a key
-to the casing the dictionary stores.
+Returns an object with Managed, the managed registration table, keyed by
+Get-CompleterTargetIdentity; Runtime, one view per runtime dictionary, native
+first; and RuntimeContext, the CompleterActions.CompleterRuntime object the
+views were read from. Each view carries IsNative, the Dictionary, and Keys, a
+case-insensitive map from a key to the casing the dictionary stores. A target
+resolves only against the view of its own kind, because a native and a
+parameter target can share a key.
 
 .EXAMPLE
 PS> $snapshot = Get-CompleterRegistrationSnapshot
@@ -4272,9 +3261,6 @@ Captures the session's registrations before resolving a set of targets against
 them.
 #>
 function Get-CompleterRegistrationSnapshot
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -4350,9 +3336,6 @@ error messages explicit so failures are diagnosable when runtime implementation
 details change across PowerShell releases.
 #>
 function Get-CompleterRuntime
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -4381,9 +3364,6 @@ function Get-CompleterRuntime
 Gets a value from a runtime completer dictionary by key.
 #>
 function Get-CompleterRuntimeDictionaryValue
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     param(
@@ -4430,9 +3410,6 @@ script's targets from the same parse reads the file once.
 CompleterActions.CompleterScriptFinding
 #>
 function Get-CompleterScriptFinding
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -4491,9 +3468,6 @@ The full path of the script file to read and hash.
 System.String
 #>
 function Get-CompleterScriptHash
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding(DefaultParameterSetName = 'LiteralPath')]
     [OutputType([string])]
@@ -4545,9 +3519,6 @@ The literal path to the completer script file.
 CompleterActions.CompleterScriptParseResult
 #>
 function Get-CompleterScriptParseResult
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -4614,9 +3585,6 @@ must not contain a line break, which would end the line 2 comment.
 System.String
 #>
 function Get-CompleterScriptSkeleton
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([string])]
@@ -4753,9 +3721,6 @@ script's text, such as Export-CompleterSet for its Hash, reads the file once.
 CompleterActions.CompleterTarget
 #>
 function Get-CompleterScriptTarget
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -4790,7 +3755,7 @@ function Get-CompleterScriptTarget
             $false
         ))
 
-    $targetsByKey = [ordered] @{}
+    $targetsByIdentity = [ordered] @{}
 
     foreach ($registerCommand in $registerCommands)
     {
@@ -4866,24 +3831,24 @@ function Get-CompleterScriptTarget
 
         foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
         {
-            $targetsByKey[[string] $target.Key] = $target
+            $targetsByIdentity[(Get-CompleterTargetIdentity -Target $target)] = $target
         }
     }
 
-    if ($targetsByKey.Count -eq 0)
+    if ($targetsByIdentity.Count -eq 0)
     {
         throw "The script '$LiteralPath' does not call Register-ArgumentCompleter with literal targets, so nothing can be registered lazily. Run Test-CompleterScript to work through the findings, or register it with -Trusted and name the targets."
     }
 
-    return @($targetsByKey.Values)
+    return @($targetsByIdentity.Values)
 }
 <#
 .SYNOPSIS
 Finds the source positions of a completer set file's entries.
 
 .DESCRIPTION
-Parses the set file with the PowerShell parser, never evaluating it, and
-returns the position of the Entries key and, for each element of the Entries
+Walks the parse of a completer set, never evaluating it, and returns the
+position of the Entries key and, for each element of the Entries
 array, the element's own extent (the entry's @{ for a hashtable) and the
 extents of its Path value, Hash key and value, and Targets key.
 Test-CompleterSet uses them to point a finding at the part of the set that
@@ -4895,8 +3860,10 @@ one element per line and one written with commas both work, and a $null
 element is skipped because the definition reader drops it before the entries
 are numbered.
 
-.PARAMETER LiteralPath
-The full path of the completer set file.
+.PARAMETER Ast
+The Ast of the CompleterActions.CompleterSetDefinition that
+Import-CompleterSetDefinition returned, the parse of the bytes it read, so the
+set file is not read again.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntryExtent
@@ -4906,21 +3873,14 @@ in set order with Extent, PathExtent, HashExtent, and TargetsExtent. An
 extent the element does not have is null.
 #>
 function Get-CompleterSetEntryExtent
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [ValidateNotNull()]
+        [System.Management.Automation.Language.Ast] $Ast
     )
-
-    $tokens = $null
-    $parseErrors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($LiteralPath, [ref] $tokens, [ref] $parseErrors)
 
     # Output of a statement enumerates arrays, as the data reader's @() and
     # pipeline do; the elements of a comma array are not enumerated again.
@@ -5042,7 +4002,9 @@ With Package, the set is a package set, and Get-CompleterSetPackageFinding
 adds its PackageLayout findings after every entry's findings and before the
 UnlistedScript findings. Without it the findings are exactly the plain set's.
 
-Nothing here reads or writes the session's registrations or runs a script.
+Every position comes from the parse in SetDefinition, so the set file is not
+read again. Nothing here reads or writes the session's registrations or runs a
+script.
 
 .PARAMETER SetDefinition
 The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
@@ -5064,9 +4026,6 @@ PackageLayout findings, followed by the UnlistedScript findings sorted by
 path. Path is the set file for every finding.
 #>
 function Get-CompleterSetFinding
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType('CompleterActions.CompleterScriptFinding')]
@@ -5093,7 +4052,7 @@ function Get-CompleterSetFinding
     $hints['DuplicateTarget'] = $hints['TargetMismatch']
 
     $setPath = $SetDefinition.Path
-    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
     $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
     $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
     $claimedTargets = @{}
@@ -5135,19 +4094,24 @@ function Get-CompleterSetFinding
 
         # $entry.Targets is the list import checks, so an entry with an Error
         # finding, such as a malformed target, can still report a duplicate.
-        foreach ($target in @($entry.Targets))
+        $entryTargets = @($entry.Targets)
+        $targetIdentities = @($entryTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
+        for ($targetIndex = 0; $targetIndex -lt $entryTargets.Count; $targetIndex++)
         {
-            if ($claimedTargets.Contains([string] $target.Key))
+            $targetIdentity = $targetIdentities[$targetIndex]
+
+            if ($claimedTargets.Contains($targetIdentity))
             {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." -Hint $hints['DuplicateTarget']))
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($entryTargets[$targetIndex].RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." -Hint $hints['DuplicateTarget']))
             }
         }
 
         if ($findings.Count -eq 0)
         {
-            foreach ($target in @($entry.Targets))
+            foreach ($targetIdentity in $targetIdentities)
             {
-                $claimedTargets[[string] $target.Key] = $entryIndex
+                $claimedTargets[$targetIdentity] = $entryIndex
             }
         }
 
@@ -5197,14 +4161,16 @@ is known, so Test-CompleterSet can check the package layout.
 With Module, as Test-CompleterSet -Name gives it, the manifest is the one
 Resolve-CompleterSetModule chose. Without it, the candidates are the .psd1
 files in the folder above the set file's folder, taken in ordinal order of
-file name. The first that Import-PowerShellDataFile reads as data and whose
-PrivateData.CompleterSet resolves to the set file is the manifest, so a
-staged package is recognised before it is published, whatever its folder is
-called. A .psd1 that is not data does not declare the set, and a folder that
-cannot be listed holds no manifest. Paths are compared case-insensitively on
-Windows and macOS and case-sensitively on Linux.
+file name. The first that reads as data and whose PrivateData.CompleterSet
+resolves to the set file is the manifest, so a staged package is recognised
+before it is published, whatever its folder is called. A .psd1 that is not
+data does not declare the set, and a folder that cannot be listed holds no
+manifest. Paths are compared case-insensitively on Windows and macOS and
+case-sensitively on Linux.
 
-Nothing is imported or run: manifests are read as data only.
+Nothing is imported or run: Import-CompleterDataFile reads each candidate as
+data only, under the set file limit, so a .psd1 larger than 128 KB is not
+parsed and does not declare the set.
 
 .PARAMETER SetPath
 The full path of the completer set file.
@@ -5219,9 +4185,6 @@ and Manifest (the manifest's data), or nothing when no manifest declares the
 set.
 #>
 function Get-CompleterSetPackage
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -5278,13 +4241,19 @@ function Get-CompleterSetPackage
 
         try
         {
-            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+            $manifestFile = Import-CompleterDataFile -LiteralPath $manifestPath
         }
         catch
         {
             continue
         }
 
+        if ($manifestFile.OverLimit)
+        {
+            continue
+        }
+
+        $manifest = $manifestFile.Data
         $privateData = $manifest['PrivateData']
         $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
 
@@ -5332,7 +4301,9 @@ manifest Get-CompleterSetPackage found, in this order:
   later. The message and hint name the manifest by its full path. The
   finding points at line 1, column 1 of the set.
 
-Path is the set file for every finding. Nothing is imported or run.
+Path is the set file for every finding. Every position comes from the parse
+in SetDefinition, so the set file is not read again. Nothing is imported or
+run.
 
 .PARAMETER SetDefinition
 The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
@@ -5349,9 +4320,6 @@ CompleterActions.CompleterScriptFinding
 Returns the PackageLayout findings in the order above, or nothing.
 #>
 function Get-CompleterSetPackageFinding
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType('CompleterActions.CompleterScriptFinding')]
@@ -5374,10 +4342,9 @@ function Get-CompleterSetPackageFinding
     $manifestPath = $Package.ManifestPath
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
     $moduleBasePrefix = $moduleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
-    $lineOne = [string] (Get-Content -LiteralPath $setPath -TotalCount 1)
-    $positionOne = [System.Management.Automation.Language.ScriptPosition]::new($setPath, 1, 1, $lineOne)
-    $extentOne = [System.Management.Automation.Language.ScriptExtent]::new($positionOne, $positionOne)
+    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
+    # The parse of the whole set starts at line 1, column 1.
+    $extentOne = $SetDefinition.Ast.Extent
 
     foreach ($setEntry in $Entry)
     {
@@ -5449,6 +4416,70 @@ function Get-CompleterSetPackageFinding
 }
 <#
 .SYNOPSIS
+Returns the string that identifies one completer target, kind included.
+
+.DESCRIPTION
+PowerShell keeps native and parameter completers in two runtime dictionaries,
+each comparing its keys ordinally ignoring case. A target is therefore its kind
+together with its RuntimeKey, the command name of a native completer or
+'Command:Parameter' of a parameter completer, and two targets are the same
+exactly when the runtime would store them under one entry.
+
+The target's Key cannot stand in for that. It is the RuntimeKey folded to
+lowercase, so a native command whose name contains a colon, such as an alias
+named 'Get-Thing:Name', has the same Key as the parameter target Get-Thing /
+Name, and the folding also merges names the runtime keeps apart: the Kelvin
+sign (U+212A) lowercases to the letter k, yet the runtime holds 'Kelvin'
+spelled with it and 'kelvin' as two entries.
+
+The identity is the target kind, 'native' or 'parameter', a colon, and the
+RuntimeKey with its casing kept. The kind never contains a colon, so the first
+colon ends it and an identity of one kind never equals an identity of the
+other. Identities compare as the runtime compares its keys, ordinally ignoring
+case. A PowerShell hashtable literal, @{} or [ordered] @{}, already compares its
+keys that way; any other collection of identities is built with
+[System.StringComparer]::OrdinalIgnoreCase, and a single comparison uses
+[string]::Equals with OrdinalIgnoreCase. PowerShell's -eq, -contains, and -in
+operators compare culture-aware, which treats the Kelvin sign as K, so they are
+never used on identities.
+
+.PARAMETER Target
+A completer target or registration record. It must expose RuntimeKey and
+IsNative.
+
+.OUTPUTS
+System.String
+Returns the identity, such as 'native:git' or 'parameter:Get-Item:Path'.
+
+.EXAMPLE
+PS> Get-CompleterTargetIdentity -Target (Resolve-CompleterTarget -CommandName 'Get-Item' -ParameterName 'Path')
+
+Returns 'parameter:Get-Item:Path'.
+#>
+function Get-CompleterTargetIdentity
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $Target
+    )
+
+    foreach ($requiredProperty in 'RuntimeKey', 'IsNative')
+    {
+        if ($null -eq $Target.PSObject.Properties[$requiredProperty])
+        {
+            throw "Target is missing required property '$requiredProperty'."
+        }
+    }
+
+    $kind = if ($Target.IsNative) { 'native' } else { 'parameter' }
+
+    return '{0}:{1}' -f $kind, [string] $Target.RuntimeKey
+}
+<#
+.SYNOPSIS
 Gets the managed registration dictionary from module state.
 
 .DESCRIPTION
@@ -5467,9 +4498,6 @@ Retrieves the backing registration table before adding, finding, or removing
 managed completer records inside module internals.
 #>
 function Get-ManagedCompleterRegistrationTable
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([System.Collections.IDictionary])]
@@ -5484,6 +4512,112 @@ function Get-ManagedCompleterRegistrationTable
     }
 
     return $registrations
+}
+<#
+.SYNOPSIS
+Reads a PowerShell data file as data only, within the completer set file limit.
+
+.DESCRIPTION
+Reads a completer set file or a module manifest the way
+Import-PowerShellDataFile reads a data file, except that the file is read
+once, never more than one byte past $script:CompleterSetMaxFileBytes (128 KB),
+and a file that holds more is not parsed: the result reports OverLimit, and
+the caller words the refusal. The read is the measurement, because the size
+the file system reports is 0 for a Windows symbolic link, a procfs file, or a
+device, whatever a read of it returns. Opening a named pipe waits until
+something writes to it, and the pipe is then read like a file.
+
+The bytes read are decoded as Import-PowerShellDataFile decodes a file, as
+UTF-8 unless a byte order mark names another encoding, and parsed. The data is
+the first hashtable in the parse, the one Import-PowerShellDataFile takes,
+evaluated by Ast.SafeGetValue, the data-only evaluator that cmdlet uses, so an
+expression is refused and a script block literal comes back as a ScriptBlock
+value that nothing runs. Parse errors, among them input nested too deeply for
+the parser, which then returns no parse at all, and a file without a hashtable
+throw the cmdlet's error text, as does a value the evaluator refuses.
+
+The limit bounds the bytes parsed and so the parse time, though a malformed
+file can still take minutes to refuse. A valid set of 95 KB parsed in 11
+milliseconds when the limit was set. The parser's SaveError compares each new
+error with every error saved before it, so the time to refuse a malformed file
+grows with the square of its syntax errors, and a file can hold about one
+error per byte. Measured at the limit: a file that repeats one key on every
+line in about 11 bytes took 5.6 seconds (about 12,000 errors), one that
+repeats it in 4 bytes 70 seconds (about 33,000), and a file of nothing but
+closing parentheses or closing braces, one error per byte, 129 and 171
+seconds. A set that Export-CompleterSet writes has no syntax errors.
+
+.PARAMETER LiteralPath
+The full path of the data file.
+
+.PARAMETER SkipLimitCheck
+Skips the evaluator's hashtable size check, as Import-PowerShellDataFile
+-SkipLimitCheck does. The default limits of 500 keys and 5000 syntax nodes
+apply otherwise.
+
+.OUTPUTS
+System.Management.Automation.PSCustomObject
+Returns OverLimit, which is $true when the file holds more than the limit,
+Data, the hashtable the file holds, and Ast, the parse of the bytes read.
+Data and Ast are $null when OverLimit is $true.
+#>
+function Import-CompleterDataFile
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [switch] $SkipLimitCheck
+    )
+
+    try
+    {
+        $stream = [System.IO.File]::OpenRead($LiteralPath)
+
+        try
+        {
+            $bytes = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1)
+        }
+        finally
+        {
+            $stream.Dispose()
+        }
+    }
+    catch [System.Management.Automation.MethodInvocationException]
+    {
+        throw $_.Exception.InnerException
+    }
+
+    if ($bytes.Length -gt $script:CompleterSetMaxFileBytes)
+    {
+        return [pscustomobject] [ordered] @{ OverLimit = $true; Data = $null; Ast = $null }
+    }
+
+    $text = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false)).ReadToEnd()
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $LiteralPath, [ref] $null, [ref] $parseErrors)
+    # A parser that gives up on input nested too deeply returns no AST, only its error.
+    $hashtable = if ($parseErrors.Count -eq 0) { $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false) }
+
+    if ($null -eq $hashtable)
+    {
+        throw "The file '$LiteralPath' could not be parsed as a PowerShell Data File."
+    }
+
+    try
+    {
+        $data = $hashtable.SafeGetValue($SkipLimitCheck.IsPresent)
+    }
+    catch [System.Management.Automation.MethodInvocationException]
+    {
+        throw $_.Exception.InnerException
+    }
+
+    [pscustomobject] [ordered] @{ OverLimit = $false; Data = $data; Ast = $ast }
 }
 <#
 .SYNOPSIS
@@ -5505,9 +4639,6 @@ The literal path to the completer script file.
 CompleterActions.CompleterScriptImportSession
 #>
 function Import-CompleterScriptDefinition
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -5599,22 +4730,47 @@ function Import-CompleterScriptDefinition
 Reads a completer set file and checks its top-level shape.
 
 .DESCRIPTION
-Reads the .psd1 through Import-PowerShellDataFile, which evaluates data only
-and refuses anything that would run code, so a set file can never execute a
-completer script or anything else. The file must declare Version 1 and a
-non-empty Entries array; the entries themselves are validated one by one by
-Resolve-CompleterSetEntry.
+Reads the .psd1 once and evaluates it as data only, so a set file can never
+execute a completer script or anything else. The file must declare Version 1
+and a non-empty Entries array; the entries themselves are validated one by one
+by Resolve-CompleterSetEntry.
+
+Import-CompleterDataFile does the read: never more than one byte past
+$script:CompleterSetMaxFileBytes (128 KB), with a larger file refused before
+it is parsed, and with the evaluator Import-PowerShellDataFile uses and the
+cmdlet's error text. The read is the measurement, so a symbolic link, a procfs
+file whose reported size is 0, or a named pipe is held to the limit too.
+
+The set file is not read by its own path again: the definition carries the
+parse, and Test-CompleterSet takes its positions from it, so a set rewritten
+during an import or a test cannot change the entries checked or the line and
+column of a finding. The module manifests read to find a set by -Name or to
+check a packaged set's layout are read by their own paths, held to the same
+limit. The scripts the entries name are read by theirs and parsed in full,
+because a completer script can be larger than a set. A link can make one of
+those paths another name for the set file, and that read then sees the file
+as it is at that moment.
+
+The evaluator's hashtable size check is skipped, as Import-PowerShellDataFile
+-SkipLimitCheck skips it, because the default limits of 500 keys and 5000
+syntax nodes reject an exported set of a few hundred entries. Skipping them
+changes nothing else the evaluator accepts. Export-CompleterSet refuses to
+write a set over the size limit, so every set it writes reads back.
+
+The limit bounds the bytes parsed and so the parse time, though a malformed
+file can still take minutes to refuse; Import-CompleterDataFile gives the
+measurements.
 
 .PARAMETER LiteralPath
 The literal path to the completer set file.
 
 .OUTPUTS
 CompleterActions.CompleterSetDefinition
+Returns one record with Path and Directory, the set file's full path and
+folder, Version, Entries, the set's non-null entries in order, and Ast, the
+parse of the bytes that were read.
 #>
 function Import-CompleterSetDefinition
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -5636,7 +4792,14 @@ function Import-CompleterSetDefinition
         throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
     }
 
-    $data = Import-PowerShellDataFile -LiteralPath $file.FullName -ErrorAction Stop
+    $dataFile = Import-CompleterDataFile -LiteralPath $file.FullName -SkipLimitCheck
+
+    if ($dataFile.OverLimit)
+    {
+        throw "Completer set '$($file.FullName)' is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files. Split its entries across several sets."
+    }
+
+    $data = $dataFile.Data
 
     if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
     {
@@ -5661,6 +4824,7 @@ function Import-CompleterSetDefinition
         Directory  = $file.DirectoryName
         Version    = 1
         Entries    = $entries
+        Ast        = $dataFile.Ast
     }
 }
 <#
@@ -5710,9 +4874,6 @@ empty unless Exited), ElapsedMilliseconds, ProcessId (null for StartFailed),
 and StartError (the Process.Start exception message, or null).
 #>
 function Invoke-CompleterHelpProcess
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -5932,14 +5093,17 @@ block for its own target, replaces the runtime dictionary entry with it, and
 moves the managed record to Active. Every other Pending record that points at
 the same script and tier, and whose runtime entry is still its own stub, is
 swapped from the same import so a script that registers several targets is
-executed once. When the script registers the same target more than once, the
-last definition wins for that target, as it does when the script is
-dot-sourced and Register-ArgumentCompleter overwrites the earlier entry. The
-call that triggered the load is then delegated to the real script block and
-its results are returned.
+executed once. Script paths compare the way the file system does, ignoring case
+on Windows and macOS and case sensitively elsewhere, so a sibling registered
+from another file whose path differs only in case keeps its own script. When
+the script registers the same target more than once, the last definition wins
+for that target, as it does when the script is dot-sourced and
+Register-ArgumentCompleter overwrites the earlier entry. The call that
+triggered the load is then delegated to the real script block and its results
+are returned.
 
-A load in flight owns its record. The helper tracks the keys it is loading on
-the current call stack, so a nested completion for the same target, such as a
+A load in flight owns its record. The helper tracks the targets it is loading
+on the current call stack, so a nested completion for the same target, such as a
 script that calls TabExpansion2 for its own command while it loads, returns
 nothing instead of starting a second import, and a sibling load never swaps or
 fails a record whose own load is still running.
@@ -5952,7 +5116,10 @@ host. The helper never hooks key handlers, replaces TabExpansion2, or touches
 PSReadLine options.
 
 .PARAMETER Key
-The normalized registration key of the lazy target being invoked.
+The RuntimeKey of the lazy target being invoked, with its casing kept.
+
+.PARAMETER Native
+Indicates that the lazy target being invoked is a native command completer.
 
 .PARAMETER ArgumentList
 The arguments the completion engine passed to the completer.
@@ -5963,9 +5130,6 @@ Whatever the loaded completer returns for the delegated call. Nothing when the
 load fails.
 #>
 function Invoke-CompleterLazyStub
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([System.Management.Automation.CompletionResult])]
@@ -5973,6 +5137,9 @@ function Invoke-CompleterLazyStub
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
         [string] $Key,
+
+        [Parameter()]
+        [switch] $Native,
 
         [Parameter()]
         [AllowNull()]
@@ -5987,7 +5154,8 @@ function Invoke-CompleterLazyStub
 
     try
     {
-        $registration = Find-ManagedCompleterRegistration -Key $Key
+        $stubTarget = if ($Native) { Resolve-CompleterTarget -RuntimeKey $Key -Native } else { Resolve-CompleterTarget -RuntimeKey $Key }
+        $registration = Find-ManagedCompleterRegistration -Target $stubTarget
 
         if ($null -eq $registration)
         {
@@ -6005,7 +5173,9 @@ function Invoke-CompleterLazyStub
                 throw "The managed registration for '$($registration.RuntimeKey)' is in state '$($registration.State)' and cannot be loaded lazily."
             }
 
-            if (-not $script:CompleterLazyLoadsInProgress.Add($registration.Key))
+            $identity = Get-CompleterTargetIdentity -Target $registration
+
+            if (-not $script:CompleterLazyLoadsInProgress.Add($identity))
             {
                 return
             }
@@ -6014,37 +5184,39 @@ function Invoke-CompleterLazyStub
             {
                 # Register-ArgumentCompleter lets the last registration for a target
                 # win, so a script that registers the same target twice is reduced
-                # to its last definition per key before the initiating target is
+                # to its last definition per target before the initiating target is
                 # selected and the siblings are swapped from the same collection.
-                $importedRegistrationsByKey = [ordered] @{}
+                $importedRegistrationsByIdentity = [ordered] @{}
 
                 foreach ($importedRegistration in @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted))
                 {
-                    $importedRegistrationsByKey[[string] $importedRegistration.Key] = $importedRegistration
+                    $importedRegistrationsByIdentity[(Get-CompleterTargetIdentity -Target $importedRegistration)] = $importedRegistration
                 }
 
-                if (-not $importedRegistrationsByKey.Contains($registration.Key))
+                if (-not $importedRegistrationsByIdentity.Contains($identity))
                 {
-                    $importedKeys = @($importedRegistrationsByKey.Values | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                    $importedKeys = @($importedRegistrationsByIdentity.Values | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                     throw "The script '$($registration.ScriptPath)' did not register a completer for '$($registration.RuntimeKey)'. It registered: $importedKeys."
                 }
 
-                $ownRegistration = $importedRegistrationsByKey[$registration.Key]
+                $ownRegistration = $importedRegistrationsByIdentity[$identity]
+                $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
-                foreach ($importedRegistration in $importedRegistrationsByKey.Values)
+                foreach ($importedIdentity in @($importedRegistrationsByIdentity.Keys))
                 {
-                    $pendingRegistration = Find-ManagedCompleterRegistration -Key $importedRegistration.Key
+                    $importedRegistration = $importedRegistrationsByIdentity[$importedIdentity]
+                    $pendingRegistration = Find-ManagedCompleterRegistration -Target $importedRegistration
 
                     if ($null -eq $pendingRegistration -or
                         $pendingRegistration.State -ne 'Pending' -or
-                        $pendingRegistration.ScriptPath -ne $registration.ScriptPath -or
+                        -not [string]::Equals($pendingRegistration.ScriptPath, $registration.ScriptPath, $pathComparison) -or
                         [bool] $pendingRegistration.Trusted -ne [bool] $registration.Trusted -or
-                        ($pendingRegistration.Key -ne $registration.Key -and $script:CompleterLazyLoadsInProgress.Contains($pendingRegistration.Key)))
+                        (-not [string]::Equals($importedIdentity, $identity, [System.StringComparison]::OrdinalIgnoreCase) -and $script:CompleterLazyLoadsInProgress.Contains($importedIdentity)))
                     {
                         continue
                     }
 
-                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $pendingRegistration.Key
+                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $pendingRegistration
 
                     if ($null -eq $runtimeRegistration -or -not [object]::ReferenceEquals($runtimeRegistration.ScriptBlock, $pendingRegistration.ScriptBlock))
                     {
@@ -6061,7 +5233,7 @@ function Invoke-CompleterLazyStub
             }
             finally
             {
-                $null = $script:CompleterLazyLoadsInProgress.Remove($registration.Key)
+                $null = $script:CompleterLazyLoadsInProgress.Remove($identity)
             }
         }
     }
@@ -6073,11 +5245,11 @@ function Invoke-CompleterLazyStub
         {
             if ($null -ne $registration)
             {
-                $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $registration.Key
+                $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $registration
 
                 if ($null -ne $runtimeRegistration -and [object]::ReferenceEquals($runtimeRegistration.ScriptBlock, $registration.ScriptBlock))
                 {
-                    $null = Remove-RuntimeCompleterRegistration -Key $registration.Key
+                    $null = Remove-RuntimeCompleterRegistration -Target $registration
                 }
 
                 $null = Add-ManagedCompleterRegistration -Registration (
@@ -6103,23 +5275,24 @@ Creates the runtime stub registered for a lazy completer target.
 
 .DESCRIPTION
 Builds a script block, bound to this module's session state, that hands every
-invocation to Invoke-CompleterLazyStub together with the target's normalized
-key. The stub carries nothing else: the script path and trust tier live on the
-managed record, so the stub text is the same shape for every lazy target and
-the record stays the single source of truth. Binding through the module's
+invocation to Invoke-CompleterLazyStub together with the target's runtime key
+and kind, which together identify its managed record (see
+Get-CompleterTargetIdentity). The stub carries nothing else: the script
+path and trust tier live on the managed record, so the stub text is the same
+shape for every lazy target and the record stays the single source of truth. Binding through the module's
 InvokeCommand is what lets the stub reach the module's private helpers when the
 completion engine invokes it.
 
 .PARAMETER Key
-The normalized registration key of the lazy target.
+The RuntimeKey of the lazy target, with its casing kept.
+
+.PARAMETER Native
+Indicates that the lazy target is a native command completer.
 
 .OUTPUTS
 System.Management.Automation.ScriptBlock
 #>
 function New-CompleterLazyStub
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an in-memory script block.')]
@@ -6127,12 +5300,17 @@ function New-CompleterLazyStub
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $Key
+        [string] $Key,
+
+        [Parameter()]
+        [switch] $Native
     )
 
     $escapedKey = ConvertTo-CompleterSingleQuotedText -Value $Key
 
-    return $ExecutionContext.SessionState.InvokeCommand.NewScriptBlock("Invoke-CompleterLazyStub -Key '$escapedKey' -ArgumentList `$args")
+    $nativeArgument = if ($Native) { ' -Native' } else { '' }
+
+    return $ExecutionContext.SessionState.InvokeCommand.NewScriptBlock("Invoke-CompleterLazyStub -Key '$escapedKey'$nativeArgument -ArgumentList `$args")
 }
 <#
 .SYNOPSIS
@@ -6193,9 +5371,6 @@ Creates a managed registration record from previously resolved target metadata
 before adding it to the in-memory registration table.
 #>
 function New-CompleterRegistrationRecord
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an in-memory registration object.')]
@@ -6294,9 +5469,6 @@ that import but should be changed.
 CompleterActions.CompleterScriptFinding
 #>
 function New-CompleterScriptFinding
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a finding object.')]
@@ -6371,9 +5543,6 @@ Creates the completion match record for one TabExpansion2 result against the
 resolved git native completer target.
 #>
 function New-CompletionMatch
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates a completion match object.')]
@@ -6441,9 +5610,6 @@ dot-sources it without validating it against the strict import grammar.
 CompleterActions.ImportedCompleterRegistration
 #>
 function New-ImportedCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only creates an import object.')]
@@ -6493,9 +5659,6 @@ function New-ImportedCompleterRegistration
 Removes and returns a value from a runtime completer dictionary by key.
 #>
 function Remove-CompleterRuntimeDictionaryValue
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only mutates in-memory runtime dictionary instances for higher-level callers.')]
@@ -6532,12 +5695,14 @@ Removes a managed completer registration from module state.
 
 .DESCRIPTION
 Deletes a registration record from the module's in-memory registration table and
-returns the removed record. Callers can target an entry by normalized key or by
-command target details, using the same key resolution rules as the other
-registration helpers.
+returns the removed record. Callers name the entry by a target or record, or by
+command target details. Every removal names the target kind, because a native
+target and a parameter target can share a Key; only the record of the named
+kind is removed.
 
-.PARAMETER Key
-The normalized or runtime key for the registration record to remove.
+.PARAMETER Target
+The completer target or registration record whose managed record to remove.
+It must expose Key and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name for the registration target.
@@ -6559,18 +5724,15 @@ Removes the managed registration record for a specific command parameter target
 and returns the record that was deleted from module state.
 #>
 function Remove-ManagedCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding(DefaultParameterSetName = 'Target')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper removes in-memory module state for higher-level callers.')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -6586,9 +5748,9 @@ function Remove-ManagedCompleterRegistration
     )
 
     $registrations = Get-ManagedCompleterRegistrationTable
-    $resolvedKey = switch ($PSCmdlet.ParameterSetName)
+    $removalTarget = switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey' { Get-CompleterRegistrationKey -RuntimeKey $Key }
+        'Target' { $Target }
         'Native'
         {
             if (-not $Native)
@@ -6596,18 +5758,20 @@ function Remove-ManagedCompleterRegistration
                 throw 'Native target resolution requires the -Native switch.'
             }
 
-            Get-CompleterRegistrationKey -CommandName $CommandName -Native
+            Resolve-CompleterTarget -CommandName $CommandName -Native
         }
-        'CommandParameter' { Get-CompleterRegistrationKey -CommandName $CommandName -ParameterName $ParameterName }
+        'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
     }
 
-    if (-not $registrations.Contains($resolvedKey))
+    $identity = Get-CompleterTargetIdentity -Target $removalTarget
+
+    if (-not $registrations.Contains($identity))
     {
         return
     }
 
-    $removedRegistration = $registrations[$resolvedKey]
-    $registrations.Remove($resolvedKey)
+    $removedRegistration = $registrations[$identity]
+    $registrations.Remove($identity)
 
     return $removedRegistration
 }
@@ -6619,16 +5783,18 @@ Removes a completer registration directly from the live PowerShell runtime.
 Targets the current session's runtime completer dictionaries and removes the
 matching discovered registration. Maintainers use this helper when internal
 module workflows need to reconcile or replace registrations that already exist
-in PowerShell's live runtime state.
+in PowerShell's live runtime state. Only the dictionary of the target's kind is
+touched, so removing a parameter target never removes a native entry that
+shares its key, and the reverse.
 
 This helper mutates dictionaries reached through PowerShell runtime internals,
 not a public management API. It is therefore intentionally private and should
 only be used from higher-level module operations that already understand the
 runtime caveats and session-scoped effects.
 
-.PARAMETER Key
-The normalized registration key used by the module to find the runtime entry to
-remove.
+.PARAMETER Target
+The completer target or registration record whose runtime entry to remove. It
+must expose RuntimeKey and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name that identifies the completer target to
@@ -6644,10 +5810,10 @@ Indicates that the target to remove is a native completer registration.
 CompleterActions.CompleterRegistration
 
 .EXAMPLE
-Remove-RuntimeCompleterRegistration -Key 'get-item:path'
+Remove-RuntimeCompleterRegistration -Target $registration
 
-Shows the maintainer-oriented path for removing a discovered registration by the
-module's normalized key.
+Removes the live runtime entry for the target of a registration record from
+the dictionary of that record's kind.
 
 .EXAMPLE
 Remove-RuntimeCompleterRegistration -CommandName git -Native
@@ -6662,18 +5828,15 @@ those internals, both the targeting logic and the runtime access helper may need
 to be updated together.
 #>
 function Remove-RuntimeCompleterRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding(DefaultParameterSetName = 'Target')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper removes entries from PowerShell runtime completer dictionaries for higher-level callers.')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -6690,67 +5853,49 @@ function Remove-RuntimeCompleterRegistration
 
     $runtime = $null
     $runtimeRegistration = $null
-    $target = $null
+    $removalTarget = $null
     $dictionary = $null
 
     try
     {
-        $runtime = Get-CompleterRuntime
-
-        if ($PSCmdlet.ParameterSetName -eq 'ByKey')
+        $removalTarget = switch ($PSCmdlet.ParameterSetName)
         {
-            $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $Key
+            'Target' { $Target }
+            'Native'
+            {
+                if (-not $Native)
+                {
+                    throw 'Native target resolution requires the -Native switch.'
+                }
 
-            if ($null -eq $runtimeRegistration)
-            {
-                return
+                Resolve-CompleterTarget -CommandName $CommandName -Native
             }
-
-            if ($runtimeRegistration.IsNative)
-            {
-                $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey -Native
-            }
-            else
-            {
-                $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey
-            }
-        }
-        elseif ($PSCmdlet.ParameterSetName -eq 'Native')
-        {
-            if (-not $Native)
-            {
-                throw 'Native target resolution requires the -Native switch.'
-            }
-
-            $target = Resolve-CompleterTarget -CommandName $CommandName -Native
-        }
-        else
-        {
-            $target = Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
+            'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
         }
 
-        $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+        $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $removalTarget
 
-        if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
+        if ($null -eq $runtimeRegistration)
         {
             return
         }
 
-        $removedScriptBlock = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey
-        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $removedScriptBlock -Source 'Discovered' -State Discovered
+        $runtime = Get-CompleterRuntime
+        $dictionary = if ($runtimeRegistration.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+        $null = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeRegistration.RuntimeKey
 
-        return $removedRegistration
+        return $runtimeRegistration
     }
     catch
     {
-        $targetDescription = if ($null -ne $target) { $target.RuntimeKey } elseif (-not [string]::IsNullOrWhiteSpace($Key)) { $Key } else { $CommandName }
+        $targetDescription = if ($null -ne $removalTarget) { $removalTarget.RuntimeKey } else { $CommandName }
         throw "Failed to remove the runtime completer registration '$targetDescription'. $($_.Exception.Message)"
     }
     finally
     {
         $runtime = $null
         $runtimeRegistration = $null
-        $target = $null
+        $removalTarget = $null
         $dictionary = $null
     }
 }
@@ -6784,9 +5929,6 @@ nothing was found), CanRun, and Warning (the not-found or not-run text, or
 null when the application may run).
 #>
 function Resolve-CompleterHelpProbeApplication
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -6864,9 +6006,25 @@ together with IsNative/Native. An input object describes one target, so a
 CommandName or ParameterName that holds several values is rejected rather
 than joined into one name. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
-A ScriptBlock, ImportModule,
-ScriptPath or SourcePath, and Trusted property are carried through when present
-so imported and managed records round-trip into Register-Completer.
+CommandName names a target exactly, and so does RuntimeKey, which wins when an
+object exposes several keys. Key and RegistrationKey are folded to lowercase,
+which can merge two names the runtime keeps apart, so an object that names its
+target only through one of them resolves through Resolve-CompleterKeyTarget:
+to the target of its kind whose runtime key is the key apart from case, with
+an error when a registered target of that kind has the key under a name the
+lowercasing merged into it.
+
+A ScriptBlock, ScriptPath or SourcePath, and Trusted property are carried
+through when present so imported and managed records round-trip into
+Register-Completer. An ImportModule property is ignored: the resolved
+ImportModule is the capture module Import-CompleterScript ran the script in,
+as Get-CompleterImportModule finds it for the script block, ScriptPath, and
+tier, and it is null for any script block the import did not emit.
+
+IsNative, Native, and Trusted take a Boolean, a number, where zero is false,
+or the text 'True' or 'False' in any casing, as Export-Csv writes a Boolean,
+and a null value or empty text counts as false. Any other text is rejected: a cast to Boolean would turn the text
+'False' into true and select the other kind of target, or the trusted tier.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -6885,9 +6043,6 @@ Resolves a completer registration object returned by Get-Completer
 into the normalized target metadata used by the module internals.
 #>
 function Resolve-CompleterInputObject
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -6900,9 +6055,40 @@ function Resolve-CompleterInputObject
         [switch] $RequireScriptBlock
     )
 
+    begin
+    {
+        function ConvertTo-InputObjectBoolean
+        {
+            param(
+                [string] $PropertyName,
+                [object] $Value
+            )
+
+            if ($Value -isnot [string])
+            {
+                return [bool] $Value
+            }
+
+            if ([string]::IsNullOrWhiteSpace($Value))
+            {
+                return $false
+            }
+
+            $parsedValue = $false
+
+            if (-not [bool]::TryParse($Value.Trim(), [ref] $parsedValue))
+            {
+                throw "InputObject supplies '$Value' for $PropertyName, which is not a Boolean value. Use True or False."
+            }
+
+            $parsedValue
+        }
+    }
+
     process
     {
         $keyValue = $null
+        $keyIsRuntimeKey = $false
         $commandName = $null
         $parameterName = $null
         $hasNativeIndicator = $false
@@ -6915,12 +6101,13 @@ function Resolve-CompleterInputObject
 
         try
         {
-            foreach ($propertyName in 'Key', 'RegistrationKey', 'RuntimeKey')
+            foreach ($propertyName in 'RuntimeKey', 'Key', 'RegistrationKey')
             {
                 $property = $InputObject.PSObject.Properties[$propertyName]
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                 {
                     $keyValue = [string] $property.Value
+                    $keyIsRuntimeKey = $propertyName -eq 'RuntimeKey'
                     break
                 }
             }
@@ -6952,7 +6139,7 @@ function Resolve-CompleterInputObject
                 if ($null -ne $property)
                 {
                     $hasNativeIndicator = $true
-                    $isNative = [bool] $property.Value
+                    $isNative = ConvertTo-InputObjectBoolean -PropertyName $propertyName -Value $property.Value
                     break
                 }
             }
@@ -6961,12 +6148,6 @@ function Resolve-CompleterInputObject
             if ($null -ne $scriptBlockProperty -and $scriptBlockProperty.Value -is [scriptblock])
             {
                 $scriptBlock = [scriptblock] $scriptBlockProperty.Value
-            }
-
-            $importModuleProperty = $InputObject.PSObject.Properties['ImportModule']
-            if ($null -ne $importModuleProperty -and $importModuleProperty.Value -is [System.Management.Automation.PSModuleInfo])
-            {
-                $importModule = [System.Management.Automation.PSModuleInfo] $importModuleProperty.Value
             }
 
             foreach ($propertyName in 'ScriptPath', 'SourcePath')
@@ -6982,13 +6163,15 @@ function Resolve-CompleterInputObject
             $trustedProperty = $InputObject.PSObject.Properties['Trusted']
             if ($null -ne $trustedProperty)
             {
-                $trusted = [bool] $trustedProperty.Value
+                $trusted = ConvertTo-InputObjectBoolean -PropertyName 'Trusted' -Value $trustedProperty.Value
             }
 
             if ($RequireScriptBlock -and $null -eq $scriptBlock)
             {
                 throw 'InputObject must expose a ScriptBlock property whose value is a script block.'
             }
+
+            $importModule = Get-CompleterImportModule -ScriptBlock $scriptBlock -ScriptPath $scriptPath -Trusted $trusted
 
             if (-not [string]::IsNullOrWhiteSpace($commandName))
             {
@@ -7012,7 +6195,11 @@ function Resolve-CompleterInputObject
                     throw "InputObject supplies the key '$keyValue' without an IsNative or Native property. Keys are output-only identifiers and are no longer classified by their shape: add IsNative or Native alongside the key, or supply CommandName with Native or ParameterName. See about_CompleterActions_Migration."
                 }
 
-                if ($isNative)
+                if (-not $keyIsRuntimeKey)
+                {
+                    $target = Resolve-CompleterKeyTarget -Key $keyValue -Native:$isNative
+                }
+                elseif ($isNative)
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
@@ -7043,6 +6230,7 @@ function Resolve-CompleterInputObject
         finally
         {
             $keyValue = $null
+            $keyIsRuntimeKey = $false
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
@@ -7055,6 +6243,113 @@ function Resolve-CompleterInputObject
 }
 <#
 .SYNOPSIS
+Resolves a Key or RegistrationKey of a given kind to the one target it can name.
+
+.DESCRIPTION
+A record's Key and RegistrationKey are its RuntimeKey folded to lowercase, and
+the folding merges names the runtime keeps apart: the Kelvin sign (U+212A)
+lowercases to the letter k, so 'Kelvin' spelled with it and 'kelvin' have one
+key but are two runtime entries. A key therefore names only the target whose
+runtime key is the key itself, compared ordinally ignoring case as the runtime
+compares it, and only while no other target could be meant. This helper looks
+for the targets of the given kind, in the managed table and in the runtime
+dictionary of that kind, whose RuntimeKey is the key compared that way or
+folds to the key. When one of them has a name the runtime keeps apart from the
+key, such as the Kelvin-sign spelling for the key 'kelvin', it throws rather
+than pick a target: that target and the one the key spells are both meant.
+Otherwise the key names the registered target with that name, keeping its
+spelling, even one the folding does not reach, such as a name spelled with the
+final sigma (U+03C2) for a key spelled with the sigma (U+03C3) the runtime
+takes for it, or the target the key spells when none is registered.
+
+.PARAMETER Key
+The folded key, such as a record's Key or RegistrationKey.
+
+.PARAMETER Native
+Resolves the key among native targets instead of parameter targets.
+
+.OUTPUTS
+CompleterActions.CompleterTarget
+
+.EXAMPLE
+PS> Resolve-CompleterKeyTarget -Key 'kelvin' -Native
+
+Returns the native target 'kelvin', and throws while a native target spelled
+with the Kelvin sign (U+212A) is registered, whether or not 'kelvin' is.
+#>
+function Resolve-CompleterKeyTarget
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch selects the kind of target the key is resolved among.')]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Key,
+
+        [Parameter()]
+        [switch] $Native
+    )
+
+    $foldedKey = $Key.ToLowerInvariant()
+    $runtime = Get-CompleterRuntime
+    $dictionary = if ($Native) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+    $candidateKeys = @(
+        if ($null -ne $dictionary)
+        {
+            $dictionary.Keys
+        }
+
+        foreach ($registration in @(Find-ManagedCompleterRegistration))
+        {
+            if ([bool] $registration.IsNative -eq [bool] $Native)
+            {
+                $registration.RuntimeKey
+            }
+        }
+    )
+
+    $matchingKeys = [System.Collections.Generic.List[string]]::new()
+    $seenKeys = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+    foreach ($candidateKey in $candidateKeys)
+    {
+        $runtimeKey = [string] $candidateKey
+
+        $isMatch = [string]::Equals($runtimeKey, $Key, [System.StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($runtimeKey.ToLowerInvariant(), $foldedKey, [System.StringComparison]::Ordinal)
+
+        if ($isMatch -and $seenKeys.Add($runtimeKey))
+        {
+            $matchingKeys.Add($runtimeKey)
+        }
+    }
+
+    $kind = if ($Native) { 'native' } else { 'parameter' }
+
+    $exactNaming = 'Supply RuntimeKey, or CommandName with IsNative or ParameterName, to name the target exactly.'
+
+    if ($matchingKeys.Count -gt 1)
+    {
+        throw "The key '$Key' belongs to $($matchingKeys.Count) registered $kind targets, $(@($matchingKeys | ForEach-Object { "'$_'" }) -join ', '), which differ in characters that lowercasing merges, so it cannot name one of them. $exactNaming"
+    }
+
+    if ($matchingKeys.Count -eq 1 -and -not [string]::Equals($matchingKeys[0], $Key, [System.StringComparison]::OrdinalIgnoreCase))
+    {
+        throw "The key '$Key' belongs to the registered $kind target '$($matchingKeys[0])', whose name differs from the key in characters that lowercasing merges, so the key could also name the $kind target '$Key'. $exactNaming"
+    }
+
+    $runtimeKey = if ($matchingKeys.Count -eq 1) { $matchingKeys[0] } else { $Key }
+
+    if ($Native)
+    {
+        return Resolve-CompleterTarget -RuntimeKey $runtimeKey -Native
+    }
+
+    return Resolve-CompleterTarget -RuntimeKey $runtimeKey
+}
+<#
+.SYNOPSIS
 Decides whether each of a batch of completer registrations can be written over the current managed and runtime state.
 
 .DESCRIPTION
@@ -7062,15 +6357,49 @@ Reconciles the records through one Resolve-CompleterRegistrationState pass,
 or through the states the caller already resolved for them, and applies the
 module's replacement rules in one place. Without -Force an existing managed
 record blocks a registration when it is stale, when its lazy load failed, or
-when it describes a different completer, and an unmanaged runtime
-registration blocks it as well. A managed record that already
-describes the same completer, the same script block text for an eager
-registration or the same script and tier for a lazy one, is reported as
-existing so the caller can reuse it. A record is lazy when its State is
-'Pending'.
+when it describes a different completer that does not come from a new
+instance of the module that registered it, and an unmanaged runtime
+registration blocks it as well. A managed record that already describes the
+same completer is reported as existing so the caller can reuse it. Script
+paths compare the way the file system does: ignoring case on Windows and
+macOS, and ordinally elsewhere, where two paths that differ only in case name
+two files.
+
+A record is imported when its script block is one Import-CompleterScript
+emitted for the record's ScriptPath under the record's tier, as
+Get-CompleterImportModule finds it in the table the import writes. Records
+that Import-CompleterScript emits and records a lazy load activated are
+imported. A record that only names a ScriptPath is not, and neither is one
+whose ImportModule property names the module its own script block is bound
+to, such as a closure of an imported block, or one whose script block a caller
+bound to the capture module: provenance comes from the module's table, never
+from a property or a binding the caller can set.
+
+A record is lazy when its State is 'Pending'. A lazy record describes the
+same completer as a managed record that loads, or already loaded, the same
+script under the same tier: a Pending record, or an imported record.
+
+An eager record describes the same completer when it holds the very same
+script block, or a script block with exactly the same text, compared case
+sensitively, with the same ScriptPath and tier, defined in the same file and
+bound to the same context. Two imported records of the same script are bound
+to the same context, so importing and registering the same script again stays
+a no-op although every import binds its script blocks to a new module. Any
+other two script blocks are bound to the same context when they are bound to
+the same module or to none. A closure is bound to a module of its own with a
+unique name, so two closures never match even when their text is identical,
+because they run with different captured values.
+
+A script block with that same text, ScriptPath, tier and file that is bound to
+another instance of a module with the same name, as when a module is imported
+again, comes from the module that owns the managed record. It is not the same
+completer, because the new instance holds its own state, so it is not reported
+as existing, but it is not a problem either: it replaces a live record from
+the earlier instance without -Force. A Stale or Failed record is checked
+first and still needs -Force.
 
 The records are resolved in order as if each earlier record of the same call
-had already been written: a later record for the same key sees the earlier
+had already been written: a later record for the same target sees the earlier
 one as the managed and runtime registration, so repeating a target within one
 call reuses or replaces the first registration exactly as two calls would.
 Register-Completer resolves one record at a time, after the
@@ -7104,9 +6433,6 @@ RuntimeRegistration, IsExisting (the managed record already describes this
 completer), and Problem (the message that blocks the registration, or null).
 #>
 function Resolve-CompleterRegistrationConflict
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -7136,20 +6462,31 @@ function Resolve-CompleterRegistrationConflict
 
     if (-not $PSBoundParameters.ContainsKey('RegistrationState'))
     {
-        $registrationStates = @(Resolve-CompleterRegistrationState -Key @($Registration | ForEach-Object { [string] $_.Key }) -Snapshot $Snapshot)
+        $registrationStates = @(Resolve-CompleterRegistrationState -Target $Registration -Snapshot $Snapshot)
+    }
+
+    function Test-ImportedCompleterRecord
+    {
+        param(
+            [psobject] $Record
+        )
+
+        $null -ne (Get-CompleterImportModule -ScriptBlock $Record.ScriptBlock -ScriptPath $Record.ScriptPath -Trusted ([bool] $Record.Trusted))
     }
 
     $plannedRegistrations = @{}
+    $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
     for ($index = 0; $index -lt $Registration.Count; $index++)
     {
         $registrationItem = $Registration[$index]
         $registrationState = $registrationStates[$index]
         $key = [string] $registrationItem.Key
+        $identity = Get-CompleterTargetIdentity -Target $registrationItem
 
-        if ($plannedRegistrations.Contains($key))
+        if ($plannedRegistrations.Contains($identity))
         {
-            $plannedRegistration = $plannedRegistrations[$key]
+            $plannedRegistration = $plannedRegistrations[$identity]
             $registrationState = [pscustomobject] [ordered] @{
                 Key                 = $key
                 ManagedRegistration = $plannedRegistration
@@ -7161,6 +6498,7 @@ function Resolve-CompleterRegistrationConflict
         $existingManagedRegistration = $registrationState.ManagedRegistration
         $existingRuntimeRegistration = $registrationState.RuntimeRegistration
         $isExisting = $false
+        $isNewModuleInstance = $false
         $problem = $null
 
         if (-not $Force)
@@ -7177,16 +6515,34 @@ function Resolve-CompleterRegistrationConflict
                 }
                 else
                 {
+                    $isSameScript = [string]::Equals($existingManagedRegistration.ScriptPath, $registrationItem.ScriptPath, $pathComparison) -and
+                        [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
+                    $isExistingImported = Test-ImportedCompleterRecord -Record $existingManagedRegistration
                     $isExisting = if ($registrationItem.State -eq 'Pending')
                     {
-                        $existingManagedRegistration.ScriptPath -eq $registrationItem.ScriptPath -and [bool] $existingManagedRegistration.Trusted -eq [bool] $registrationItem.Trusted
+                        $isSameScript -and ($existingManagedRegistration.State -eq 'Pending' -or $isExistingImported)
                     }
                     else
                     {
-                        $existingManagedRegistration.ScriptText -eq $registrationItem.ScriptText
+                        $existingScriptBlock = $existingManagedRegistration.ScriptBlock
+                        $newScriptBlock = $registrationItem.ScriptBlock
+                        $existingModule = $existingScriptBlock.Module
+                        $newModule = $newScriptBlock.Module
+                        $isSameDefinition = [string]::Equals($existingManagedRegistration.ScriptText, $registrationItem.ScriptText, [System.StringComparison]::Ordinal) -and
+                            $isSameScript -and
+                            [string]::Equals($existingScriptBlock.File, $newScriptBlock.File, $pathComparison)
+                        $isNewModuleInstance = $isSameDefinition -and
+                            $null -ne $existingModule -and $null -ne $newModule -and
+                            -not [object]::ReferenceEquals($existingModule, $newModule) -and
+                            [string]::Equals($existingModule.Name, $newModule.Name, [System.StringComparison]::OrdinalIgnoreCase)
+
+                        [object]::ReferenceEquals($existingScriptBlock, $newScriptBlock) -or (
+                            $isSameDefinition -and (
+                                ($isExistingImported -and (Test-ImportedCompleterRecord -Record $registrationItem)) -or
+                                [object]::ReferenceEquals($existingModule, $newModule)))
                     }
 
-                    if (-not $isExisting)
+                    if (-not $isExisting -and -not $isNewModuleInstance)
                     {
                         $problem = "A module-managed completer registration already exists for '$($registrationItem.RuntimeKey)'. Use -Force to replace it."
                     }
@@ -7200,7 +6556,7 @@ function Resolve-CompleterRegistrationConflict
 
         if ($null -eq $problem)
         {
-            $plannedRegistrations[$key] = if ($isExisting) { $existingManagedRegistration } else { $registrationItem }
+            $plannedRegistrations[$identity] = if ($isExisting) { $existingManagedRegistration } else { $registrationItem }
         }
 
         [pscustomobject] [ordered] @{
@@ -7218,25 +6574,35 @@ Reconciles managed registration records with the live runtime values for one or 
 
 .DESCRIPTION
 Looks up both the module-managed record and the live runtime registration for
-each normalized key and reports whether the managed record still describes
-what PowerShell is actually using. A managed record is authoritative only
-while the runtime holds the same script block, or a script block with
-identical text; it is reported as 'Pending' when that script block is still a
-lazy stub and 'Active' otherwise. A managed record whose lazy load failed is
-reported as 'Failed' regardless of the runtime, because its runtime entry was
-removed on purpose. When the runtime value was replaced or removed outside
-this module, the managed record is reported as stale so public commands can
+each target and reports whether the managed record still describes what
+PowerShell is actually using. A target is identified by its Key together with
+its kind: a native target is looked up only in the native runtime dictionary
+and a parameter target only in the custom one, and the managed record is
+found by Get-CompleterTargetIdentity, so a native command named
+'Get-Thing:Name' and the parameter target Get-Thing / Name never resolve to
+each other's registrations.
+
+A managed record is authoritative only while the runtime holds the very same
+script block object. Equal text is not ownership: two closures with the same
+text run with different captured values, and text that differs only in case
+can complete differently. The record is reported as 'Pending' when that
+script block is still a lazy stub and 'Active' otherwise. A managed record
+whose lazy load failed is reported as 'Failed' regardless of the runtime,
+because its runtime entry was removed on purpose. When the runtime value was
+replaced, even by a script block with the same text, or removed outside this
+module, the managed record is reported as stale so public commands can
 surface the live value, refuse silent reuse, and apply the unmanaged-removal
 gate.
 
-Every key is resolved against one snapshot of the managed table and the
-runtime dictionaries, the one passed in or one taken here, so a batch of keys
-costs a single runtime read. Discovered runtime values keep the key casing the
-dictionary stores, native entries win over parameter entries with the same
-key, and the states come back in the order of the keys.
+Every target is resolved against one snapshot of the managed table and the
+runtime dictionaries, the one passed in or one taken here, so a batch of
+targets costs a single runtime read. Discovered runtime values keep the key
+casing the dictionary stores, and the states come back in the order of the
+targets.
 
-.PARAMETER Key
-The normalized or runtime keys for the completer targets to reconcile.
+.PARAMETER Target
+The completer targets or registration records to reconcile. Each must expose
+Key, RuntimeKey, and IsNative.
 
 .PARAMETER Snapshot
 A CompleterActions.CompleterRegistrationSnapshot to resolve against. When it is
@@ -7244,33 +6610,30 @@ omitted the helper takes one for this call.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-Returns one object per key, in order, with ManagedRegistration,
-RuntimeRegistration, and ManagedState ('None', 'Active', 'Pending', 'Failed',
-or 'Stale') properties. The registration properties hold the exact stored
-objects so callers can restore them unchanged.
+Returns one object per target, in order, with Key (the target's Key),
+ManagedRegistration, RuntimeRegistration, and ManagedState ('None', 'Active',
+'Pending', 'Failed', or 'Stale') properties. The registration properties hold
+the exact stored objects so callers can restore them unchanged.
 
 .EXAMPLE
-PS> $state = Resolve-CompleterRegistrationState -Key 'get-item:path'
+PS> $state = Resolve-CompleterRegistrationState -Target (Resolve-CompleterTarget -CommandName 'Get-Item' -ParameterName 'Path')
 
 Retrieves the managed and runtime records for a target and reports whether the
 managed record still matches the live runtime registration.
 
 .EXAMPLE
-PS> $states = Resolve-CompleterRegistrationState -Key $targets.Key -Snapshot $snapshot
+PS> $states = Resolve-CompleterRegistrationState -Target $registrations -Snapshot $snapshot
 
-Reconciles every target of a batch against one snapshot of the session.
+Reconciles every record of a batch against one snapshot of the session.
 #>
 function Resolve-CompleterRegistrationState
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [psobject[]] $Target,
 
         [Parameter()]
         [psobject] $Snapshot
@@ -7281,22 +6644,23 @@ function Resolve-CompleterRegistrationState
         $Snapshot = Get-CompleterRegistrationSnapshot
     }
 
-    foreach ($keyItem in $Key)
+    foreach ($targetItem in $Target)
     {
-        $normalizedKey = $keyItem.ToLowerInvariant()
-        $managedRegistration = if ($Snapshot.Managed.Contains($normalizedKey)) { $Snapshot.Managed[$normalizedKey] } else { $null }
+        $identity = Get-CompleterTargetIdentity -Target $targetItem
+        $isNative = [bool] $targetItem.IsNative
+        $managedRegistration = if ($Snapshot.Managed.Contains($identity)) { $Snapshot.Managed[$identity] } else { $null }
         $runtimeRegistration = $null
 
         foreach ($view in $Snapshot.Runtime)
         {
-            if (-not $view.Keys.ContainsKey($normalizedKey))
+            if ([bool] $view.IsNative -ne $isNative -or -not $view.Keys.ContainsKey([string] $targetItem.RuntimeKey))
             {
                 continue
             }
 
-            $storedKey = $view.Keys[$normalizedKey]
-            $target = if ($view.IsNative) { Resolve-CompleterTarget -RuntimeKey $storedKey -Native } else { Resolve-CompleterTarget -RuntimeKey $storedKey }
-            $runtimeRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $view.Dictionary -Key $storedKey) -Source 'Discovered' -State Discovered
+            $storedKey = $view.Keys[[string] $targetItem.RuntimeKey]
+            $storedTarget = if ($isNative) { Resolve-CompleterTarget -RuntimeKey $storedKey -Native } else { Resolve-CompleterTarget -RuntimeKey $storedKey }
+            $runtimeRegistration = New-CompleterRegistrationRecord -Target $storedTarget -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $view.Dictionary -Key $storedKey) -Source 'Discovered' -State Discovered
             break
         }
 
@@ -7308,9 +6672,7 @@ function Resolve-CompleterRegistrationState
         {
             'Failed'
         }
-        elseif ($null -ne $runtimeRegistration -and
-            ([object]::ReferenceEquals($managedRegistration.ScriptBlock, $runtimeRegistration.ScriptBlock) -or
-                $managedRegistration.ScriptText -eq $runtimeRegistration.ScriptText))
+        elseif ($null -ne $runtimeRegistration -and [object]::ReferenceEquals($managedRegistration.ScriptBlock, $runtimeRegistration.ScriptBlock))
         {
             if ($managedRegistration.State -eq 'Pending') { 'Pending' } else { 'Active' }
         }
@@ -7320,7 +6682,7 @@ function Resolve-CompleterRegistrationState
         }
 
         [pscustomobject] [ordered] @{
-            Key                 = $keyItem
+            Key                 = $targetItem.Key
             ManagedRegistration = $managedRegistration
             RuntimeRegistration = $runtimeRegistration
             ManagedState        = $managedState
@@ -7348,9 +6710,6 @@ exposed for internal testing of compatibility guards.
 System.Object
 #>
 function Resolve-CompleterRuntimeExecutionContext
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([object])]
@@ -7393,9 +6752,6 @@ One or more literal paths to completer script files. Wildcards are not expanded.
 System.String
 #>
 function Resolve-CompleterScriptPath
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding(DefaultParameterSetName = 'Path')]
     [OutputType([string])]
@@ -7463,7 +6819,9 @@ entry and the file system, never the session's registrations, so its result
 does not depend on what is registered. A Path that is not fully qualified, a
 drive-relative form such as C:scripts\x.ps1 included, resolves against the
 set file's directory rather than the current location. Trusted defaults to
-false. Trusted entries must declare Targets because the script is not parsed.
+false. Trusted, and a target's Native, must be $true or $false: text or a
+number is an InvalidEntry problem rather than read as one kind or the other.
+Trusted entries must declare Targets because the script is not parsed.
 Strict entries must register their targets with literal arguments so the
 targets can be derived from the parsed script and, when the entry also
 declares Targets, the two lists must match. Without -Verify the strict import
@@ -7534,9 +6892,6 @@ text would otherwise hash as a change), and DerivedTargets, the targets the pars
 empty for a trusted entry or a failed parse.
 #>
 function Resolve-CompleterSetEntry
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -7656,9 +7011,18 @@ function Resolve-CompleterSetEntry
                         continue
                     }
 
+                    # Native decides the target's kind, so it is held to a Boolean as
+                    # Trusted is: comparing it with $true would read the text 'True' and
+                    # the number 1 as native, and 'False' or 'nope' as a parameter target.
+                    if ($targetEntry.Contains('Native') -and $targetEntry['Native'] -isnot [bool])
+                    {
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = "Target '$commandName' must set Native to `$true or `$false." })
+                        continue
+                    }
+
                     try
                     {
-                        if ($targetEntry.Contains('Native') -and $targetEntry['Native'] -eq $true)
+                        if ($targetEntry.Contains('Native') -and $targetEntry['Native'])
                         {
                             Resolve-CompleterTarget -CommandName $commandName -Native
                         }
@@ -7740,11 +7104,11 @@ function Resolve-CompleterSetEntry
             {
                 $targetSource = 'Hash'
                 $resolutionNote = 'hash matches; targets read from the set.'
-                $seenKeys = [System.Collections.Generic.HashSet[string]]::new()
+                $seenTargets = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
                 $targets = @(
                     foreach ($declaredTarget in $declaredTargets)
                     {
-                        if ($seenKeys.Add([string] $declaredTarget.Key))
+                        if ($seenTargets.Add((Get-CompleterTargetIdentity -Target $declaredTarget)))
                         {
                             $declaredTarget
                         }
@@ -7790,9 +7154,14 @@ function Resolve-CompleterSetEntry
                 }
                 else
                 {
-                    $declaredKeys = @($declaredTargets | ForEach-Object { [string] $_.Key })
-                    $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
-                    $mismatch = @($declaredKeys | Where-Object { $_ -notin $derivedKeys }).Count -gt 0 -or @($derivedKeys | Where-Object { $_ -notin $declaredKeys }).Count -gt 0
+                    $declaredIdentities = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+
+                    foreach ($declaredTarget in $declaredTargets)
+                    {
+                        $null = $declaredIdentities.Add((Get-CompleterTargetIdentity -Target $declaredTarget))
+                    }
+
+                    $mismatch = -not $declaredIdentities.SetEquals([string[]] @($derivedTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ }))
 
                     if ($mismatch)
                     {
@@ -7852,10 +7221,12 @@ within it the highest version wins, and the unversioned layout is used only
 when the root has no versioned candidate. The chosen module is never replaced
 by a lower version, even when its set declaration is broken.
 
-Manifests are read with Import-PowerShellDataFile, as data only, so nothing in
-the package runs. PrivateData.CompleterSet must name a .psd1 file in a folder
-directly below ModuleBase, with / or \ as the separator, and the file must
-exist. A failure throws the bare reason; the caller adds its own prefix.
+Manifests are read by Import-CompleterDataFile, as data only, so nothing in
+the package runs, and under the set file limit, so a manifest larger than
+128 KB is refused before it is parsed. PrivateData.CompleterSet must name
+a .psd1 file in a folder directly below ModuleBase, with / or \ as the
+separator, and the file must exist. A failure throws the bare reason; the
+caller adds its own prefix.
 
 .PARAMETER Name
 The module name, taken literally.
@@ -7869,9 +7240,6 @@ the unversioned layout), ManifestPath, Manifest (the manifest's data), and
 SetPath (the full path of the set file).
 #>
 function Resolve-CompleterSetModule
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -7907,6 +7275,20 @@ function Resolve-CompleterSetModule
         {
             @(& $sortOrdinal $manifestPaths)[0]
         }
+    }
+
+    $readManifest = {
+        param([string] $ManifestPath)
+
+        $fullPath = [System.IO.Path]::GetFullPath($ManifestPath)
+        $manifestFile = Import-CompleterDataFile -LiteralPath $fullPath
+
+        if ($manifestFile.OverLimit)
+        {
+            throw "The module manifest '$fullPath' is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files and their module manifests."
+        }
+
+        $manifestFile.Data
     }
 
     $chosen = $null
@@ -7961,7 +7343,7 @@ function Resolve-CompleterSetModule
                 continue
             }
 
-            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+            $manifest = & $readManifest $manifestPath
             $manifestVersion = $null
 
             if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion) -and $manifestVersion -eq $versionFolder.FolderVersion)
@@ -7980,7 +7362,7 @@ function Resolve-CompleterSetModule
 
                 if ($null -ne $manifestPath)
                 {
-                    $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+                    $manifest = & $readManifest $manifestPath
                     $chosen = @{ Name = $moduleName; ModuleBase = $moduleFolder; ManifestPath = $manifestPath; Manifest = $manifest }
                     break
                 }
@@ -8097,9 +7479,6 @@ Returns each entry record, in set order, with Registrations, the Conflicts
 resolved for them in the same order, Problems, and IsValid.
 #>
 function Resolve-CompleterSetRegistration
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -8117,14 +7496,14 @@ function Resolve-CompleterSetRegistration
     )
 
     $entryRegistrations = [System.Collections.Generic.List[object]]::new()
-    $keys = [System.Collections.Generic.List[string]]::new()
+    $setRegistrations = [System.Collections.Generic.List[psobject]]::new()
 
     foreach ($entryItem in $Entry)
     {
         $registrations = @(
             foreach ($target in @($entryItem.Targets))
             {
-                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
+                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.RuntimeKey -Native:$target.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
             }
         )
 
@@ -8132,15 +7511,15 @@ function Resolve-CompleterSetRegistration
 
         foreach ($registration in $registrations)
         {
-            $keys.Add([string] $registration.Key)
+            $setRegistrations.Add($registration)
         }
     }
 
     $registrationStates = @()
 
-    if ($keys.Count -gt 0)
+    if ($setRegistrations.Count -gt 0)
     {
-        $registrationStates = @(Resolve-CompleterRegistrationState -Key $keys.ToArray() -Snapshot $Snapshot)
+        $registrationStates = @(Resolve-CompleterRegistrationState -Target $setRegistrations.ToArray() -Snapshot $Snapshot)
     }
 
     $claimedTargets = @{}
@@ -8167,26 +7546,29 @@ function Resolve-CompleterSetRegistration
             $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -RegistrationState $stateSlice -Force:$Force)
         }
 
+        $targetIdentities = @($targets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
         for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
         {
             $target = $targets[$targetIndex]
+            $targetIdentity = $targetIdentities[$targetIndex]
 
             if ($null -ne $conflicts[$targetIndex].Problem)
             {
                 $problems.Add(@{ Kind = 'Conflict'; Message = $conflicts[$targetIndex].Problem })
             }
 
-            if ($claimedTargets.Contains([string] $target.Key))
+            if ($claimedTargets.Contains($targetIdentity))
             {
-                $problems.Add(@{ Kind = 'DuplicateTarget'; Message = "Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." })
+                $problems.Add(@{ Kind = 'DuplicateTarget'; Message = "Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." })
             }
         }
 
         if ($problems.Count -eq 0)
         {
-            foreach ($target in $targets)
+            foreach ($targetIdentity in $targetIdentities)
             {
-                $claimedTargets[[string] $target.Key] = $entryItem.Index
+                $claimedTargets[$targetIdentity] = $entryItem.Index
             }
         }
 
@@ -8249,9 +7631,6 @@ those runtime conventions change, update this parser and the related runtime
 helpers together.
 #>
 function Resolve-CompleterTarget
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding(DefaultParameterSetName = 'CommandParameter')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to select native-specific parameter sets and to derive the target kind.')]
@@ -8365,9 +7744,6 @@ Indicates that the targets refer to native completers.
 CompleterActions.CompleterTarget
 #>
 function Resolve-CompleterTargetList
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -8456,9 +7832,6 @@ Overwrites an existing file at the path.
 System.IO.FileInfo
 #>
 function Save-CompleterScriptFile
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([System.IO.FileInfo])]
@@ -8549,9 +7922,6 @@ function Save-CompleterScriptFile
 Sets a value in a runtime completer dictionary by key.
 #>
 function Set-CompleterRuntimeDictionaryValue
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only mutates in-memory runtime dictionary instances for higher-level callers.')]
@@ -8614,9 +7984,6 @@ Returns $true because the key came from Register-ArgumentCompleter
 -ParameterName ComputerName without a command name.
 #>
 function Test-CompleterParameterOnlyKey
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -8633,9 +8000,6 @@ function Test-CompleterParameterOnlyKey
 Tests whether a runtime completer dictionary contains a key.
 #>
 function Test-CompleterRuntimeDictionaryKey
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -8679,9 +8043,6 @@ The source path recorded on each finding.
 CompleterActions.CompleterScriptFinding
 #>
 function Test-CompleterScriptAst
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
@@ -8729,9 +8090,6 @@ The Hash value read from a set entry.
 System.Boolean
 #>
 function Test-CompleterSetHashFormat
-<#
-.EXTERNALHELP CompleterActions-help.xml
-#>
 {
     [CmdletBinding()]
     [OutputType([bool])]
@@ -8747,5 +8105,7 @@ function Test-CompleterSetHashFormat
 # Import-time work shared by the source root module and the packaged module.
 Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
-$script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
+$script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$script:CompleterImportedScriptBlocks = [System.Runtime.CompilerServices.ConditionalWeakTable[scriptblock, psobject]]::new()
 $script:CompleterHelpProbeTimeoutSeconds = 5
+$script:CompleterSetMaxFileBytes = 128KB
