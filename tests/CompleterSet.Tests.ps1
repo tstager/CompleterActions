@@ -2571,13 +2571,23 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             (Get-Item -LiteralPath $script:SetPath).Length | Should -BeGreaterThan $setBytes -Because 'the set was rewritten over the limit after it was read'
         }
 
-        It 'returns a script block in a set as a value and never runs it' {
+        It 'returns a script block literal in a set past the default limits as a value and never runs it' {
+            # A guard for the lifted limits, not a regression test: the default reader also returns a script block
+            # literal as a value. The literal sits past the default limits, where only the lifted read reaches it,
+            # and must still come back as a value that nothing runs.
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
             $probe = "{ New-Item -ItemType File -Path '$probePath' }"
-            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = $probe; Trusted = $probe; Targets = @( @{ CommandName = $probe; Native = $probe } ) }"
+            Write-TestCompleterSet -Path $script:SetPath -Entry ($script:LargeSetFillerEntries + "@{ Path = $probe; Trusted = $probe; Targets = @( @{ CommandName = $probe; Native = $probe } ) }")
+            { Import-PowerShellDataFile -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*' -Because 'the script block must sit past the default limits'
 
-            & (Get-Module -Name 'CompleterActions') { param($LiteralPath) (Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries[0]['Path'] } $script:SetPath | Should -BeOfType [scriptblock]
-            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*has 1 invalid entry and nothing was registered*'
+            $entry = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) (Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries[-1] } $script:SetPath
+
+            foreach ($value in $entry['Path'], $entry['Trusted'], $entry['Targets'][0]['CommandName'], $entry['Targets'][0]['Native'])
+            {
+                $value | Should -BeOfType [scriptblock]
+            }
+
+            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*has 1001 invalid entries and nothing was registered*'
             Test-CompleterSet -LiteralPath $script:SetPath | Should -Not -BeNullOrEmpty
 
             Test-Path -LiteralPath $probePath | Should -BeFalse
