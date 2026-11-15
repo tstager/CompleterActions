@@ -654,5 +654,42 @@ Register-ArgumentCompleter -Native -CommandName '$quotedTarget' -ScriptBlock {
             @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
             (Get-Completer -CommandName $targetName -Native).State | Should -Be 'Active'
         }
+
+        It 'keeps a target name that would end the stub''s literal at U+2019 inside it and never runs it' {
+            $quote = [string] [char] 0x2019
+            # An argument's subexpression runs before its command, so a stub whose literal ended at the first
+            # U+2019 would set the probe variable on the first completion.
+            $targetName = 'lazy{0} $(set-variable -name calazystubprobe -value 1 -scope global) {0}quote' -f $quote
+            $quotedTarget = $targetName.Replace($quote, $quote + $quote)
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyQuoteInjection.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
+Register-ArgumentCompleter -Native -CommandName '$quotedTarget' -ScriptBlock {
+    param(`$wordToComplete, `$commandAst, `$cursorPosition)
+
+    `$null = `$wordToComplete, `$commandAst, `$cursorPosition
+
+    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+}
+"@
+
+            try
+            {
+                $record = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+
+                $record.Key | Should -BeExactly $targetName
+
+                $inputScript = "& '$quotedTarget' a"
+                $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+
+                Get-Variable -Name 'calazystubprobe' -Scope Global -ErrorAction SilentlyContinue | Should -BeNullOrEmpty
+                @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+                (Get-Completer -CommandName $targetName -Native).State | Should -Be 'Active'
+            }
+            finally
+            {
+                Invoke-TestRuntimeCompleterCleanup -CommandName $targetName -CompleterType 'Native'
+                Remove-Variable -Name 'calazystubprobe' -Scope Global -ErrorAction SilentlyContinue
+            }
+        }
     }
 }
