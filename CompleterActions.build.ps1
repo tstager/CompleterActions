@@ -324,7 +324,9 @@ task build clean, compile, external_help, {
                 param($ManifestPath, $CommandNames, $HelpFileName)
 
                 $ErrorActionPreference = 'Stop'
-                $module = Import-Module -Name $ManifestPath -PassThru
+                # Host text the package writes while it loads comes back to the build as output, which would read as
+                # a finding, so the import discards the information stream.
+                $module = Import-Module -Name $ManifestPath -PassThru 6>$null
 
                 foreach ($name in $CommandNames) {
                     $command = $module.ExportedFunctions[$name]

@@ -2309,6 +2309,27 @@ Describe 'Packaged command help' {
         $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
         $buildOutput | Should -Match "'Reset-Completer' is defined at [^'\r\n]*CompleterActions\.psm1:\d+"
     }
+
+    It 'builds a package that writes to the host while it loads' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # The import check reads what its pwsh returns, and host text comes back with it; that text is no finding.
+        $stagingRoot = New-TestBuildStage -Name 'host'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "Write-Host 'build probe host text'", "Write-Information 'build probe information' -InformationAction Continue"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Be 0 -Because $buildOutput
+    }
 }
 
 Describe 'Startup benchmark tool' {
