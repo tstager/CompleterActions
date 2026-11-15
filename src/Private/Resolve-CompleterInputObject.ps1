@@ -15,19 +15,20 @@ CommandName names a target exactly, and so does RuntimeKey, which wins when an
 object exposes several keys. Key and RegistrationKey are folded to lowercase,
 which can merge two names the runtime keeps apart, so an object that names its
 target only through one of them resolves through Resolve-CompleterKeyTarget:
-to the registered target of its kind whose key it is, with an error when the
-key belongs to more than one.
+to the target of its kind whose runtime key is the key apart from case, with
+an error when a registered target of that kind has the key under a name the
+lowercasing merged into it.
 
 A ScriptBlock, ScriptPath or SourcePath, and Trusted property are carried
 through when present so imported and managed records round-trip into
 Register-Completer. An ImportModule property is ignored: the resolved
 ImportModule is the capture module Import-CompleterScript ran the script in,
 as Get-CompleterImportModule finds it for the script block, ScriptPath, and
-tier, and it is null for any other script block.
+tier, and it is null for any script block the import did not emit.
 
-IsNative, Native, and Trusted take a Boolean, a number, or the text 'True' or
-'False' in any casing, as Export-Csv writes a Boolean, and empty text counts
-as false. Any other text is rejected: a cast to Boolean would turn the text
+IsNative, Native, and Trusted take a Boolean, a number, where zero is false,
+or the text 'True' or 'False' in any casing, as Export-Csv writes a Boolean,
+and a null value or empty text counts as false. Any other text is rejected: a cast to Boolean would turn the text
 'False' into true and select the other kind of target, or the trusted tier.
 
 .PARAMETER InputObject

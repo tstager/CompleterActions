@@ -185,8 +185,10 @@ OUTPUT OBJECTS
       folding merges names PowerShell keeps apart, such as one spelled with
       the Kelvin sign (U+212A) and one with the letter K. An object piped to
       a CompleterActions command that names its target only by `Key` or
-      `RegistrationKey` resolves to the registered target of its kind whose
-      key it is, and is refused when the key belongs to more than one.
+      `RegistrationKey` names the target whose runtime key is that key,
+      apart from letter case, and is refused while a registered target of
+      its kind has the key under a name that the lowercasing merged into it,
+      such as the Kelvin-sign spelling for a key with the letter k.
 
     - `RuntimeKey`
       The target key as PowerShell runtime registration logic expects it.
@@ -224,15 +226,22 @@ OUTPUT OBJECTS
       The script block text, which is useful for inspection and debugging.
 
     - `ImportModule`
-      The capture module the script ran in. The module also records that
-      capture module, with the script's path and tier, when it creates it,
-      and `Register-Completer` recognises an imported script block by that
-      record alone, never by the `ImportModule`, `SourcePath`, or `Trusted`
-      property of the object you pipe to it. Importing and registering the
-      same script again under the same tier is therefore a no-op, while a
-      script block that is not the import's own, such as a closure made from
-      it with `GetNewClosure()`, is a different completer and replaces the
-      registration only with `-Force`.
+      The capture module the script ran in. The module also records every
+      script block the import emits, with that capture module and the
+      script's path and tier, and `Register-Completer` recognises an
+      imported script block by that record of the block object alone, never
+      by the `ImportModule`, `SourcePath`, or `Trusted` property of the
+      object you pipe to it or by the module a block is bound to. Importing
+      and registering the same script again under the same tier is
+      therefore a no-op. Any other script block, such as a closure made from
+      an imported one with `GetNewClosure()` or a new block bound to the
+      capture module, is compared by its own text, file, and module
+      instance, as `Get-Help Register-Completer` describes, and never counts
+      as imported. A closure is bound to a module of its own, so it is a
+      different completer and replaces the registration only with `-Force`.
+      Every capture module has a name of its own, so the exception
+      `Register-Completer` makes for a new instance of a module with the same
+      name never applies to it.
 
 SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 

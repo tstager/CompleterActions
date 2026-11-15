@@ -33,9 +33,11 @@ objects expose CommandName with IsNative/Native or ParameterName, or a Key,
 RegistrationKey, or RuntimeKey together with IsNative/Native.
 CommandName, or RuntimeKey, names the target exactly. Key and
 RegistrationKey are folded to lowercase, so an object that has only one of
-them names the registered target of its kind whose key it is, and it is
-rejected when the key belongs to more than one registered target, such as two
-names that differ only in a Kelvin sign (U+212A) and a letter K.
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be removed.

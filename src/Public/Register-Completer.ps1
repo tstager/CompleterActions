@@ -7,7 +7,7 @@ Registers native or command-parameter argument completers with
 Register-ArgumentCompleter and records the registrations in the module's managed
 state. Existing managed or runtime registrations are preserved unless you use
 -Force to replace them. The one exception is a script block from a new
-instance of the module that registered the managed record, which replaces
+instance of the module that registered a live managed record, which replaces
 that record without -Force, as described below.
 
 Registering the same completer again for a target that is already managed is a
@@ -22,11 +22,12 @@ when it is that very script block, or when its text is exactly the same,
 compared case sensitively, and it is bound to the same context. For the
 records Import-CompleterScript emits, the context is the script file and its
 tier, so importing and registering the same script again stays a no-op. The
-module recognises an imported script block by the capture module it recorded
-when Import-CompleterScript ran that script under that tier. A ScriptPath,
-SourcePath, or ImportModule property on an input object does not vouch for
-its script block, so any other script block, a closure of an imported one
-included, is compared by its own context. Only the completer's own text is
+module recognises an imported script block as one of the very script block
+objects Import-CompleterScript emitted for that script under that tier. A
+ScriptPath, SourcePath, or ImportModule property on an input object does
+not vouch for its script block, and neither does binding a new script block
+to the capture module, so any other script block, a closure of an imported
+one included, is compared by its own context. Only the completer's own text is
 compared, so after you edit other code in the script, such as a value it sets
 at the top, register it again with -Force to pick up the change. Script paths
 compare the way the file system does: ignoring case on Windows and macOS, and
@@ -40,15 +41,16 @@ one needs -Force.
 A script block bound to a different instance of a module with the same name,
 as after Import-Module -Force or from a second New-Module with that name, is
 not the same completer, because the new instance holds its own state, but it
-comes from the module that owns the managed record. When its text, compared
-case sensitively, the file that defines it, its ScriptPath, and its tier all
-equal the managed record's, it replaces the managed record and the runtime
-script block without -Force, so completion runs in the module that is loaded
-now. That holds even when the module is imported again with the same
-arguments: the registration replaces the record instead of being a no-op, and
--PassThru returns the new record. A script block from a module with another
-name, or one that differs in text, file, ScriptPath, or tier, still needs
--Force.
+comes from the module that owns the managed record. While that record is
+live, and when the block's text, compared case sensitively, the file that
+defines it, its ScriptPath, and its tier all equal the managed record's, it
+replaces the managed record and the runtime script block without -Force, so
+completion runs in the module that is loaded now. That holds even when the
+module is imported again with the same arguments: the registration replaces
+the record instead of being a no-op, and -PassThru returns the new record. A
+script block from a module with another name, or one that differs in text,
+file, ScriptPath, or tier, still needs -Force, and so does any registration
+over a stale record or a Failed lazy record.
 
 A target is its kind and its runtime key, the name PowerShell stores the
 completer under, compared ordinally ignoring case as PowerShell compares it. A
@@ -77,8 +79,9 @@ script that no longer conforms by then moves to 'Failed'. With -Trusted the
 script is dot-sourced as-is on first use and cannot be parsed safely, so the
 targets must be supplied with -CommandName and -Native or -ParameterName.
 Registering the script lazily again under the same tier is a no-op while the
-managed record is Pending for that script or holds what the script imported;
-a record that only names the script's path is replaced only with -Force.
+managed record is Pending for that script or holds a script block
+Import-CompleterScript emitted for that script under that tier; over any
+other record, one that only names the script's path included, it needs -Force.
 
 If the script fails to load on the first tab press, the press returns no
 completions, the runtime entry is removed so the completion engine's default
@@ -98,15 +101,18 @@ indicator is rejected; keys are output-only identifiers and are never
 classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record. IsNative, Native, and Trusted take a Boolean
-value or the text 'True' or 'False' in any letter case, as Export-Csv writes a
-Boolean. Empty text counts as False, and any other text is rejected.
+value, a number, where zero is False, or the text 'True' or 'False' in any
+letter case, as Export-Csv writes a Boolean. A null value or empty text counts
+as False, and any other text is rejected.
 An ImportModule property is ignored: the managed record's ImportModule is the
 capture module Import-CompleterScript ran the script in, and only for a script
-block the import bound to it. CommandName, or RuntimeKey, names the target
+block the import emitted. CommandName, or RuntimeKey, names the target
 exactly. Key and RegistrationKey are folded to lowercase, so an object that
-has only one of them names the registered target of its kind whose key it is,
-and it is rejected when the key belongs to more than one registered target,
-such as two names that differ only in a Kelvin sign (U+212A) and a letter K.
+has only one of them names the target whose runtime key is that key, apart
+from letter case, whether or not it is registered. Such an object is rejected
+while a registered target of its kind has the key under a name that the
+lowercasing merged into it, such as a name spelled with the Kelvin sign
+(U+212A) for a key spelled with the letter k.
 
 .PARAMETER CommandName
 Specifies one or more command names whose completers should be registered.
@@ -151,11 +157,13 @@ Replaces an existing managed or runtime registration for the same target with
 the new completer, including a stale managed record whose live runtime value was
 changed outside this module and a Failed lazy record whose load should be
 retried; Reset-Completer retries that load without registering it again.
-A script block from a new instance of the module that registered the managed
-record replaces it without -Force; see the description.
+A script block from a new instance of the module that registered a live
+managed record replaces it without -Force; see the description.
 
 .PARAMETER PassThru
-Returns the managed registration records that were created or reused.
+Returns the managed registration records that were created or reused. A
+reused record keeps its own ScriptPath and Trusted values; those of the input
+are not applied to it.
 
 .OUTPUTS
 CompleterActions.CompleterRegistration
