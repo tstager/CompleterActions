@@ -49,7 +49,7 @@ Documented behaviour changes:
 - `-InputObject @($null, $record)` now exports the record instead of failing parameter binding.
 - A script block from a new instance of a module with the same name, after `Import-Module -Force` or a second `New-Module`, replaces a live managed record with the same text, file, `ScriptPath`, and tier without `-Force`.
 - A block with the managed record's text but another module, another file, or a closure's own module now needs `-Force`; before, the first block was silently kept. `Register-Completer -Lazy` over an Active record that the script's own import did not create needs `-Force` too.
-- `IsNative`, `Native`, and `Trusted` text is read as `True` or `False` in any letter case, and other text is refused; the `False` that `Export-Csv` writes was cast to True before. A set file target's `Native` must be `$true` or `$false`, so `$null` there is now an `InvalidEntry`.
+- `IsNative`, `Native`, and `Trusted` text is read as `True` or `False` in any letter case, with or without white space around it, text that is empty or only white space is `False`, and other text is refused; the `False` that `Export-Csv` writes was cast to True before. A set file target's `Native` must be `$true` or `$false`, so `$null` there is now an `InvalidEntry`.
 - Set files, and the module manifests read with them, are limited to 128 KB. `Import-CompleterSet` and `Test-CompleterSet` refuse a larger set before parsing it, `Export-CompleterSet` refuses to write one, and a larger manifest fails `-Name` and declares no set in the package check.
 - Installed `Get-Help` comes from the MAML, with the markdown's inline code, bold text, and fenced examples as PlatyPS 1.0.3 writes them, as PowerShell's own cmdlet help shows them after `Update-Help`.
 
