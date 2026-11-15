@@ -1764,6 +1764,8 @@ Describe 'Registration identity' {
             @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
             @{ CommandName = $script:KelvinLetterName; CompleterType = 'Native' }
             @{ CommandName = $script:KelvinSignName; CompleterType = 'Native' }
+            @{ CommandName = $script:KelvinLetterName; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = $script:KelvinSignName; ParameterName = 'Name'; CompleterType = 'Parameter' }
         )
 
         function Get-TestIdentityCompletion
@@ -2102,6 +2104,47 @@ Describe 'Registration identity' {
             $removed.ScriptText.Trim() | Should -BeExactly "'sign-result'"
             Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
             Get-TestKelvinCompletion -CommandName $script:KelvinLetterName | Should -Be @('letter-result')
+        }
+
+        It 'refuses an object that names only a key two native targets share, on every -InputObject command' {
+            $null = Register-Completer -CommandName $script:KelvinLetterName -Native -ScriptBlock { 'letter-result' }
+            $null = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' }
+            $keyOnly = Get-Completer -CommandName $script:KelvinSignName -Native | Select-Object -Property Key, IsNative
+            $keyOnly.Key | Should -BeExactly 'test-kelvintool'
+            $refusal = "*The key 'test-kelvintool' belongs to 2 registered native targets*Supply RuntimeKey, or CommandName*"
+
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw $refusal
+            { $keyOnly | Get-Completer } | Should -Throw $refusal
+            { $keyOnly | Reset-Completer -Confirm:$false -ErrorAction Stop } | Should -Throw $refusal
+            { $keyOnly | Test-CompleterRegistration -InputText 'x ' } | Should -Throw $refusal
+            { [pscustomobject] @{ RegistrationKey = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'other' } } | Register-Completer -Force } | Should -Throw $refusal
+            { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; SourcePath = (Join-Path -Path $TestDrive -ChildPath 'kelvin.ps1') } | Export-CompleterSet -Path (Join-Path -Path $TestDrive -ChildPath 'kelvin.psd1') } | Should -Throw $refusal
+
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'", "sign/Active/'sign-result'")
+
+            $removed = Get-Completer -CommandName $script:KelvinSignName -Native | Select-Object -Property RuntimeKey, IsNative | Unregister-Completer -Confirm:$false -PassThru
+
+            [string]::Equals($removed.RuntimeKey, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'RuntimeKey names the target exactly'
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
+
+            $keyOnly | Get-Completer | ForEach-Object { [string]::Equals($_.RuntimeKey, $script:KelvinLetterName, [System.StringComparison]::Ordinal) } | Should -BeTrue -Because 'the key now belongs to one registered target'
+            $null = $keyOnly | Unregister-Completer -Confirm:$false
+            Get-TestKelvinState | Should -BeNullOrEmpty
+        }
+
+        It 'refuses an object that names only a key two parameter targets share' {
+            $null = Register-Completer -CommandName $script:KelvinLetterName -ParameterName 'Name' -ScriptBlock { 'letter-result' }
+            $null = Register-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' -ScriptBlock { 'sign-result' }
+            $keyOnly = Get-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' | Select-Object -Property Key, IsNative
+
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw "*The key 'test-kelvintool:name' belongs to 2 registered parameter targets*"
+
+            $removed = Get-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' | Select-Object -Property RuntimeKey, IsNative | Unregister-Completer -Confirm:$false -PassThru
+
+            [string]::Equals($removed.CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $remaining = @(Get-Completer | Where-Object { -not $_.IsNative -and $_.Key -eq 'test-kelvintool:name' })
+            $remaining.Count | Should -Be 1
+            [string]::Equals($remaining[0].CommandName, $script:KelvinLetterName, [System.StringComparison]::Ordinal) | Should -BeTrue
         }
 
         It 'lists and removes both unmanaged runtime entries' {

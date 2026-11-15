@@ -11,11 +11,16 @@ together with IsNative/Native. An input object describes one target, so a
 CommandName or ParameterName that holds several values is rejected rather
 than joined into one name. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
-When an object exposes several keys, RuntimeKey wins: Key and RegistrationKey
-are folded to lowercase, which can merge two names the runtime keeps apart.
-A ScriptBlock, ImportModule,
-ScriptPath or SourcePath, and Trusted property are carried through when present
-so imported and managed records round-trip into Register-Completer.
+CommandName names a target exactly, and so does RuntimeKey, which wins when an
+object exposes several keys. Key and RegistrationKey are folded to lowercase,
+which can merge two names the runtime keeps apart, so an object that names its
+target only through one of them resolves through Resolve-CompleterKeyTarget:
+to the registered target of its kind whose key it is, with an error when the
+key belongs to more than one.
+
+A ScriptBlock, ImportModule, ScriptPath or SourcePath, and Trusted property
+are carried through when present so imported and managed records round-trip
+into Register-Completer.
 
 IsNative, Native, and Trusted take a Boolean, a number, or the text 'True' or
 'False' in any casing, as Export-Csv writes a Boolean, and empty text counts
@@ -84,6 +89,7 @@ function Resolve-CompleterInputObject
     process
     {
         $keyValue = $null
+        $keyIsRuntimeKey = $false
         $commandName = $null
         $parameterName = $null
         $hasNativeIndicator = $false
@@ -102,6 +108,7 @@ function Resolve-CompleterInputObject
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                 {
                     $keyValue = [string] $property.Value
+                    $keyIsRuntimeKey = $propertyName -eq 'RuntimeKey'
                     break
                 }
             }
@@ -193,7 +200,11 @@ function Resolve-CompleterInputObject
                     throw "InputObject supplies the key '$keyValue' without an IsNative or Native property. Keys are output-only identifiers and are no longer classified by their shape: add IsNative or Native alongside the key, or supply CommandName with Native or ParameterName. See about_CompleterActions_Migration."
                 }
 
-                if ($isNative)
+                if (-not $keyIsRuntimeKey)
+                {
+                    $target = Resolve-CompleterKeyTarget -Key $keyValue -Native:$isNative
+                }
+                elseif ($isNative)
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
@@ -224,6 +235,7 @@ function Resolve-CompleterInputObject
         finally
         {
             $keyValue = $null
+            $keyIsRuntimeKey = $false
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null
