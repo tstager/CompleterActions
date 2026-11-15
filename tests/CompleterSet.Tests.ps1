@@ -2429,7 +2429,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             @(Import-CompleterSet -LiteralPath $atLimitPath).Key | Should -Be @('importfixture', 'importfixture.exe')
         }
 
-        It 'refuses to export a set over 128 KB, naming its size, and leaves the destination unchanged' {
+        It 'refuses to export a set over 128 KB, naming its size, under -WhatIf too, and writes no destination' {
             & (Get-Module -Name 'CompleterActions') { $script:CompleterSetMaxFileBytes } | Should -Be 131072
 
             # A trusted entry takes its targets as given, so one script with 2,000 targets makes a set over the limit.
@@ -2443,6 +2443,15 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             $thrown.Exception.Message -match '^Failed to export completer set\. The set would be (\d+) bytes, larger than the 131072-byte limit for completer set files, so Import-CompleterSet could not read it\. Export the registrations as several sets\. Nothing was written\.$' | Should -BeTrue -Because $thrown.Exception.Message
             [long] $Matches[1] | Should -BeGreaterThan 131072
             Get-Content -LiteralPath $script:SetPath | Should -BeExactly 'placeholder'
+
+            $whatIfThrown = { $records | Export-CompleterSet -Path $script:SetPath -WhatIf } | Should -Throw -PassThru
+            $whatIfThrown.Exception.Message | Should -BeExactly $thrown.Exception.Message
+            Get-Content -LiteralPath $script:SetPath | Should -BeExactly 'placeholder'
+
+            $newSetPath = Join-Path -Path $script:SetRoot -ChildPath 'new.psd1'
+            $newThrown = { $records | Export-CompleterSet -Path $newSetPath } | Should -Throw -PassThru
+            $newThrown.Exception.Message | Should -BeExactly $thrown.Exception.Message
+            Test-Path -LiteralPath $newSetPath | Should -BeFalse
         }
 
         It 'limits what it reads through a symbolic link to a set file' {
@@ -2496,7 +2505,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             }
         }
 
-        It 'reads no more than one byte past the limit from a named pipe that never ends' {
+        It 'refuses a set read from a named pipe that never ends with the size limit error' {
             $mkfifo = Get-Command -Name 'mkfifo' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 
             if ($IsWindows -or $null -eq $mkfifo)
@@ -2649,8 +2658,10 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
         }
 
         It 'refuses a set nested too deeply for the parser with the parse error Import-PowerShellDataFile gives' {
-            # 65,000 levels fit under the limit and lie far past the depth at which the parser gives up and
-            # returns no AST, only its error.
+            # A guard for the reader's own parse, not a regression test: a reader that calls Import-PowerShellDataFile
+            # gives this text too. The reader parses the bytes it read itself, so it must check the parse errors before
+            # it looks for the hashtable, because a parser that gives up returns no AST, only its error. 65,000 levels
+            # fit under the limit and lie far past the depth at which the parser gives up.
             $nestedSet = '@{ Version = 1; Entries = ' + ('@(' * 65000)
             [System.IO.File]::WriteAllText($script:SetPath, $nestedSet)
             $parseErrors = $null
@@ -2665,6 +2676,35 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
             $thrown = { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
             $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+        }
+
+        It 'decodes a set <Case> as Import-PowerShellDataFile does' -TestCases @(
+            @{ Case = 'in UTF-8 with a byte order mark'; Encoding = [System.Text.UTF8Encoding]::new($true); Reads = $true }
+            @{ Case = 'in UTF-16 LE with a byte order mark'; Encoding = [System.Text.UnicodeEncoding]::new($false, $true); Reads = $true }
+            @{ Case = 'in UTF-16 BE with a byte order mark'; Encoding = [System.Text.UnicodeEncoding]::new($true, $true); Reads = $true }
+            @{ Case = 'in UTF-16 LE without a byte order mark'; Encoding = [System.Text.UnicodeEncoding]::new($false, $false); Reads = $false }
+        ) {
+            param($Case, $Encoding, $Reads)
+
+            # A guard for the reader's own decoding, not a regression test: a reader that calls
+            # Import-PowerShellDataFile decodes the same way. U+00E9 is written as a code point so this file stays ASCII.
+            $null = $Case
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath ('caf{0}_completer.ps1' -f [char] 0x00E9)
+            $setText = "@{ Version = 1; Entries = @( @{ Path = '$scriptPath' } ) }"
+            [System.IO.File]::WriteAllBytes($script:SetPath, [byte[]] ($Encoding.GetPreamble() + $Encoding.GetBytes($setText)))
+
+            if ($Reads)
+            {
+                (Import-PowerShellDataFile -LiteralPath $script:SetPath).Entries[0].Path | Should -BeExactly $scriptPath
+                $entry = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) (Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries[0] } $script:SetPath
+                $entry['Path'] | Should -BeExactly $scriptPath
+            }
+            else
+            {
+                $expected = { Import-PowerShellDataFile -LiteralPath $script:SetPath -ErrorAction Stop } | Should -Throw -PassThru
+                $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $($expected.Exception.Message)"
+            }
         }
     }
 
