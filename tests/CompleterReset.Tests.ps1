@@ -683,6 +683,35 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
         $before.Count | Should -BeGreaterThan 0
         $after | Should -Be $before
     }
+
+    Context 'Typographic apostrophes in the lazy stub' {
+        BeforeAll {
+            # U+2019, a single-quote delimiter to the tokenizer, written as a code point so this file stays ASCII.
+            $script:ResetQuote = [string] [char] 0x2019
+            $script:ResetQuoteName = 'reset{0}quote' -f $script:ResetQuote
+        }
+
+        AfterEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName $script:ResetQuoteName -CompleterType 'Native'
+        }
+
+        It 'returns an Active record named with U+2019 to Pending and reloads it on the next completion' {
+            $quotedName = $script:ResetQuoteName.Replace($script:ResetQuote, $script:ResetQuote + $script:ResetQuote)
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'resetquote.ps1'
+            Write-TestResetScript -Path $scriptPath -CommandName $quotedName -Value 'before-edit'
+            $null = Import-CompleterScript -LiteralPath $scriptPath | Register-Completer
+
+            $inputScript = "& '$quotedName' "
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('before-edit')
+
+            Write-TestResetScript -Path $scriptPath -CommandName $quotedName -Value 'after-edit'
+            $record = Reset-Completer -CommandName $script:ResetQuoteName -Native -PassThru
+
+            $record.State | Should -Be 'Pending'
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('after-edit')
+            (Get-Completer -CommandName $script:ResetQuoteName -Native).State | Should -Be 'Active'
+        }
+    }
 }
 
 Describe 'Reset-Completer with a native command that shares a parameter target key' {

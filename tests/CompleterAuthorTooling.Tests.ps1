@@ -367,3 +367,83 @@ Describe 'Test-CompleterRegistration' {
         $after | Should -Be $before
     }
 }
+
+Describe 'Test-CompleterScript literal target arrays' {
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+    }
+
+    AfterEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'reports a -<Parameter> array expression that <Name>' -TestCases @(
+        @{
+            Name         = 'redirects the error stream to a file'
+            Parameter    = 'CommandName'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('arraytarget' 2> '{MarkerPath}') -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'redirects the success stream of an array to a file'
+            Parameter    = 'CommandName'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('arraytarget', 'arraytarget.exe' > '{MarkerPath}') -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'redirects every stream to a file'
+            Parameter    = 'CommandName'
+            Registration = "Register-ArgumentCompleter -CommandName @('Test-ArrayTargetTool' *> '{MarkerPath}') -ParameterName 'Name' -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'appends to a file'
+            Parameter    = 'ParameterName'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName @('Name' >> '{MarkerPath}') -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'merges the error stream'
+            Parameter    = 'CommandName'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('arraytarget' 2>&1) -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'runs in a background pipeline'
+            Parameter    = 'CommandName'
+            Registration = "Register-ArgumentCompleter -Native -CommandName @('arraytarget' &) -ScriptBlock { 'ok' }"
+        }
+    ) {
+        param(
+            [string] $Name,
+            [string] $Parameter,
+            [string] $Registration
+        )
+
+        $fileBaseName = $Name -replace '[^A-Za-z0-9]+', '-'
+        $markerPath = Join-Path -Path $TestDrive -ChildPath ('{0}.marker' -f $fileBaseName)
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath ('{0}_completer.ps1' -f $fileBaseName)
+        $markerBytes = [System.Text.Encoding]::UTF8.GetBytes('CompleterActions disposable marker')
+        $escapedMarkerPath = [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($markerPath)
+
+        [System.IO.File]::WriteAllBytes($markerPath, $markerBytes)
+        Set-Content -LiteralPath $scriptPath -Value $Registration.Replace('{MarkerPath}', $escapedMarkerPath) -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be 'ArrayExpressionAst'
+        $findings[0].Line | Should -Be 1
+        $findings[0].Column | Should -Be ($Registration.IndexOf('@(') + 1)
+        $findings[0].Message | Should -Be ('The script must use literal string values for -{0}.' -f $Parameter)
+        [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($markerPath)) | Should -Be ([System.Convert]::ToBase64String($markerBytes))
+    }
+
+    It 'still accepts single-element and multi-element literal target arrays' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'literal-arrays_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @(
+            "Register-ArgumentCompleter -Native -CommandName @('arraytarget') -ScriptBlock { 'ok' }",
+            "Register-ArgumentCompleter -Native -CommandName @('arraytarget', 'arraytarget.exe') -ScriptBlock { 'ok' }",
+            "Register-ArgumentCompleter -CommandName @('Test-ArrayTargetTool') -ParameterName @('Name', 'Path') -ScriptBlock { 'ok' }"
+        )
+
+        @(Test-CompleterScript -LiteralPath $scriptPath) | Should -BeNullOrEmpty
+    }
+}

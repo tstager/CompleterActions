@@ -103,6 +103,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 
+. (Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath 'src/Private/ConvertTo-CompleterSingleQuotedText.ps1')
+
 function Invoke-ChildMeasurement
 {
     param(
@@ -146,7 +148,7 @@ function ConvertTo-SingleQuoted
         [string] $Value
     )
 
-    return "'" + $Value.Replace("'", "''") + "'"
+    return "'" + (ConvertTo-CompleterSingleQuotedText -Value $Value) + "'"
 }
 
 function ConvertTo-TimedScript

@@ -607,6 +607,177 @@ Describe 'Completer sets' {
         }
     }
 
+    Context 'Export-CompleterSet input selection' {
+        BeforeEach {
+            # An existing set for one script, plus a managed registration from another
+            # script that only the no-input fallback may export.
+            Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path $script:SetPath
+            $script:ExistingSetHash = (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash
+            $null = Import-CompleterScript -LiteralPath $script:NativeFixturePath | Register-Completer
+            $script:EmptySelectionWarning = "No registrations were selected for export, so nothing was written to '$script:SetPath'."
+        }
+
+        It 'leaves an existing set byte-identical and warns when <Case> selects no registrations' -TestCases @(
+            @{ Case = 'a Get-Completer filter that matches nothing'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'an empty pipeline'; Export = { param($Path) @() | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'an empty -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject @() -PassThru } }
+            @{ Case = 'a filter that matches nothing under -WhatIf'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru -WhatIf } }
+            @{ Case = 'a filter that matches nothing passed to -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject (Get-Completer -CommandName 'review-does-not-exist' -Native) -PassThru } }
+            @{ Case = '-InputObject $null'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject $null -PassThru } }
+            @{ Case = 'a piped $null'; Export = { param($Path) $null | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'a wrapper that passes an empty $input on'; Export = { param($Path) @() | & { param($SetPath) $input | Export-CompleterSet -Path $SetPath -PassThru } $Path } }
+        ) {
+            param($Case, $Export)
+
+            (Get-Completer -CommandName 'importfixture' -Native).ScriptPath | Should -Be $script:NativeFixturePath -Because "the session must hold a registration that $Case must not export"
+
+            $streamed = @(& $Export -Path $script:SetPath 3>&1 2>&1)
+            $warnings = @($streamed | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $errors = @($streamed | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $output = @($streamed | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] -and $_ -isnot [System.Management.Automation.ErrorRecord] })
+
+            $errors | Should -BeNullOrEmpty -Because 'an empty selection is reported by the warning alone'
+            @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
+            $output | Should -BeNullOrEmpty -Because 'no file was written, so -PassThru has nothing to return'
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'skips nulls among the records it is given and exports the rest' {
+            $records = @(Import-CompleterScript -LiteralPath $script:NativeFixturePath)
+
+            $written = @(Export-CompleterSet -Path $script:SetPath -InputObject (@($null) + $records + @($null)) -PassThru | Select-Object -ExpandProperty FullName)
+
+            $written | Should -Be @($script:SetPath)
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1 -Because 'only the records given are exported, not the existing set or every managed registration'
+            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
+            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+        }
+
+        It 'does not ask for confirmation when no registrations are selected' {
+            $scriptedHost = [CompleterActionsTests.ScriptedHost]::new()
+            $scriptedHost.ScriptedUI.Answers.Enqueue('Yes')
+            $runspace = [runspacefactory]::CreateRunspace($scriptedHost)
+            $powerShell = [powershell]::Create()
+
+            try
+            {
+                $runspace.Open()
+                $powerShell.Runspace = $runspace
+                $null = $powerShell.AddScript({
+                        param($ModulePath, $FixturePath, $SetPath)
+
+                        Import-Module -Name $ModulePath -Force
+                        $null = Import-CompleterScript -LiteralPath $FixturePath | Register-Completer
+                        Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $SetPath -Confirm
+                    }).AddArgument((Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1')).AddArgument($script:NativeFixturePath).AddArgument($script:SetPath)
+                $result = @($powerShell.Invoke())
+                $errors = @($powerShell.Streams.Error)
+                $warnings = @($powerShell.Streams.Warning)
+            }
+            finally
+            {
+                $powerShell.Dispose()
+                $runspace.Dispose()
+            }
+
+            $errors | Should -BeNullOrEmpty
+            $result | Should -BeNullOrEmpty
+            $scriptedHost.ScriptedUI.Prompts | Should -BeNullOrEmpty -Because 'an empty selection writes nothing, so there is nothing to confirm'
+            $scriptedHost.ScriptedUI.Answers.Count | Should -Be 1
+            @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'exports every managed registration when nothing is piped, also as the first command of a pipeline' {
+            $null = Import-CompleterScript -LiteralPath $script:ParameterFixturePath | Register-Completer
+
+            $written = @(Export-CompleterSet -Path $script:SetPath -PassThru | Select-Object -ExpandProperty FullName)
+
+            $written | Should -Be @($script:SetPath)
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $entriesByScript = @{}
+
+            foreach ($entry in $data.Entries)
+            {
+                $entriesByScript[[System.IO.Path]::GetFullPath($entry.Path, $script:SetRoot)] = $entry
+            }
+
+            @($entriesByScript.Keys | Sort-Object) | Should -Be @($script:NativeFixturePath, $script:ParameterFixturePath | Sort-Object)
+            @($entriesByScript[$script:NativeFixturePath].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            $entriesByScript[$script:ParameterFixturePath].Targets.CommandName | Should -Be 'Test-ImportedFixtureTool'
+        }
+
+        It 'prints no What if line under -WhatIf when no registrations are selected' {
+            # ShouldProcess writes its What if line to the host, so a child pwsh is
+            # the only place the test can read it. The second export is the control
+            # that shows the capture sees the line when there is something to write.
+            $childScriptPath = Join-Path -Path $script:SetRoot -ChildPath 'whatif-child.ps1'
+            Set-Content -LiteralPath $childScriptPath -Encoding utf8 -Value @'
+param($ModulePath, $FixturePath, $SetPath)
+
+$ErrorActionPreference = 'Stop'
+Import-Module -Name $ModulePath -Force
+$null = Import-CompleterScript -LiteralPath $FixturePath | Register-Completer
+Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $SetPath -WhatIf 3>$null
+'-- selected registrations --'
+Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $SetPath -WhatIf
+'@
+            $modulePath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'CompleterActions.psd1'))
+
+            $lines = @(& pwsh -NoProfile -NonInteractive -File $childScriptPath -ModulePath $modulePath -FixturePath $script:NativeFixturePath -SetPath $script:SetPath 2>&1 | ForEach-Object { [string] $_ })
+
+            $LASTEXITCODE | Should -Be 0 -Because ($lines -join [Environment]::NewLine)
+            $split = [System.Array]::IndexOf([string[]] $lines, '-- selected registrations --')
+            $split | Should -BeGreaterOrEqual 0
+            @($lines[0..$split] -match '^What if:') | Should -BeNullOrEmpty -Because 'an empty selection returns before ShouldProcess'
+            @($lines[$split..($lines.Count - 1)] -match '^What if:').Count | Should -Be 1 -Because 'a selection that would be written does print its What if line'
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'states the input-selection contract in the <Source> of Export-CompleterSet' -TestCases @(
+            @{ Source = 'comment-based help' }
+            @{ Source = 'markdown help' }
+            @{ Source = 'MAML help' }
+        ) {
+            param($Source)
+
+            $docRoot = [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'docs', 'CompleterActions')
+            $text = switch ($Source)
+            {
+                'comment-based help' { Get-Help -Name 'Export-CompleterSet' -Full | Out-String -Width 4096 }
+                'markdown help' { Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'Export-CompleterSet.md')) -Raw }
+                'MAML help'
+                {
+                    $maml = [xml] (Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'CompleterActions', 'CompleterActions-Help.xml')) -Raw)
+                    $command = $maml.helpItems.command | Where-Object { $_.details.verb -eq 'Export' -and $_.details.noun -eq 'CompleterSet' }
+                    $inputObjectParameter = $command.parameters.parameter | Where-Object { $_.name -eq 'InputObject' }
+                    @($command.description.para) + @($inputObjectParameter.description.para) -join ' '
+                }
+            }
+            $flatText = $text -replace '`', '' -replace '\s+', ' '
+
+            foreach ($expectedText in @(
+                    'When the command comes after a pipe or is given -InputObject, it exports only the records that arrive that way, even when none do.'
+                    'A Get-Completer filter that matches nothing selects nothing, whether it is piped to the command or passed to -InputObject, and so do an empty array and $null'
+                    'Only a call with no pipe before it and no -InputObject, such as the command on its own or as the first command of a pipeline, exports every managed registration that records a ScriptPath.'
+                    'The command cannot see a pipe in front of a function or script block that calls it, so a wrapper must pass its input on, for example as $input | Export-CompleterSet'
+                    'A null carries no record and is skipped, so -InputObject $null, like the output of a Get-Completer filter that matches nothing, selects nothing.'
+                ))
+            {
+                $flatText | Should -Match ([regex]::Escape($expectedText))
+            }
+        }
+
+        It 'states the input-selection contract in about_Completer_Sets' {
+            $topicPath = [System.IO.Path]::Combine($PSScriptRoot, '..', 'en-US', 'about_Completer_Sets.help.txt')
+            $flatText = (Get-Content -LiteralPath $topicPath -Raw) -replace '`', '' -replace '\s+', ' '
+
+            $flatText | Should -Match ([regex]::Escape('Export-CompleterSet after a pipe exports only the records the pipe delivers, so a pipeline that delivers none'))
+            $flatText | Should -Match ([regex]::Escape('which is what the command exports when it has no pipe before it and no -InputObject:'))
+        }
+    }
+
     Context 'Import-CompleterSet' {
         It 'restores the same targets as Pending records after an Export then Import round trip and loads them on first tab' {
             $imported = @(Import-CompleterScript -Path $script:ParameterFixturePath) +
@@ -2142,6 +2313,94 @@ Describe 'Completer sets' {
             @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name')
             $parses = @(& (Get-Module -Name 'CompleterActions') { $script:TestParseCalls })
             $parses | Should -BeExactly @($script:ParameterFixturePath, $script:NativeFixturePath, $script:UnsafeSetScriptPath) -Because 'the grammar and the target derivation share one parse per entry'
+        }
+    }
+
+    Context 'Typographic apostrophes in set data' {
+        BeforeAll {
+            # U+2019, a single-quote delimiter to the tokenizer, written as a code point so this file stays ASCII.
+            $script:Apostrophe = [string] [char] 0x2019
+            $script:QuoteNativeName = 'set{0}quote' -f $script:Apostrophe
+            $script:QuoteParameterName = 'Na{0}me' -f $script:Apostrophe
+        }
+
+        AfterEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName $script:QuoteNativeName -CompleterType 'Native'
+            Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-SetQuoteTool' -ParameterName $script:QuoteParameterName -CompleterType 'Parameter'
+        }
+
+        It 'roundtrips a script in a folder named with U+2019 through Register-Completer, Export-CompleterSet and Import-CompleterSet' {
+            $folderName = 'author{0}s scripts' -f $script:Apostrophe
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath $folderName
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+
+            $registered = @(Import-CompleterScript -LiteralPath $scriptPath | Register-Completer -PassThru)
+            @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+
+            Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written Path must be doubled'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $data.Entries[0].Path | Should -BeExactly "$folderName/Native.ps1"
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
+
+            Get-Completer -State Active, Pending, Failed, Stale | Unregister-Completer -Confirm:$false
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($reimported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+            @($reimported.ScriptPath | Select-Object -Unique) | Should -Be @($scriptPath)
+
+            $completion = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+        }
+
+        It 'writes command and parameter names with U+2019 that Import-CompleterSet reads back and activates' {
+            $doubled = $script:Apostrophe + $script:Apostrophe
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath 'QuoteTargets.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
+Register-ArgumentCompleter -Native -CommandName '$($script:QuoteNativeName.Replace($script:Apostrophe, $doubled))' -ScriptBlock {
+    param(`$wordToComplete, `$commandAst, `$cursorPosition)
+
+    `$null = `$wordToComplete, `$commandAst, `$cursorPosition
+
+    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+}
+
+Register-ArgumentCompleter -CommandName 'Test-SetQuoteTool' -ParameterName '$($script:QuoteParameterName.Replace($script:Apostrophe, $doubled))' -ScriptBlock {
+    param(`$commandName, `$parameterName, `$wordToComplete, `$commandAst, `$fakeBoundParameters)
+
+    `$null = `$commandName, `$parameterName, `$wordToComplete, `$commandAst, `$fakeBoundParameters
+
+    [System.Management.Automation.CompletionResult]::new('beta', 'beta', 'ParameterValue', 'beta')
+}
+"@
+
+            Import-CompleterScript -LiteralPath $scriptPath | Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written names must be doubled'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @($script:QuoteNativeName, 'Test-SetQuoteTool')
+            @($data.Entries[0].Targets.ParameterName | Where-Object { $_ }) | Should -BeExactly @($script:QuoteParameterName)
+
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($reimported.Key) | Should -BeExactly @($script:QuoteNativeName, "test-setquotetool:$($script:QuoteParameterName.ToLowerInvariant())")
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+
+            $inputScript = "& '$($script:QuoteNativeName.Replace($script:Apostrophe, $doubled))' a"
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName $script:QuoteNativeName -Native).State | Should -Be 'Active'
         }
     }
 }

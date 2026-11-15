@@ -35,7 +35,7 @@ function New-CompleterLazyStub
         [switch] $Native
     )
 
-    $escapedKey = $Key.Replace("'", "''")
+    $escapedKey = ConvertTo-CompleterSingleQuotedText -Value $Key
 
     $nativeArgument = if ($Native) { ' -Native' } else { '' }
 

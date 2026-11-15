@@ -608,6 +608,55 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
             & (Get-Module -Name 'CompleterActions') { $script:TestParseCount } | Should -Be 1 -Because 'the grammar and the target derivation share one parse'
         }
     }
+
+    Context 'Typographic apostrophes in lazy stubs' {
+        BeforeAll {
+            # Each name pairs the ASCII apostrophe with one typographic single-quote character the
+            # tokenizer accepts, written as code points so this file stays ASCII.
+            $script:LazyQuoteNames = @(0x2018, 0x2019, 0x201A, 0x201B | ForEach-Object { "lazy'{0}quote" -f [char] $_ })
+        }
+
+        AfterEach {
+            foreach ($lazyQuoteName in $script:LazyQuoteNames)
+            {
+                Invoke-TestRuntimeCompleterCleanup -CommandName $lazyQuoteName -CompleterType 'Native'
+            }
+        }
+
+        It 'registers a target named with U+0027 and U+<Code> lazily and activates it on the first completion' -ForEach @(
+            @{ Code = '2018' }
+            @{ Code = '2019' }
+            @{ Code = '201A' }
+            @{ Code = '201B' }
+        ) {
+            $quote = [string] [char] [Convert]::ToInt32($Code, 16)
+            $targetName = "lazy'{0}quote" -f $quote
+            $quotedTarget = $targetName.Replace("'", "''").Replace($quote, $quote + $quote)
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath "LazyQuote$Code.ps1"
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
+Register-ArgumentCompleter -Native -CommandName '$quotedTarget' -ScriptBlock {
+    param(`$wordToComplete, `$commandAst, `$cursorPosition)
+
+    `$null = `$wordToComplete, `$commandAst, `$cursorPosition
+
+    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+}
+"@
+
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+
+            $record = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+
+            $record.Key | Should -BeExactly $targetName
+            $record.State | Should -Be 'Pending'
+
+            $inputScript = "& '$quotedTarget' a"
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName $targetName -Native).State | Should -Be 'Active'
+        }
+    }
 }
 
 Describe 'Lazy registration of a native command that shares a parameter target key' {
