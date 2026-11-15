@@ -1900,6 +1900,182 @@ Describe 'Packaged command help' {
         }
     }
 
+    It 'describes each parameter of a packaged command in Get-Help as the command declares it' {
+        # The MAML is built from hand-maintained markdown, so only this comparison keeps installed Get-Help in step
+        # with the parameters the commands declare. A PARAMETERS entry describes the parameter across all its sets, as
+        # the MAML builder writes it: it takes pipeline input in any way one of its sets does, is required when any set
+        # makes it mandatory, and names one position, which must be one of its sets' positions. The syntax test
+        # checks each set on its own.
+        $parameters = @(
+            Invoke-TestBuildHelp -Script {
+                $commonParameters = [System.Management.Automation.PSCmdlet]::CommonParameters
+
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $helpParameters = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).parameters.parameter)
+                    $names = @(@($command.Parameters.Keys) + @($helpParameters.name) | Where-Object { $_ -notin $commonParameters } | Sort-Object -Unique)
+
+                    foreach ($name in $names)
+                    {
+                        $metadata = $command.Parameters[$name]
+                        $help = @($helpParameters | Where-Object { $_.name -eq $name })
+                        $sets = @(if ($null -ne $metadata) { $metadata.ParameterSets.Values })
+                        $byValue = @($sets | Where-Object ValueFromPipeline).Count -gt 0
+                        $byPropertyName = @($sets | Where-Object ValueFromPipelineByPropertyName).Count -gt 0
+
+                        [pscustomobject] @{
+                            Command               = $command.Name
+                            Parameter             = $name
+                            Declared              = $null -ne $metadata
+                            HelpEntries           = $help.Count
+                            PipelineInput         = [string] $help.pipelineInput
+                            Required              = [string] $help.required
+                            Position              = [string] $help.position
+                            Aliases               = @(([string] $help.aliases) -split ',\s*' | Sort-Object) -join ', '
+                            Type                  = [string] $help.type.name
+                            DeclaredPipelineInput = if ($byValue -or $byPropertyName) { 'true ({0})' -f (@(if ($byValue) { 'ByValue' }; if ($byPropertyName) { 'ByPropertyName' }) -join ', ') } else { 'false' }
+                            DeclaredRequired      = if (@($sets | Where-Object IsMandatory).Count -gt 0) { 'true' } else { 'false' }
+                            DeclaredPositions     = @($sets | ForEach-Object { if ($_.Position -lt 0) { 'Named' } else { [string] $_.Position } } | Sort-Object -Unique)
+                            DeclaredAliases       = if ($null -ne $metadata -and $metadata.Aliases.Count -gt 0) { @($metadata.Aliases | Sort-Object) -join ', ' } else { 'none' }
+                            DeclaredType          = if ($null -ne $metadata) { $metadata.ParameterType.FullName } else { '' }
+                        }
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($parameters.Command | Sort-Object -Unique) | Should -Be $publicCommands
+        $drift = @(
+            foreach ($parameter in $parameters)
+            {
+                $target = '{0} -{1}' -f $parameter.Command, $parameter.Parameter
+
+                if (-not $parameter.Declared)
+                {
+                    "$target is in Get-Help but not declared"
+                    continue
+                }
+
+                if ($parameter.HelpEntries -ne 1)
+                {
+                    "$target has $($parameter.HelpEntries) Get-Help entries"
+                    continue
+                }
+
+                if ($parameter.PipelineInput -ne $parameter.DeclaredPipelineInput)
+                {
+                    "$target pipeline input is '$($parameter.PipelineInput)' in Get-Help but '$($parameter.DeclaredPipelineInput)' declared"
+                }
+
+                if ($parameter.Required -ne $parameter.DeclaredRequired)
+                {
+                    "$target required is '$($parameter.Required)' in Get-Help but '$($parameter.DeclaredRequired)' declared"
+                }
+
+                if ($parameter.Position -notin $parameter.DeclaredPositions)
+                {
+                    "$target position is '$($parameter.Position)' in Get-Help but '$($parameter.DeclaredPositions -join "', '")' declared"
+                }
+
+                if ($parameter.Aliases -ne $parameter.DeclaredAliases)
+                {
+                    "$target aliases are '$($parameter.Aliases)' in Get-Help but '$($parameter.DeclaredAliases)' declared"
+                }
+
+                if ($parameter.Type -ne $parameter.DeclaredType)
+                {
+                    "$target type is '$($parameter.Type)' in Get-Help but '$($parameter.DeclaredType)' declared"
+                }
+            }
+        )
+
+        $drift | Should -BeNullOrEmpty
+    }
+
+    It 'shows each parameter set of a packaged command in its syntax with the required flags and positions the set declares' {
+        # A set's syntax entry is the one that lists exactly the set's parameters, as parameter sets differ in them.
+        $setParameters = @(
+            Invoke-TestBuildHelp -Script {
+                $commonParameters = [System.Management.Automation.PSCmdlet]::CommonParameters
+
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $syntaxItems = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).syntax.syntaxItem)
+
+                    foreach ($set in $command.ParameterSets)
+                    {
+                        $parameters = @($set.Parameters | Where-Object { $_.Name -notin $commonParameters })
+                        $names = @($parameters.Name | Sort-Object) -join ', '
+                        $items = @($syntaxItems | Where-Object { (@($_.parameter.name | Sort-Object) -join ', ') -eq $names })
+
+                        foreach ($parameter in $parameters)
+                        {
+                            $help = @(if ($items.Count -eq 1) { $items[0].parameter | Where-Object { $_.name -eq $parameter.Name } })
+
+                            [pscustomobject] @{
+                                Command          = $command.Name
+                                SetCount         = $command.ParameterSets.Count
+                                SyntaxCount      = $syntaxItems.Count
+                                Set              = $set.Name
+                                SetParameters    = $names
+                                SyntaxItems      = $items.Count
+                                Parameter        = $parameter.Name
+                                Required         = [string] $help.required
+                                Position         = [string] $help.position
+                                DeclaredRequired = if ($parameter.IsMandatory) { 'true' } else { 'false' }
+                                DeclaredPosition = if ($parameter.Position -lt 0) { 'named' } else { [string] $parameter.Position }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($setParameters.Command | Sort-Object -Unique) | Should -Be $publicCommands
+        $drift = @(
+            foreach ($command in $setParameters | Group-Object -Property Command)
+            {
+                if ($command.Group[0].SyntaxCount -ne $command.Group[0].SetCount)
+                {
+                    "$($command.Name) has $($command.Group[0].SyntaxCount) syntax entries for $($command.Group[0].SetCount) parameter sets"
+                }
+            }
+
+            foreach ($parameter in $setParameters)
+            {
+                $target = '{0} -{1} in set {2}' -f $parameter.Command, $parameter.Parameter, $parameter.Set
+
+                if ($parameter.SyntaxItems -ne 1)
+                {
+                    "set $($parameter.Set) of $($parameter.Command) ($($parameter.SetParameters)) has $($parameter.SyntaxItems) syntax entries"
+                    continue
+                }
+
+                if ($parameter.Required -ne $parameter.DeclaredRequired)
+                {
+                    "$target required is '$($parameter.Required)' in the syntax but '$($parameter.DeclaredRequired)' declared"
+                }
+
+                if ($parameter.Position -ne $parameter.DeclaredPosition)
+                {
+                    "$target position is '$($parameter.Position)' in the syntax but '$($parameter.DeclaredPosition)' declared"
+                }
+            }
+        )
+
+        @($drift | Select-Object -Unique) | Should -BeNullOrEmpty
+    }
+
     It 'replaces only the help that leads into each public command, in any layout, and keeps every other source line' {
         if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
         {

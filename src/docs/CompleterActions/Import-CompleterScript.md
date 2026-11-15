@@ -153,7 +153,8 @@ One or more paths to completer script files. Wildcards are supported.
 Type: System.String[]
 DefaultValue: ''
 SupportsWildcards: false
-Aliases: []
+Aliases:
+- FullName
 ParameterSets:
 - Name: Path
   Position: 0
