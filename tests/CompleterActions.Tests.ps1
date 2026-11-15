@@ -2251,6 +2251,42 @@ Describe 'Packaged command help' {
         $buildOutput | Should -Match "'Unregister-Completer' at [^'\r\n]*Unregister-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
     }
 
+    It 'fails the build when the sources name a public command on the Function: drive, under any condition' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # Each write runs only when the package is imported into a session the build's import check does not match:
+        # one with PSReadLine loaded, one with an environment variable set, or not at all, from a helper nothing
+        # calls. Only the sources show them.
+        $stagingRoot = New-TestBuildStage -Name 'drive'
+        Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Set-BuildProbeShadow.ps1') -Value @(
+            'function Set-BuildProbeShadow'
+            '{'
+            "    New-Item -Path 'Function:\script:Test-CompleterSet' -Value { 'private' } -Force"
+            '}'
+        )
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value @(
+            ''
+            "if (Get-Module -Name 'PSReadLine') { Set-Item -Path Function:Reset-Completer -Value { 'bootstrap' } }"
+            "if (`$env:COMPLETERACTIONS_BUILD_PROBE) { `${function:Get-Completer} = { 'bootstrap' } }"
+        )
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Set-BuildProbeShadow\.ps1:3\b"
+    }
+
     It 'fails the build when the package replaces a public command while it loads' {
         if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
         {
@@ -2262,10 +2298,10 @@ Describe 'Packaged command help' {
             Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
         }
 
-        # A write to the Function: drive is no definition the sources show, so only the imported package reveals that
-        # the exported command lost the directive.
+        # A Function: path built at run time names no command the sources show, so only the imported package reveals
+        # that the exported command lost the directive.
         $stagingRoot = New-TestBuildStage -Name 'replaced'
-        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "Set-Item -Path Function:Reset-Completer -Value { 'bootstrap' }"
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "`$buildProbeName = 'Reset-Completer'", "Set-Item -Path `"Function:`$buildProbeName`" -Value { 'bootstrap' }"
 
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine

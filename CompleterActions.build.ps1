@@ -121,9 +121,30 @@ task build clean, compile, external_help, {
         $functionAsts = @($fileAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
 
         # A scope modifier does not change the command a definition makes: function script:Get-Completer replaces
-        # Get-Completer.
-        foreach ($definition in $fileAst.FindAll({ param($ast) $ast -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
-            $definitions[($definition.Name -replace '^(?:global|local|private|script):', '')] += @("$($file.FullName):$($definition.Extent.StartLineNumber)")
+        # Get-Completer. A write through the Function: drive replaces it too, and may run only under a condition the
+        # import check below does not meet, so a literal Function: path or a ${function:} variable that names a
+        # command counts as a definition of it wherever it appears.
+        $definitionAsts = $fileAst.FindAll({
+                param($ast)
+                $ast -is [System.Management.Automation.Language.FunctionDefinitionAst] -or
+                $ast -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                $ast -is [System.Management.Automation.Language.VariableExpressionAst]
+            }, $true)
+
+        foreach ($definition in $definitionAsts) {
+            $name = if ($definition -is [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                $definition.Name
+            }
+            elseif ($definition -is [System.Management.Automation.Language.StringConstantExpressionAst] -and $definition.Value -match '^function:[\\/]?(.+)$') {
+                $Matches[1]
+            }
+            elseif ($definition -is [System.Management.Automation.Language.VariableExpressionAst] -and $definition.VariablePath.DriveName -eq 'function') {
+                $definition.VariablePath.UserPath -replace '^function:', ''
+            }
+
+            if ($name) {
+                $definitions[($name -replace '^(?:global|local|private|script):', '')] += @("$($file.FullName):$($definition.Extent.StartLineNumber)")
+            }
         }
 
         $firstFunctionLine = if ($functionAsts.Count -eq 0) { [int]::MaxValue } else { $functionAsts[0].Extent.StartLineNumber }
@@ -226,7 +247,7 @@ task build clean, compile, external_help, {
     $duplicates = @($public.BaseName | Where-Object { $definitions[$_].Count -gt 1 } | ForEach-Object { "'$_' at $($definitions[$_] -join ', ')" })
 
     if ($duplicates.Count -gt 0) {
-        throw "build: a public command must be defined once, in its own file, so the definition that is exported reads its help from the MAML: $($duplicates -join '; ')."
+        throw "build: a public command must be defined once, in its own file, and never named on the Function: drive, so the definition that is exported reads its help from the MAML: $($duplicates -join '; ')."
     }
 
     if ($usingStatements.Count -gt 0) {
@@ -293,9 +314,9 @@ task build clean, compile, external_help, {
     (Get-Content -Path $Data.Path) -replace '^RequiredAssemblies = .*$', $requiredAssembliesLine |
         Set-Content -Path $Data.Path -Encoding utf8
 
-    # The duplicate check reads the definitions in the sources, so a command replaced in another way while the module
-    # loads, through the Function: drive for example, is found only by importing the package. A new pwsh imports it,
-    # so this process does not hold the assembly in lib/ for the next compile.
+    # The duplicate check reads the names in the sources, so a command replaced from text made at run time while the
+    # module loads, a Function: path built from a variable for example, is found only by importing the package. A new
+    # pwsh imports it, so this process does not hold the assembly in lib/ for the next compile.
     $pwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
     $withoutMaml = @(
         exec {
