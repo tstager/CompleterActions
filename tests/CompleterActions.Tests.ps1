@@ -1997,7 +1997,7 @@ Describe 'Packaged command help' {
         $drift | Should -BeNullOrEmpty
     }
 
-    It 'shows each parameter set of a packaged command in its syntax with the required flags and positions the set declares' {
+    It 'shows each parameter set of a packaged command in its syntax with the required flags, positions and pipeline input the set declares' {
         # A set's syntax entry is the one that lists exactly the set's parameters, as parameter sets differ in them.
         $setParameters = @(
             Invoke-TestBuildHelp -Script {
@@ -2018,17 +2018,19 @@ Describe 'Packaged command help' {
                             $help = @(if ($items.Count -eq 1) { $items[0].parameter | Where-Object { $_.name -eq $parameter.Name } })
 
                             [pscustomobject] @{
-                                Command          = $command.Name
-                                SetCount         = $command.ParameterSets.Count
-                                SyntaxCount      = $syntaxItems.Count
-                                Set              = $set.Name
-                                SetParameters    = $names
-                                SyntaxItems      = $items.Count
-                                Parameter        = $parameter.Name
-                                Required         = [string] $help.required
-                                Position         = [string] $help.position
-                                DeclaredRequired = if ($parameter.IsMandatory) { 'true' } else { 'false' }
-                                DeclaredPosition = if ($parameter.Position -lt 0) { 'named' } else { [string] $parameter.Position }
+                                Command               = $command.Name
+                                SetCount              = $command.ParameterSets.Count
+                                SyntaxCount           = $syntaxItems.Count
+                                Set                   = $set.Name
+                                SetParameters         = $names
+                                SyntaxItems           = $items.Count
+                                Parameter             = $parameter.Name
+                                Required              = [string] $help.required
+                                Position              = [string] $help.position
+                                PipelineInput         = [string] $help.pipelineInput
+                                DeclaredRequired      = if ($parameter.IsMandatory) { 'true' } else { 'false' }
+                                DeclaredPosition      = if ($parameter.Position -lt 0) { 'named' } else { [string] $parameter.Position }
+                                DeclaredPipelineInput = if ($parameter.ValueFromPipeline -or $parameter.ValueFromPipelineByPropertyName) { 'true ({0})' -f (@(if ($parameter.ValueFromPipeline) { 'ByValue' }; if ($parameter.ValueFromPipelineByPropertyName) { 'ByPropertyName' }) -join ', ') } else { 'false' }
                             }
                         }
                     }
@@ -2069,6 +2071,11 @@ Describe 'Packaged command help' {
                 if ($parameter.Position -ne $parameter.DeclaredPosition)
                 {
                     "$target position is '$($parameter.Position)' in the syntax but '$($parameter.DeclaredPosition)' declared"
+                }
+
+                if ($parameter.PipelineInput -ne $parameter.DeclaredPipelineInput)
+                {
+                    "$target pipeline input is '$($parameter.PipelineInput)' in the syntax but '$($parameter.DeclaredPipelineInput)' declared"
                 }
             }
         )

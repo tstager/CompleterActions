@@ -321,24 +321,78 @@ task Markdown_templates compile, {
 # Synopsis: Updates external help documentation
 task external_help {
 
-    Measure-PlatyPSMarkdown -Path (Join-Path -Path $docPath -ChildPath '*.md') |
-        Where-Object Filetype -match 'CommandHelp' |
-        Import-MarkdownCommandHelp -Path { $_.FilePath } |
-        ForEach-Object {
-            # Get-Help reads the first non-empty related-link URI on every view and stops with "The specified URI ...
-            # is not valid" unless it is absolute, so a link to another command's markdown page keeps its text but no URI.
-            # Only http and https links keep theirs: a path such as /docs/x.md is an absolute file URI on Linux alone.
-            foreach ($link in $_.RelatedLinks) {
-                $linkUri = $null
+    $commandHelp = @(
+        Measure-PlatyPSMarkdown -Path (Join-Path -Path $docPath -ChildPath '*.md') |
+            Where-Object Filetype -match 'CommandHelp' |
+            Import-MarkdownCommandHelp -Path { $_.FilePath } |
+            ForEach-Object {
+                # Get-Help reads the first non-empty related-link URI on every view and stops with "The specified URI ...
+                # is not valid" unless it is absolute, so a link to another command's markdown page keeps its text but no URI.
+                # Only http and https links keep theirs: a path such as /docs/x.md is an absolute file URI on Linux alone.
+                foreach ($link in $_.RelatedLinks) {
+                    $linkUri = $null
 
-                if (-not ([uri]::TryCreate($link.Uri, [System.UriKind]::Absolute, [ref] $linkUri) -and $linkUri.Scheme -in 'http', 'https')) {
-                    $link.Uri = ''
+                    if (-not ([uri]::TryCreate($link.Uri, [System.UriKind]::Absolute, [ref] $linkUri) -and $linkUri.Scheme -in 'http', 'https')) {
+                        $link.Uri = ''
+                    }
                 }
-            }
 
-            $_
-        } |
-        Export-MamlCommandHelp -OutputFolder $docPath -Force
+                $_
+            }
+    )
+    $mamlFile = $commandHelp | Export-MamlCommandHelp -OutputFolder $docPath -Force
+
+    # PlatyPS writes every parameter of a syntax entry as taking no pipeline input, so each one is given the pipeline
+    # input the markdown declares for it in that entry's parameter set. The entries follow the markdown's syntax order.
+    $maml = [System.Xml.XmlDocument]::new()
+    $maml.PreserveWhitespace = $true
+    $maml.Load($mamlFile.FullName)
+    $namespaces = [System.Xml.XmlNamespaceManager]::new($maml.NameTable)
+    $namespaces.AddNamespace('command', 'http://schemas.microsoft.com/maml/dev/command/2004/10')
+    $namespaces.AddNamespace('maml', 'http://schemas.microsoft.com/maml/2004/10')
+
+    foreach ($help in $commandHelp) {
+        $syntaxItems = $maml.SelectNodes("//command:command[command:details/command:name = '$($help.Title)']/command:syntax/command:syntaxItem", $namespaces)
+
+        if ($syntaxItems.Count -ne $help.Syntax.Count) {
+            throw "build: the MAML has $($syntaxItems.Count) syntax entries for $($help.Title), whose markdown has $($help.Syntax.Count)."
+        }
+
+        for ($index = 0; $index -lt $syntaxItems.Count; $index++) {
+            $setName = $help.Syntax[$index].ParameterSetName
+
+            foreach ($syntaxParameter in $syntaxItems[$index].SelectNodes('command:parameter', $namespaces)) {
+                $name = $syntaxParameter.SelectSingleNode('maml:name', $namespaces).InnerText
+                $set = @($help.Parameters | Where-Object Name -ceq $name | ForEach-Object ParameterSets | Where-Object Name -in $setName, '(All)')
+
+                if ($set.Count -ne 1) {
+                    throw "build: the markdown help of $($help.Title) lists -$name in the syntax of the set $setName but under PARAMETERS in $($set.Count) entries for that set."
+                }
+
+                $pipelineInput = @(if ($set[0].ValueFromPipeline) { 'ByValue' }; if ($set[0].ValueFromPipelineByPropertyName) { 'ByPropertyName' })
+                $syntaxParameter.SetAttribute('pipelineInput', ($pipelineInput.Count -gt 0 ? "true ($($pipelineInput -join ', '))" : 'false'))
+            }
+        }
+    }
+
+    $settings = [System.Xml.XmlWriterSettings]::new()
+    $settings.Encoding = [System.Text.UTF8Encoding]::new($false)
+    $settings.NewLineChars = [Environment]::NewLine
+    $settings.NewLineHandling = [System.Xml.NewLineHandling]::Replace
+    $stream = [System.IO.MemoryStream]::new()
+    $writer = [System.Xml.XmlWriter]::Create($stream, $settings)
+
+    try {
+        $maml.Save($writer)
+    }
+    finally {
+        $writer.Dispose()
+    }
+
+    # PlatyPS writes the U+0080 that marks a blank line in an example as a character reference, and XmlWriter writes it
+    # as the character, so it goes back to the reference PlatyPS wrote.
+    $mamlText = $settings.Encoding.GetString($stream.ToArray()).Replace([string] [char] 0x80, '&#x80;')
+    [System.IO.File]::WriteAllText($mamlFile.FullName, $mamlText, $settings.Encoding)
 }
 
 # Synopsis: Asserts that the tag on HEAD (if any) matches the source manifest ModuleVersion plus any Prerelease label
