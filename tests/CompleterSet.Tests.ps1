@@ -1659,7 +1659,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
 
-        It 'reads the set as data only, without opening it a second time, and never evaluates set content' {
+        It 'reads the set as data only, without Import-PowerShellDataFile, and never evaluates set content' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
             Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 1; Entries = @( (New-Item -ItemType File -Path '$probePath') ) }" -Encoding utf8
 
