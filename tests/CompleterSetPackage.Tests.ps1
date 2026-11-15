@@ -540,6 +540,29 @@ Describe 'Import-CompleterSet -Name' {
         Get-TestPackageRegistration | Should -BeNullOrEmpty
     }
 
+    It 'fails on a manifest over the 128 KB set file limit without parsing it' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $manifestPath = Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psd1'
+        # A comment past the limit leaves the manifest valid data, so only a read held to the limit refuses it.
+        Add-Content -LiteralPath $manifestPath -Value ('# ' + ('x' * 128KB)) -Encoding utf8
+        (Import-PowerShellDataFile -LiteralPath $manifestPath).PrivateData.CompleterSet | Should -Be 'completers/completers.psd1'
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $thrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. The module manifest '$manifestPath' is larger than the 131072-byte limit for completer set files and their module manifests."
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
     It 'fails a wildcard name before resolving anything' {
         $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
         $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
@@ -1522,6 +1545,34 @@ finally
         { Import-PowerShellDataFile -LiteralPath $manifestPath } | Should -Throw
 
         @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+    }
+
+    It 'treats a parent .psd1 over the 128 KB set file limit as no manifest, and fails -Name on it, without parsing it' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding) | Should -Be @(Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath)
+
+        # A comment past the limit leaves the manifest valid data that declares the set, so only a read held to the
+        # limit finds no manifest.
+        Add-Content -LiteralPath $manifestPath -Value ('# ' + ('x' * 128KB)) -Encoding utf8
+        (Import-PowerShellDataFile -LiteralPath $manifestPath).PrivateData.CompleterSet | Should -Be 'completers/completers.psd1'
+
+        @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $thrown = { Test-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. The module manifest '$manifestPath' is larger than the 131072-byte limit for completer set files and their module manifests."
     }
 
     It 'treats a parent folder that cannot be listed as holding no manifest' {

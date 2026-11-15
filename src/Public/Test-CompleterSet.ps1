@@ -11,16 +11,19 @@ returns nothing, the same shape Test-CompleterScript uses.
 
 The set file is read once and evaluated as data only, as Import-CompleterSet
 reads it, and each finding points at a line and column of that same read, so
-the set file is not read again and a set rewritten during the test cannot
-change what the findings take from it. The scripts the entries name, and the
-module manifests -Name reads or the folder above the set's folder holds, are
-other files, each read separately and not held to the set file limit. Every
-strict entry is parsed once, whether or not its Hash matches, because the
-command verifies rather than takes the fast path. A trusted entry is never
-parsed, as at import, so it can report only MissingScript, InvalidEntry,
-DuplicateTarget, and the three Hash kinds. No script is executed, and the
-session's registrations are neither read nor changed, so a conflict with what
-the session has registered is not drift.
+the set file is not read by its own path again and a set rewritten during the
+test cannot change the entries checked or the positions reported. The module
+manifests -Name reads or the folder above the set's folder holds are read by
+their own paths, held to the same 128 KB limit, and the scripts the entries
+name by theirs, parsed in full, because a completer script can be larger than
+a set. When a link makes one of those paths another name for the set file,
+that read sees the file as it is then. Every strict entry is parsed once,
+whether or not its Hash matches, because the command verifies rather than
+takes the fast path. A trusted entry is never parsed, as at import, so it can
+report only MissingScript, InvalidEntry, DuplicateTarget, and the three Hash
+kinds. No script is executed, and the session's registrations are neither
+read nor changed, so a conflict with what the session has registered is not
+drift.
 
 Construct names the kind of drift, and Severity is Error when
 Import-CompleterSet without -SkipInvalid would reject the set because of it,
@@ -54,13 +57,13 @@ at line 1, column 1 of the set.
 
 A set is a package set when its module manifest is known: through -Name, or,
 for -Path and -LiteralPath, when the folder above the set file's folder holds
-a .psd1 that reads as data and whose PrivateData.CompleterSet resolves to the
-set file, as in a staged package before it is published. When more than
-one .psd1 there declares the set, the first in ordinal order of file name is
-the manifest. A .psd1 that is not data declares nothing, and a folder that
-cannot be listed holds no manifest. A set that no manifest declares gets no
-PackageLayout finding. A package set is checked for four things, reported
-in this order:
+a .psd1 of at most 128 KB that reads as data and whose PrivateData.CompleterSet
+resolves to the set file, as in a staged package before it is published. When
+more than one .psd1 there declares the set, the first in ordinal order of file
+name is the manifest. A .psd1 that is not data or is larger than 128 KB
+declares nothing, and a folder that cannot be listed holds no manifest. A set
+that no manifest declares gets no PackageLayout finding. A package set is
+checked for four things, reported in this order:
 
 - Error, one per entry in set order, at the entry's Path: the Path is fully
   qualified, or resolves outside the module folder, so an installed copy of
@@ -82,7 +85,8 @@ A RootModule in the manifest is not a finding.
 With -Name the set comes from an installed completer set package, found
 exactly as Import-CompleterSet -Name finds it: the first $env:PSModulePath
 root that has the module wins, and within it the highest version. The
-manifest is read as data, so nothing in the package runs. Each name is taken
+manifest is read as data, so nothing in the package runs, and a manifest
+larger than 128 KB fails the call before it is parsed. Each name is taken
 literally, and a name that does not resolve fails the call.
 
 Every -Path, -LiteralPath, or -Name value is resolved before any set is

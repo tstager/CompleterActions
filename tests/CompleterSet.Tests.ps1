@@ -2571,6 +2571,60 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             (Get-Item -LiteralPath $script:SetPath).Length | Should -BeGreaterThan $setBytes -Because 'the set was rewritten over the limit after it was read'
         }
 
+        It 'takes no package finding from a <LinkType> to the set beside its folder, even when the set is rewritten past the limit after it is read' -TestCases @(
+            @{ LinkType = 'HardLink' }
+            @{ LinkType = 'SymbolicLink' }
+        ) {
+            param($LinkType)
+
+            $setFolder = Join-Path -Path $script:SetRoot -ChildPath 'completers'
+            New-Item -Path $setFolder -ItemType Directory | Out-Null
+            $setPath = Join-Path -Path $setFolder -ChildPath 'completers.psd1'
+            Write-TestCompleterSet -Path $setPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            $linkPath = Join-Path -Path $script:SetRoot -ChildPath 'alias.psd1'
+
+            try
+            {
+                New-Item -ItemType $LinkType -Path $linkPath -Target $setPath -ErrorAction Stop | Out-Null
+            }
+            catch
+            {
+                Set-ItResult -Skipped -Because "this session cannot create a $($LinkType): $($_.Exception.Message)"
+                return
+            }
+
+            $setBytes = (Get-Item -LiteralPath $setPath).Length
+            Limit-TestCompleterSetFileSize -Bytes $setBytes
+            $expected = @(Test-CompleterSet -LiteralPath $setPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+            $expected | Should -Not -BeNullOrEmpty
+            ($expected -join '; ') | Should -Not -Match 'PackageLayout' -Because 'the link names the set, which declares no package'
+
+            # The rewritten set declares itself a package's set past the limit, so a read of the link that went past the
+            # limit would make the link the package manifest and add PackageLayout findings.
+            $setText = [System.IO.File]::ReadAllText($setPath)
+            $rewrittenSet = $setText.Substring(0, $setText.LastIndexOf('}')) + '# ' + ('x' * $setBytes) + "`nPrivateData = @{ CompleterSet = 'completers/completers.psd1' }`n}"
+
+            & (Get-Module -Name 'CompleterActions') {
+                param($RewrittenSet)
+
+                $script:TestRewrittenSet = $RewrittenSet
+                $script:TestReadDefinition = ${function:Import-CompleterSetDefinition}
+
+                function script:Import-CompleterSetDefinition
+                {
+                    param($LiteralPath)
+
+                    & $script:TestReadDefinition -LiteralPath $LiteralPath
+                    [System.IO.File]::WriteAllText($LiteralPath, $script:TestRewrittenSet)
+                }
+            } $rewrittenSet
+
+            $findings = @(Test-CompleterSet -LiteralPath $setPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+
+            $findings | Should -Be $expected
+            [System.IO.File]::ReadAllText($linkPath) | Should -BeExactly $rewrittenSet -Because 'the link must show the rewritten set for this test to cover a read of it'
+        }
+
         It 'returns a script block literal in a set past the default limits as a value and never runs it' {
             # A guard for the lifted limits, not a regression test: the default reader also returns a script block
             # literal as a value. The literal sits past the default limits, where only the lifted read reaches it,

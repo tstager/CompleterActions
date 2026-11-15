@@ -9,14 +9,16 @@ is known, so Test-CompleterSet can check the package layout.
 With Module, as Test-CompleterSet -Name gives it, the manifest is the one
 Resolve-CompleterSetModule chose. Without it, the candidates are the .psd1
 files in the folder above the set file's folder, taken in ordinal order of
-file name. The first that Import-PowerShellDataFile reads as data and whose
-PrivateData.CompleterSet resolves to the set file is the manifest, so a
-staged package is recognised before it is published, whatever its folder is
-called. A .psd1 that is not data does not declare the set, and a folder that
-cannot be listed holds no manifest. Paths are compared case-insensitively on
-Windows and macOS and case-sensitively on Linux.
+file name. The first that reads as data and whose PrivateData.CompleterSet
+resolves to the set file is the manifest, so a staged package is recognised
+before it is published, whatever its folder is called. A .psd1 that is not
+data does not declare the set, and a folder that cannot be listed holds no
+manifest. Paths are compared case-insensitively on Windows and macOS and
+case-sensitively on Linux.
 
-Nothing is imported or run: manifests are read as data only.
+Nothing is imported or run: Import-CompleterDataFile reads each candidate as
+data only, under the set file limit, so a .psd1 larger than 128 KB is not
+parsed and does not declare the set.
 
 .PARAMETER SetPath
 The full path of the completer set file.
@@ -87,13 +89,19 @@ function Get-CompleterSetPackage
 
         try
         {
-            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+            $manifestFile = Import-CompleterDataFile -LiteralPath $manifestPath
         }
         catch
         {
             continue
         }
 
+        if ($manifestFile.OverLimit)
+        {
+            continue
+        }
+
+        $manifest = $manifestFile.Data
         $privateData = $manifest['PrivateData']
         $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
 

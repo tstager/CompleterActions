@@ -70,12 +70,13 @@ Import-Module finds it, without loading it: the first $env:PSModulePath root
 that has the module wins, and within it the highest version, which is used
 even when its set is broken. The manifest is read as data, so the package's
 RootModule, ScriptsToProcess, NestedModules, and RequiredModules never load or
-run. Every name is resolved before any set is imported, and the set is then
-imported as -LiteralPath imports it, with two rules for packages. An entry
-whose script resolves outside the module folder is an invalid entry. A set
-with trusted entries writes one warning per name that counts them. Installing
-a completer set package and importing it by name is a decision to run its
-scripts: each one runs at its first tab, under its entry's trust tier.
+run, and a manifest larger than 128 KB, the set file limit, is refused before
+it is parsed. Every name is resolved before any set is imported, and the set
+is then imported as -LiteralPath imports it, with two rules for packages. An
+entry whose script resolves outside the module folder is an invalid entry. A
+set with trusted entries writes one warning per name that counts them.
+Installing a completer set package and importing it by name is a decision to
+run its scripts: each one runs at its first tab, under its entry's trust tier.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.
