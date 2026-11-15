@@ -2593,6 +2593,25 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             Test-Path -LiteralPath $probePath | Should -BeFalse
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
+
+        It 'refuses a set nested too deeply for the parser with the parse error Import-PowerShellDataFile gives' {
+            # 65,000 levels fit under the limit and lie far past the depth at which the parser gives up and
+            # returns no AST, only its error.
+            $nestedSet = '@{ Version = 1; Entries = ' + ('@(' * 65000)
+            [System.IO.File]::WriteAllText($script:SetPath, $nestedSet)
+            $parseErrors = $null
+            $nestedAst = [System.Management.Automation.Language.Parser]::ParseInput($nestedSet, [ref] $null, [ref] $parseErrors)
+            $nestedAst | Should -BeNullOrEmpty -Because 'the parser must give up for this test to cover a parse without an AST'
+
+            $readProblem = "The file '$((Resolve-Path -LiteralPath $script:SetPath).ProviderPath)' could not be parsed as a PowerShell Data File."
+            $thrown = { Import-PowerShellDataFile -LiteralPath $script:SetPath -ErrorAction Stop } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly $readProblem
+
+            $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+            $thrown = { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+        }
     }
 
     Context 'Typographic apostrophes in set data' {

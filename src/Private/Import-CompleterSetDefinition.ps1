@@ -20,8 +20,9 @@ UTF-8 unless a byte order mark names another encoding, and parsed. The data is
 the first hashtable in the parse, the one Import-PowerShellDataFile takes,
 evaluated by Ast.SafeGetValue, the data-only evaluator that cmdlet uses, so an
 expression is refused and a script block literal comes back as a ScriptBlock
-value that nothing runs. Parse errors and a file without a hashtable get the
-cmdlet's error text. Nothing opens the file again: the definition carries the
+value that nothing runs. Parse errors, among them input nested too deeply for
+the parser, which then returns no parse at all, and a file without a hashtable
+get the cmdlet's error text. Nothing opens the file again: the definition carries the
 parse, and Test-CompleterSet takes its positions from it, so a set rewritten
 during an import or a test reaches no later step and nothing past the limit is
 ever parsed.
@@ -95,9 +96,10 @@ function Import-CompleterSetDefinition
     $text = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false)).ReadToEnd()
     $parseErrors = $null
     $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $file.FullName, [ref] $null, [ref] $parseErrors)
-    $setHashtable = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false)
+    # A parser that gives up on input nested too deeply returns no AST, only its error.
+    $setHashtable = if ($parseErrors.Count -eq 0) { $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false) }
 
-    if ($parseErrors.Count -gt 0 -or $null -eq $setHashtable)
+    if ($null -eq $setHashtable)
     {
         throw "The file '$($file.FullName)' could not be parsed as a PowerShell Data File."
     }
