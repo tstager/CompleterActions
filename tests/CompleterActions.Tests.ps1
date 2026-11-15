@@ -2235,11 +2235,11 @@ Describe 'Packaged command help' {
 
         # Only the command's own definition carries the directive, so a second definition in its file, or one in any
         # other file that goes into the package after it, a private file or Bootstrap.ps1, would ship the command
-        # without the MAML.
+        # without the MAML. A scope modifier on the name defines the same command.
         $stagingRoot = New-TestBuildStage -Name 'duplicates'
         Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Public/Get-Completer.ps1') -Value '', "function Get-Completer { 'second' }"
         Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Get-BuildProbeShadow.ps1') -Value "function Reset-Completer { 'private' }"
-        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "function Test-CompleterSet { 'bootstrap' }"
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "function Test-CompleterSet { 'bootstrap' }", "function script:Unregister-Completer { 'bootstrap' }"
 
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
@@ -2248,6 +2248,30 @@ Describe 'Packaged command help' {
         $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Get-Completer\.ps1:\d+"
         $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Get-BuildProbeShadow\.ps1:1\b"
         $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Unregister-Completer' at [^'\r\n]*Unregister-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+    }
+
+    It 'fails the build when the package replaces a public command while it loads' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # A write to the Function: drive is no definition the sources show, so only the imported package reveals that
+        # the exported command lost the directive.
+        $stagingRoot = New-TestBuildStage -Name 'replaced'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "Set-Item -Path Function:Reset-Completer -Value { 'bootstrap' }"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Reset-Completer' is defined at [^'\r\n]*CompleterActions\.psm1:\d+"
     }
 }
 

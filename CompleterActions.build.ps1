@@ -120,8 +120,10 @@ task build clean, compile, external_help, {
         # The parser finds the functions, so a help line that starts with the word 'function' is not taken for one.
         $functionAsts = @($fileAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
 
+        # A scope modifier does not change the command a definition makes: function script:Get-Completer replaces
+        # Get-Completer.
         foreach ($definition in $fileAst.FindAll({ param($ast) $ast -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
-            $definitions[$definition.Name] += @("$($file.FullName):$($definition.Extent.StartLineNumber)")
+            $definitions[($definition.Name -replace '^(?:global|local|private|script):', '')] += @("$($file.FullName):$($definition.Extent.StartLineNumber)")
         }
 
         $firstFunctionLine = if ($functionAsts.Count -eq 0) { [int]::MaxValue } else { $functionAsts[0].Extent.StartLineNumber }
@@ -290,6 +292,36 @@ task build clean, compile, external_help, {
     $requiredAssembliesLine = 'RequiredAssemblies = @({0})' -f (@($sourceManifestData.RequiredAssemblies | ForEach-Object { "'$(ConvertTo-CompleterSingleQuotedText -Value $_)'" }) -join ', ')
     (Get-Content -Path $Data.Path) -replace '^RequiredAssemblies = .*$', $requiredAssembliesLine |
         Set-Content -Path $Data.Path -Encoding utf8
+
+    # The duplicate check reads the definitions in the sources, so a command replaced in another way while the module
+    # loads, through the Function: drive for example, is found only by importing the package. A new pwsh imports it,
+    # so this process does not hold the assembly in lib/ for the next compile.
+    $pwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+    $withoutMaml = @(
+        exec {
+            & $pwshPath -NoProfile -NonInteractive -Command {
+                param($ManifestPath, $CommandNames, $HelpFileName)
+
+                $ErrorActionPreference = 'Stop'
+                $module = Import-Module -Name $ManifestPath -PassThru
+
+                foreach ($name in $CommandNames) {
+                    $command = $module.ExportedFunctions[$name]
+
+                    if ($null -eq $command) {
+                        "'$name' is not exported"
+                    }
+                    elseif ($command.ScriptBlock.Ast.GetHelpContent().MamlHelpFile -ne $HelpFileName) {
+                        "'$name' is defined at $($command.ScriptBlock.File):$($command.ScriptBlock.StartPosition.StartLine)"
+                    }
+                }
+            } -args $Data.Path, @($public.BaseName), "$modulename-help.xml"
+        }
+    )
+
+    if ($withoutMaml.Count -gt 0) {
+        throw "build: each exported command must be the definition that reads its help from the MAML, but in the imported package $($withoutMaml -join '; ')."
+    }
 }
 
 # Synopsis: Regenerates every markdown help page under src/docs from the source module, overwriting hand edits
