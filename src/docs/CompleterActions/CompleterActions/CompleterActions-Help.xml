@@ -67,7 +67,7 @@ still succeeds.</maml:para>
             <maml:name>System.String</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
@@ -212,19 +212,19 @@ current session.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Export-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterSet</maml:linkText>
-        <maml:uri>Import-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -286,7 +286,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -315,7 +315,7 @@ registrations from being listed.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Get-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -336,7 +336,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -394,7 +394,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -451,7 +451,7 @@ registrations from being listed.</maml:para>
           </command:parameterValueGroup>
           <command:parameterValue required="true" variableLength="false">CompleterState[]</command:parameterValue>
           <dev:type>
-            <maml:name>CompleterState[]</maml:name>
+            <maml:name>CompleterActions.CompleterState[]</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -480,7 +480,7 @@ registrations from being listed.</maml:para>
       </command:syntaxItem>
     </command:syntax>
     <command:parameters>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>CommandName</maml:name>
         <maml:description>
           <maml:para>Limits results to one or more command names for native or command-parameter
@@ -514,16 +514,18 @@ completers.</maml:para>
         <maml:name>InputObject</maml:name>
         <maml:description>
           <maml:para>Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-Completer or Import-CompleterScript. An
-input object exposes CommandName with IsNative/Native or ParameterName, or a
-Key, RegistrationKey, or RuntimeKey together with IsNative/Native.</maml:para>
+records returned by Get-Completer or Import-CompleterScript. Every piped
+object binds here. An input object describes one target: it exposes
+CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
+or RuntimeKey together with IsNative/Native. To look up several targets at
+once, pass arrays to -CommandName and -ParameterName instead.</maml:para>
         </maml:description>
         <command:parameterValue required="true" variableLength="true">System.Object[]</command:parameterValue>
         <dev:type>
           <maml:name>System.Object[]</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="IsNative">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="IsNative">
         <maml:name>Native</maml:name>
         <maml:description>
           <maml:para>Indicates that the lookup target is a native command completer instead of a
@@ -533,7 +535,7 @@ command parameter completer.</maml:para>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="none">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>ParameterName</maml:name>
         <maml:description>
           <maml:para>Limits results to one or more parameter completer targets.</maml:para>
@@ -568,9 +570,9 @@ union.</maml:para>
           <command:parameterValue required="false" variableLength="false">Failed</command:parameterValue>
           <command:parameterValue required="false" variableLength="false">Discovered</command:parameterValue>
         </command:parameterValueGroup>
-        <command:parameterValue required="true" variableLength="true">CompleterState[]</command:parameterValue>
+        <command:parameterValue required="true" variableLength="true">CompleterActions.CompleterState[]</command:parameterValue>
         <dev:type>
-          <maml:name>CompleterState[]</maml:name>
+          <maml:name>CompleterActions.CompleterState[]</maml:name>
         </dev:type>
       </command:parameter>
     </command:parameters>
@@ -671,11 +673,7 @@ piping its import records back in.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
-      </maml:navigationLink>
-      <maml:navigationLink>
-        <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-Completer.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Get-Completer.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -746,7 +744,7 @@ remain importable through the strict tier without redesign. Run
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Import-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -764,7 +762,7 @@ remain importable through the strict tier without redesign. Run
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Import-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -792,7 +790,7 @@ remain importable through the strict tier without redesign. Run
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
-      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="none">
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
         <maml:name>Path</maml:name>
         <maml:description>
           <maml:para>One or more paths to completer script files. Wildcards are supported.</maml:para>
@@ -896,11 +894,7 @@ grammar, then registers it. The imported records carry `Trusted` set to
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
-      </maml:navigationLink>
-      <maml:navigationLink>
-        <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Import-CompleterScript.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterScript.md</maml:uri>
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -988,7 +982,7 @@ run its scripts: each one runs at its first tab, under its entry's trust tier.</
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Import-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1027,7 +1021,7 @@ run its scripts: each one runs at its first tab, under its entry's trust tier.</
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Import-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1264,23 +1258,23 @@ needs, with no path.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Export-CompleterSet</maml:linkText>
-        <maml:uri>Export-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Register-Completer</maml:linkText>
-        <maml:uri>Register-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -1445,7 +1439,7 @@ path.</maml:para>
             <maml:name>System.String</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>HelpText</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1713,23 +1707,23 @@ New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -F
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/New-CompleterScript.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Register-Completer</maml:linkText>
-        <maml:uri>Register-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Export-CompleterSet</maml:linkText>
-        <maml:uri>Export-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -1784,7 +1778,7 @@ the ordinary completer call; it never hooks key handlers, replaces
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Register-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1792,7 +1786,7 @@ the ordinary completer call; it never hooks key handlers, replaces
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -1839,7 +1833,7 @@ the ordinary completer call; it never hooks key handlers, replaces
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Register-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">psobject[]</command:parameterValue>
@@ -2030,7 +2024,7 @@ the ordinary completer call; it never hooks key handlers, replaces
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Register-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2038,7 +2032,7 @@ the ordinary completer call; it never hooks key handlers, replaces
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -2269,14 +2263,6 @@ records. Lazy registrations carry `State` `Pending`, the `ScriptPath` they
 load, and `Trusted`.</maml:para>
         </maml:description>
       </command:returnValue>
-      <command:returnValue>
-        <dev:type>
-          <maml:name>System.Management.Automation.PSObject</maml:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
-        </maml:description>
-      </command:returnValue>
     </command:returnValues>
     <maml:alertSet>
       <maml:alert>
@@ -2341,19 +2327,19 @@ have been fixed.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Register-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -2424,7 +2410,7 @@ use `Unregister-Completer`.</maml:para>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Reset-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2432,7 +2418,7 @@ use `Unregister-Completer`.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2464,7 +2450,7 @@ use `Unregister-Completer`.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Reset-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -2496,7 +2482,7 @@ use `Unregister-Completer`.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Reset-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2504,7 +2490,7 @@ use `Unregister-Completer`.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -2696,23 +2682,23 @@ Get-Completer -State Active, Failed | Where-Object ScriptPath -eq $path | Reset-
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Reset-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Register-Completer</maml:linkText>
-        <maml:uri>Register-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Unregister-Completer</maml:linkText>
-        <maml:uri>Unregister-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterSet</maml:linkText>
-        <maml:uri>Import-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -2744,7 +2730,7 @@ registration, and it never touches PSReadLine.</maml:para>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2752,7 +2738,7 @@ registration, and it never touches PSReadLine.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2779,7 +2765,7 @@ registration, and it never touches PSReadLine.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -2806,7 +2792,7 @@ registration, and it never touches PSReadLine.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -2814,7 +2800,7 @@ registration, and it never touches PSReadLine.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -2994,15 +2980,15 @@ $matches.CompletionText | Should -Contain 'checkout'
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterRegistration.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Get-Completer</maml:linkText>
-        <maml:uri>Get-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -3031,7 +3017,7 @@ not checked further. `Test-CompleterScript` never executes the script.</maml:par
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Test-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3042,7 +3028,7 @@ not checked further. `Test-CompleterScript` never executes the script.</maml:par
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterScript</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3158,15 +3144,15 @@ Describe 'completer conformance' {
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterScript.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterScript</maml:linkText>
-        <maml:uri>Import-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterRegistration</maml:linkText>
-        <maml:uri>Test-CompleterRegistration.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -3270,7 +3256,7 @@ findings, because the scan for unlisted scripts would be incomplete.</maml:para>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Test-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="0" aliases="FullName">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
           <maml:name>Path</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3289,7 +3275,7 @@ findings, because the scan for unlisted scripts would be incomplete.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterSet</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="PSPath">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
           <maml:name>LiteralPath</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3443,19 +3429,19 @@ package layout, by the same name the profile's `Import-CompleterSet` line uses.<
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterSet.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Import-CompleterSet</maml:linkText>
-        <maml:uri>Import-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Export-CompleterSet</maml:linkText>
-        <maml:uri>Export-CompleterSet.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Test-CompleterScript</maml:linkText>
-        <maml:uri>Test-CompleterScript.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>
@@ -3485,7 +3471,10 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-Completer output. Keys are output-only identifiers: a
+from Get-Completer output; each target is decided once per call, so the
+Conflicted twin of a Stale record is skipped rather than confirmed again or
+reported as missing, and a declined confirmation stands. Keys are output-only
+identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.
 To reload a Failed or Active script-backed registration instead of removing
@@ -3494,7 +3483,7 @@ it, use Reset-Completer.</maml:para>
     <command:syntax>
       <command:syntaxItem>
         <maml:name>Unregister-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3502,7 +3491,7 @@ it, use Reset-Completer.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>ParameterName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3541,7 +3530,7 @@ it, use Reset-Completer.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Unregister-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
           <maml:name>InputObject</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">Object[]</command:parameterValue>
@@ -3580,7 +3569,7 @@ it, use Reset-Completer.</maml:para>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Unregister-Completer</maml:name>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>CommandName</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
@@ -3588,7 +3577,7 @@ it, use Reset-Completer.</maml:para>
             <maml:name>System.String[]</maml:name>
           </dev:type>
         </command:parameter>
-        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="none">
           <maml:name>Native</maml:name>
           <maml:description />
           <dev:type>
@@ -3629,7 +3618,9 @@ it, use Reset-Completer.</maml:para>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>AllowUnmanaged</maml:name>
         <maml:description>
-          <maml:para>Allows removal of runtime registrations that are not tracked by this module.</maml:para>
+          <maml:para>Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -3737,15 +3728,8 @@ targets.</maml:para>
           <maml:name>CompleterActions.CompleterRegistration</maml:name>
         </dev:type>
         <maml:description>
-          <maml:para>When -PassThru is used</maml:para>
-        </maml:description>
-      </command:returnValue>
-      <command:returnValue>
-        <dev:type>
-          <maml:name>System.Management.Automation.PSObject</maml:name>
-        </dev:type>
-        <maml:description>
-          <maml:para />
+          <maml:para>When `-PassThru` is used, returns the removed
+`CompleterActions.CompleterRegistration` records.</maml:para>
         </maml:description>
       </command:returnValue>
     </command:returnValues>
@@ -3758,15 +3742,11 @@ targets.</maml:para>
     <command:relatedLinks>
       <maml:navigationLink>
         <maml:linkText>Online Version</maml:linkText>
-        <maml:uri />
-      </maml:navigationLink>
-      <maml:navigationLink>
-        <maml:linkText>text</maml:linkText>
-        <maml:uri>https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md</maml:uri>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Unregister-Completer.md</maml:uri>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Reset-Completer</maml:linkText>
-        <maml:uri>Reset-Completer.md</maml:uri>
+        <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>
   </command:command>

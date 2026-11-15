@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Unregister-Completer.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -60,7 +60,10 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-Completer output. Keys are output-only identifiers: a
+from Get-Completer output; each target is decided once per call, so the
+Conflicted twin of a Stale record is skipped rather than confirmed again or
+reported as missing, and a declined confirmation stands. Keys are output-only
+identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
 plus -Native or -ParameterName instead.
 To reload a Failed or Active script-backed registration instead of removing
@@ -72,7 +75,9 @@ it, use Reset-Completer.
 
 ### -AllowUnmanaged
 
-Allows removal of runtime registrations that are not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -269,14 +274,11 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### CompleterActions.CompleterRegistration
 
-When -PassThru is used
-
-### System.Management.Automation.PSObject
+When `-PassThru` is used, returns the removed
+`CompleterActions.CompleterRegistration` records.
 
 ## NOTES
 
 ## RELATED LINKS
-
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md)
 
 [Reset-Completer](Reset-Completer.md)

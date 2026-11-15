@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Get-Completer.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -129,13 +129,13 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -183,9 +183,11 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-Completer or Import-CompleterScript. An
-input object exposes CommandName with IsNative/Native or ParameterName, or a
-Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
+records returned by Get-Completer or Import-CompleterScript. Every piped
+object binds here. An input object describes one target: it exposes
+CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
+or RuntimeKey together with IsNative/Native. To look up several targets at
+once, pass arrays to -CommandName and -ParameterName instead.
 
 ```yaml
 Type: System.Object[]
@@ -220,7 +222,7 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -241,7 +243,7 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -274,7 +276,7 @@ Stale, Conflicted, Pending, Failed, or Discovered. Several values return the
 union.
 
 ```yaml
-Type: CompleterState[]
+Type: CompleterActions.CompleterState[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -328,5 +330,3 @@ the failure message of a Failed record.
 ## NOTES
 
 ## RELATED LINKS
-
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-Completer.md)

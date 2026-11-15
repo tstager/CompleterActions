@@ -1749,6 +1749,589 @@ Describe 'Removed surface' {
     }
 }
 
+Describe 'Packaged command help' {
+    BeforeAll {
+        function New-TestBuildStage
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only copies the build inputs into TestDrive.')]
+            [CmdletBinding()]
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name
+            )
+
+            # The build derives the module name from its folder, so the inputs are staged under a folder with that name.
+            $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+            $stagingRoot = Join-Path -Path $TestDrive -ChildPath "$Name/CompleterActions"
+            New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+            foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
+            {
+                Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+            }
+
+            foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+            {
+                Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+
+            $stagingRoot
+        }
+    }
+
+    It 'points every packaged command at the generated MAML and renders it' {
+        $commands = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $helpError = $null
+                    try
+                    {
+                        $null = Get-Help -Name $command.Name -Full -ErrorAction Stop | Out-String -Width 4096
+                    }
+                    catch
+                    {
+                        $helpError = $_.Exception.Message
+                    }
+
+                    [pscustomobject] @{
+                        Name         = $command.Name
+                        MamlHelpFile = [string] $command.ScriptBlock.Ast.GetHelpContent().MamlHelpFile
+                        HelpError    = [string] $helpError
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($commands.Name | Sort-Object) | Should -Be $publicCommands
+        foreach ($command in $commands)
+        {
+            $command.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml' -Because "the packaged $($command.Name) must carry a recognized .EXTERNALHELP directive"
+            $command.HelpError | Should -BeNullOrEmpty -Because "Get-Help $($command.Name) -Full must render the MAML"
+        }
+    }
+
+    It 'shows Reset-Completer wording that only the MAML has' {
+        # Both sentences come from the maintained markdown help and are absent from the source comment help,
+        # so finding them in the packaged Get-Help output shows the MAML was selected.
+        $mamlOnlyPhrases = @(
+            'the first of these rules that applies decides it'
+            'whose script was deleted is therefore left alone without an error'
+        )
+        $sourceHelp = (Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public/Reset-Completer.ps1') -Raw) -replace '\s+', ' '
+        $text = (@(
+                Invoke-TestBuildHelp -Script {
+                    Get-Help -Name 'Reset-Completer' -Full -ErrorAction Stop | Out-String -Width 4096
+                }
+            ) -join "`n") -replace '\s+', ' '
+
+        foreach ($phrase in $mamlOnlyPhrases)
+        {
+            $sourceHelp | Should -Not -Match ([regex]::Escape($phrase)) -Because 'the phrase must be unique to the MAML to show which help Get-Help selected'
+            $text | Should -Match ([regex]::Escape($phrase))
+        }
+    }
+
+    It 'links every packaged command online to its maintained markdown page and to no relative or pinned URI' {
+        $links = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    foreach ($link in (Get-Help -Name $command.Name -Full -ErrorAction Stop).relatedLinks.navigationLink)
+                    {
+                        [pscustomobject] @{
+                            Name     = $command.Name
+                            LinkText = [string] $link.linkText
+                            Uri      = [string] $link.uri
+                        }
+                    }
+                }
+            }
+        )
+        $projectUri = (Import-PowerShellDataFile -Path (Join-Path -Path $PSScriptRoot -ChildPath '../CompleterActions.psd1')).PrivateData.PSData.ProjectUri
+        $publicCommands = @(Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+
+        foreach ($name in $publicCommands)
+        {
+            $onlineLink = @($links | Where-Object { $_.Name -eq $name })[0]
+
+            $onlineLink.LinkText | Should -BeExactly 'Online Version' -Because "Get-Help -Online $name uses the first related link"
+            $onlineLink.Uri | Should -BeExactly "$projectUri/blob/main/src/docs/CompleterActions/$name.md"
+            Join-Path -Path $PSScriptRoot -ChildPath "../src/docs/CompleterActions/$name.md" | Should -Exist
+        }
+
+        foreach ($link in $links | Where-Object { $_.Uri })
+        {
+            $link.Uri | Should -Match '^https?://' -Because "Get-Help stops on a related link of $($link.Name) that is not absolute"
+            $link.Uri | Should -Not -Match '/blob/[0-9a-f]{40}/' -Because "a related link of $($link.Name) must not point at one old commit"
+        }
+    }
+
+    It 'documents in a full sentence each output type a packaged command declares, and no other' {
+        $outputs = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $returnValues = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).returnValues.returnValue)
+
+                    [pscustomobject] @{
+                        Name         = $command.Name
+                        Declared     = @($command.OutputType.Name | Sort-Object)
+                        Documented   = @($returnValues | ForEach-Object { [string] $_.type.name } | Sort-Object)
+                        Descriptions = @($returnValues | ForEach-Object { ($_.description | ForEach-Object Text) -join ' ' })
+                    }
+                }
+            }
+        )
+
+        $outputs | Should -Not -BeNullOrEmpty
+        foreach ($command in $outputs)
+        {
+            @($command.Documented) | Should -Be @($command.Declared) -Because "the OUTPUTS of the packaged $($command.Name) must list its OutputType"
+            foreach ($description in $command.Descriptions)
+            {
+                $description | Should -Match '\.\s*$' -Because "each OUTPUTS entry of $($command.Name) must say what the command returns"
+            }
+        }
+    }
+
+    It 'describes each parameter of a packaged command in Get-Help as the command declares it' {
+        # The MAML is built from hand-maintained markdown, so only this comparison keeps installed Get-Help in step
+        # with the parameters the commands declare. A PARAMETERS entry describes the parameter across all its sets, as
+        # the MAML builder writes it: it takes pipeline input in any way one of its sets does, is required when any set
+        # makes it mandatory, and names one position, which must be one of its sets' positions. The syntax test
+        # checks each set on its own.
+        $parameters = @(
+            Invoke-TestBuildHelp -Script {
+                $commonParameters = [System.Management.Automation.PSCmdlet]::CommonParameters
+
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $helpParameters = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).parameters.parameter)
+                    $names = @(@($command.Parameters.Keys) + @($helpParameters.name) | Where-Object { $_ -notin $commonParameters } | Sort-Object -Unique)
+
+                    foreach ($name in $names)
+                    {
+                        $metadata = $command.Parameters[$name]
+                        $help = @($helpParameters | Where-Object { $_.name -eq $name })
+                        $sets = @(if ($null -ne $metadata) { $metadata.ParameterSets.Values })
+                        $byValue = @($sets | Where-Object ValueFromPipeline).Count -gt 0
+                        $byPropertyName = @($sets | Where-Object ValueFromPipelineByPropertyName).Count -gt 0
+
+                        [pscustomobject] @{
+                            Command               = $command.Name
+                            Parameter             = $name
+                            Declared              = $null -ne $metadata
+                            HelpEntries           = $help.Count
+                            PipelineInput         = [string] $help.pipelineInput
+                            Required              = [string] $help.required
+                            Position              = [string] $help.position
+                            Aliases               = @(([string] $help.aliases) -split ',\s*' | Sort-Object) -join ', '
+                            Type                  = [string] $help.type.name
+                            DeclaredPipelineInput = if ($byValue -or $byPropertyName) { 'true ({0})' -f (@(if ($byValue) { 'ByValue' }; if ($byPropertyName) { 'ByPropertyName' }) -join ', ') } else { 'false' }
+                            DeclaredRequired      = if (@($sets | Where-Object IsMandatory).Count -gt 0) { 'true' } else { 'false' }
+                            DeclaredPositions     = @($sets | ForEach-Object { if ($_.Position -lt 0) { 'Named' } else { [string] $_.Position } } | Sort-Object -Unique)
+                            DeclaredAliases       = if ($null -ne $metadata -and $metadata.Aliases.Count -gt 0) { @($metadata.Aliases | Sort-Object) -join ', ' } else { 'none' }
+                            DeclaredType          = if ($null -ne $metadata) { $metadata.ParameterType.FullName } else { '' }
+                        }
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($parameters.Command | Sort-Object -Unique) | Should -Be $publicCommands
+        $drift = @(
+            foreach ($parameter in $parameters)
+            {
+                $target = '{0} -{1}' -f $parameter.Command, $parameter.Parameter
+
+                if (-not $parameter.Declared)
+                {
+                    "$target is in Get-Help but not declared"
+                    continue
+                }
+
+                if ($parameter.HelpEntries -ne 1)
+                {
+                    "$target has $($parameter.HelpEntries) Get-Help entries"
+                    continue
+                }
+
+                if ($parameter.PipelineInput -ne $parameter.DeclaredPipelineInput)
+                {
+                    "$target pipeline input is '$($parameter.PipelineInput)' in Get-Help but '$($parameter.DeclaredPipelineInput)' declared"
+                }
+
+                if ($parameter.Required -ne $parameter.DeclaredRequired)
+                {
+                    "$target required is '$($parameter.Required)' in Get-Help but '$($parameter.DeclaredRequired)' declared"
+                }
+
+                if ($parameter.Position -notin $parameter.DeclaredPositions)
+                {
+                    "$target position is '$($parameter.Position)' in Get-Help but '$($parameter.DeclaredPositions -join "', '")' declared"
+                }
+
+                if ($parameter.Aliases -ne $parameter.DeclaredAliases)
+                {
+                    "$target aliases are '$($parameter.Aliases)' in Get-Help but '$($parameter.DeclaredAliases)' declared"
+                }
+
+                if ($parameter.Type -ne $parameter.DeclaredType)
+                {
+                    "$target type is '$($parameter.Type)' in Get-Help but '$($parameter.DeclaredType)' declared"
+                }
+            }
+        )
+
+        $drift | Should -BeNullOrEmpty
+    }
+
+    It 'shows each parameter set of a packaged command in its syntax with the required flags, positions and pipeline input the set declares' {
+        # A set's syntax entry is the one that lists exactly the set's parameters, as parameter sets differ in them.
+        $setParameters = @(
+            Invoke-TestBuildHelp -Script {
+                $commonParameters = [System.Management.Automation.PSCmdlet]::CommonParameters
+
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $syntaxItems = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).syntax.syntaxItem)
+
+                    foreach ($set in $command.ParameterSets)
+                    {
+                        $parameters = @($set.Parameters | Where-Object { $_.Name -notin $commonParameters })
+                        $names = @($parameters.Name | Sort-Object) -join ', '
+                        $items = @($syntaxItems | Where-Object { (@($_.parameter.name | Sort-Object) -join ', ') -eq $names })
+
+                        foreach ($parameter in $parameters)
+                        {
+                            $help = @(if ($items.Count -eq 1) { $items[0].parameter | Where-Object { $_.name -eq $parameter.Name } })
+
+                            [pscustomobject] @{
+                                Command               = $command.Name
+                                SetCount              = $command.ParameterSets.Count
+                                SyntaxCount           = $syntaxItems.Count
+                                Set                   = $set.Name
+                                SetParameters         = $names
+                                SyntaxItems           = $items.Count
+                                Parameter             = $parameter.Name
+                                Required              = [string] $help.required
+                                Position              = [string] $help.position
+                                PipelineInput         = [string] $help.pipelineInput
+                                DeclaredRequired      = if ($parameter.IsMandatory) { 'true' } else { 'false' }
+                                DeclaredPosition      = if ($parameter.Position -lt 0) { 'named' } else { [string] $parameter.Position }
+                                DeclaredPipelineInput = if ($parameter.ValueFromPipeline -or $parameter.ValueFromPipelineByPropertyName) { 'true ({0})' -f (@(if ($parameter.ValueFromPipeline) { 'ByValue' }; if ($parameter.ValueFromPipelineByPropertyName) { 'ByPropertyName' }) -join ', ') } else { 'false' }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($setParameters.Command | Sort-Object -Unique) | Should -Be $publicCommands
+        $drift = @(
+            foreach ($command in $setParameters | Group-Object -Property Command)
+            {
+                if ($command.Group[0].SyntaxCount -ne $command.Group[0].SetCount)
+                {
+                    "$($command.Name) has $($command.Group[0].SyntaxCount) syntax entries for $($command.Group[0].SetCount) parameter sets"
+                }
+            }
+
+            foreach ($parameter in $setParameters)
+            {
+                $target = '{0} -{1} in set {2}' -f $parameter.Command, $parameter.Parameter, $parameter.Set
+
+                if ($parameter.SyntaxItems -ne 1)
+                {
+                    "set $($parameter.Set) of $($parameter.Command) ($($parameter.SetParameters)) has $($parameter.SyntaxItems) syntax entries"
+                    continue
+                }
+
+                if ($parameter.Required -ne $parameter.DeclaredRequired)
+                {
+                    "$target required is '$($parameter.Required)' in the syntax but '$($parameter.DeclaredRequired)' declared"
+                }
+
+                if ($parameter.Position -ne $parameter.DeclaredPosition)
+                {
+                    "$target position is '$($parameter.Position)' in the syntax but '$($parameter.DeclaredPosition)' declared"
+                }
+
+                if ($parameter.PipelineInput -ne $parameter.DeclaredPipelineInput)
+                {
+                    "$target pipeline input is '$($parameter.PipelineInput)' in the syntax but '$($parameter.DeclaredPipelineInput)' declared"
+                }
+            }
+        )
+
+        @($drift | Select-Object -Unique) | Should -BeNullOrEmpty
+    }
+
+    It 'replaces only the help that leads into each public command, in any layout, and keeps every other source line' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        $stagingRoot = New-TestBuildStage -Name 'layouts'
+        $publicRoot = Join-Path -Path $stagingRoot -ChildPath 'src/Public'
+        $helpLineLikeDeclaration = 'function names in this description are informational only.'
+
+        # A help line that starts with the word 'function', which a line pattern takes for the declaration.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Get-Completer.ps1'
+        $lines = [System.Collections.Generic.List[string]] @(Get-Content -LiteralPath $path)
+        $lines.IndexOf('.DESCRIPTION') | Should -BeGreaterOrEqual 0
+        $lines.Insert($lines.IndexOf('.DESCRIPTION') + 1, $helpLineLikeDeclaration)
+        Set-Content -LiteralPath $path -Value $lines
+
+        # A blank line between the help block and the declaration.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Unregister-Completer.ps1'
+        $lines = [System.Collections.Generic.List[string]] @(Get-Content -LiteralPath $path)
+        $lines.IndexOf('function Unregister-Completer') | Should -BeGreaterThan 0
+        $lines.Insert($lines.IndexOf('function Unregister-Completer'), '')
+        Set-Content -LiteralPath $path -Value $lines
+
+        # Help written as line comments instead of a block.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterScript.ps1'
+        $lines = @(Get-Content -LiteralPath $path)
+        $helpEnd = [array]::IndexOf($lines, '#>')
+        $lines[0] | Should -BeExactly '<#'
+        Set-Content -LiteralPath $path -Value @(@($lines[1..($helpEnd - 1)] | ForEach-Object { "# $_" }) + $lines[($helpEnd + 1)..($lines.Count - 1)])
+
+        # The help closes on the declaration's line.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Import-CompleterSet.ps1'
+        $lines = @(Get-Content -LiteralPath $path)
+        $declarationIndex = [array]::IndexOf($lines, 'function Import-CompleterSet')
+        $lines[$declarationIndex - 1] | Should -BeExactly '#>'
+        Set-Content -LiteralPath $path -Value @($lines[0..($declarationIndex - 2)] + "#> $($lines[$declarationIndex])" + $lines[($declarationIndex + 1)..($lines.Count - 1)])
+
+        # A #requires line, and a statement that ends in a comment, each directly above the help.
+        $requiresLine = '#requires -Version 7.4'
+        $trailingComment = '# a comment that ends a statement'
+        $statementLine = "`$script:BuildProbeMarker = 'kept'  $trailingComment"
+        $path = Join-Path -Path $publicRoot -ChildPath 'Export-CompleterSet.ps1'
+        Set-Content -LiteralPath $path -Value @(@($requiresLine) + @(Get-Content -LiteralPath $path))
+        $path = Join-Path -Path $publicRoot -ChildPath 'Import-CompleterScript.ps1'
+        Set-Content -LiteralPath $path -Value @(@($statementLine) + @(Get-Content -LiteralPath $path))
+
+        # A helper function with its own comment help ahead of the command.
+        $helperSynopsis = 'A helper defined ahead of the command.'
+        $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterSet.ps1'
+        Set-Content -LiteralPath $path -Value @(@('<#', '.SYNOPSIS', $helperSynopsis, '#>', 'function Get-BuildProbeHelper { 1 }', '') + @(Get-Content -LiteralPath $path))
+
+        # A comment a blank line above the help, which is outside the block PowerShell reads the help from.
+        $regionLine = '#region BuildProbeRegion'
+        $path = Join-Path -Path $publicRoot -ChildPath 'Register-Completer.ps1'
+        Set-Content -LiteralPath $path -Value @(@($regionLine, '') + @(Get-Content -LiteralPath $path))
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+
+        $packagedPath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $packagedAst = [System.Management.Automation.Language.Parser]::ParseFile($packagedPath, [ref] $tokens, [ref] $parseErrors)
+
+        @($parseErrors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }) | Should -BeNullOrEmpty
+        $packagedText = Get-Content -LiteralPath $packagedPath -Raw
+        $packagedText | Should -Not -Match ([regex]::Escape($helpLineLikeDeclaration))
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($requiresLine))\r?$"
+        $packagedAst.ScriptRequirements.RequiredPSVersion | Should -Be ([version] '7.4') -Because 'the #requires line must stay a requirement of the packaged module'
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($statementLine))\r?$"
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($regionLine))\r?$"
+
+        $functions = @($packagedAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+        $publicNames = @(Get-ChildItem -LiteralPath $publicRoot -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+        $privateNames = @(Get-ChildItem -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private') -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+
+        @($functions | Where-Object Name -in $publicNames).Count | Should -Be $publicNames.Count
+        @($functions | Where-Object Name -in $privateNames).Count | Should -Be $privateNames.Count
+
+        foreach ($function in $functions | Where-Object Name -in $publicNames)
+        {
+            $leadingTokens = @($tokens | Where-Object { $_.Extent.EndOffset -le $function.Extent.StartOffset })
+            $leadingComments = @(
+                for ($index = $leadingTokens.Count - 1; $index -ge 0 -and $leadingTokens[$index].Kind -in 'Comment', 'NewLine'; $index--)
+                {
+                    if ($leadingTokens[$index].Kind -eq 'Comment')
+                    {
+                        $leadingTokens[$index].Text
+                    }
+                }
+            )
+
+            $leadingComments[0] -replace '\r', '' | Should -BeExactly "<#`n.EXTERNALHELP CompleterActions-help.xml`n#>"
+            @($leadingComments | Select-Object -Skip 1 | Where-Object { $_ -notin $requiresLine, $trailingComment, $regionLine }) | Should -BeNullOrEmpty -Because "only the directive may lead into the packaged $($function.Name)"
+
+            $help = $function.GetHelpContent()
+            $help.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml'
+            $help.Synopsis | Should -BeNullOrEmpty -Because "no comment may join the directive of the packaged $($function.Name)"
+        }
+
+        foreach ($function in $functions | Where-Object Name -in ($privateNames + 'Get-BuildProbeHelper'))
+        {
+            $help = $function.GetHelpContent()
+
+            $help.MamlHelpFile | Should -BeNullOrEmpty
+            $help.Synopsis | Should -Not -BeNullOrEmpty -Because "the packaged private $($function.Name) keeps its comment help"
+        }
+
+        @($functions | Where-Object Name -eq 'Get-BuildProbeHelper') | Should -HaveCount 1
+        ($functions | Where-Object Name -eq 'Get-BuildProbeHelper').GetHelpContent().Synopsis.Trim() | Should -BeExactly $helperSynopsis
+
+        $manifestPath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
+        $imported = & pwsh -NoProfile -NonInteractive -Command {
+            param($ManifestPath)
+
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name $ManifestPath -Force
+            $commands = @(Get-Command -Module 'CompleterActions' -CommandType Function)
+
+            [pscustomobject] @{
+                Exported = @($commands.Name | Sort-Object)
+                Maml     = @($commands | ForEach-Object { [string] $_.ScriptBlock.Ast.GetHelpContent().MamlHelpFile } | Sort-Object -Unique)
+                Marker   = & (Get-Module -Name 'CompleterActions') { $script:BuildProbeMarker }
+            }
+        } -args $manifestPath
+
+        $LASTEXITCODE | Should -Be 0
+        @($imported.Exported) | Should -Be @($publicNames | Sort-Object) -Because 'the package must export every public command and no helper'
+        @($imported.Maml) | Should -Be @('CompleterActions-help.xml')
+        $imported.Marker | Should -BeExactly 'kept' -Because 'the statement above the help of Import-CompleterScript must run when the package is imported'
+    }
+
+    It 'fails the build when a public command is defined more than once' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # Only the command's own definition carries the directive, so a second definition in its file, or one in any
+        # other file that goes into the package after it, a private file or Bootstrap.ps1, would ship the command
+        # without the MAML. A scope modifier on the name defines the same command.
+        $stagingRoot = New-TestBuildStage -Name 'duplicates'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Public/Get-Completer.ps1') -Value '', "function Get-Completer { 'second' }"
+        Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Get-BuildProbeShadow.ps1') -Value "function Reset-Completer { 'private' }"
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "function Test-CompleterSet { 'bootstrap' }", "function script:Unregister-Completer { 'bootstrap' }"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Get-Completer\.ps1:\d+"
+        $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Get-BuildProbeShadow\.ps1:1\b"
+        $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Unregister-Completer' at [^'\r\n]*Unregister-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+    }
+
+    It 'fails the build when the sources name a public command on the Function: drive, under any condition' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # Each write runs only when the package is imported into a session the build's import check does not match:
+        # one with PSReadLine loaded, one with an environment variable set, or not at all, from a helper nothing
+        # calls. Only the sources show them.
+        $stagingRoot = New-TestBuildStage -Name 'drive'
+        Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Set-BuildProbeShadow.ps1') -Value @(
+            'function Set-BuildProbeShadow'
+            '{'
+            "    New-Item -Path 'Function:\script:Test-CompleterSet' -Value { 'private' } -Force"
+            '}'
+        )
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value @(
+            ''
+            "if (Get-Module -Name 'PSReadLine') { Set-Item -Path Function:Reset-Completer -Value { 'bootstrap' } }"
+            "if (`$env:COMPLETERACTIONS_BUILD_PROBE) { `${function:Get-Completer} = { 'bootstrap' } }"
+        )
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Set-BuildProbeShadow\.ps1:3\b"
+    }
+
+    It 'fails the build when the package replaces a public command while it loads' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # A Function: path built at run time names no command the sources show, so only the imported package reveals
+        # that the exported command lost the directive.
+        $stagingRoot = New-TestBuildStage -Name 'replaced'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "`$buildProbeName = 'Reset-Completer'", "Set-Item -Path `"Function:`$buildProbeName`" -Value { 'bootstrap' }"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Reset-Completer' is defined at [^'\r\n]*CompleterActions\.psm1:\d+"
+    }
+
+    It 'builds a package that writes to the host while it loads' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # The import check reads what its pwsh returns, and host text comes back with it; that text is no finding.
+        $stagingRoot = New-TestBuildStage -Name 'host'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "Write-Host 'build probe host text'", "Write-Information 'build probe information' -InformationAction Continue"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Be 0 -Because $buildOutput
+    }
+}
+
 Describe 'Startup benchmark tool' {
     # Code points keep this file ASCII. Each typographic quote alone, and all five together, must
     # come back unchanged from the child script's literals.
