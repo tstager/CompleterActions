@@ -2501,6 +2501,8 @@ Register-ArgumentCompleter -CommandName 'Test-SetIdentityTool' -ParameterName 'N
         Set-Content -LiteralPath $parameterPath -Value $script:SetIdentityParameterText -Encoding utf8
         Write-TestCompleterSet -Path $setPath -Entry "@{ Path = 'identity_parameter_completer.ps1'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; Native = $NativeText } ) }"
 
+        $invalidEntries = @(Test-CompleterSet -LiteralPath $setPath | Where-Object -Property 'Construct' -EQ -Value 'InvalidEntry')
+        @($invalidEntries | ForEach-Object { '{0}/{1}' -f $_.Severity, $_.Message }) | Should -BeExactly @("Error/Entry 1 ('identity_parameter_completer.ps1'): Target 'Test-SetIdentityTool' must set Native to `$true or `$false.")
         { Import-CompleterSet -LiteralPath $setPath } | Should -Throw "*Entry 1 ('identity_parameter_completer.ps1'): Target 'Test-SetIdentityTool' must set Native to `$true or `$false.*"
         @(Get-Completer -CommandName 'Test-SetIdentityTool' -ParameterName 'Name') | Should -BeNullOrEmpty
         @(Get-Completer -CommandName 'Test-SetIdentityTool' -Native) | Should -BeNullOrEmpty

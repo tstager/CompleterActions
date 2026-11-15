@@ -1899,6 +1899,9 @@ Describe 'Registration identity' {
             } | Should -Throw '*is stale*-AllowUnmanaged*'
         }
 
+        # Safety guard: ownership moved from text to the exact script block, and this pins
+        # the two reuse paths the rewritten comparison must keep, equal unbound text and
+        # a re-import of the same script, so it passes before and after that change.
         It 'reuses the managed record for equal unbound text and for a re-imported script' {
             $first = [scriptblock]::Create("'same'")
             $second = [scriptblock]::Create("'same'")
@@ -1924,9 +1927,13 @@ Describe 'Registration identity' {
             @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | ForEach-Object { [string] $_.State }) | Should -Be @('Active', 'Active')
         }
 
+        # Safety guard: the rewritten comparison binds equal text to its module and file,
+        # and this pins that one module instance registering the same text from the same
+        # file stays a no-op, so it passes before and after that change.
         It 'reuses the managed record for equal text bound to the same module and defined in the same file' {
             $maker = New-Module -Name 'TestIdentityMaker' -ScriptBlock {
                 function Get-TestIdentityBlock { { 'same' } }
+                Export-ModuleMember
             }
 
             $first = & $maker { Get-TestIdentityBlock }
@@ -1958,7 +1965,7 @@ Describe 'Registration identity' {
 
             {
                 Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second
-            } | Should -Throw '*already exists*Use -Force*' -Because '$PSScriptRoot and $PSCommandPath resolve differently in each file'
+            } | Should -Throw '*already exists*Use -Force*' -Because 'the file that defines a script block is part of its context, whatever its text'
         }
     }
 
@@ -2119,6 +2126,7 @@ Describe 'Registration identity' {
             { $keyOnly | Test-CompleterRegistration -InputText 'x ' } | Should -Throw $refusal
             { [pscustomobject] @{ RegistrationKey = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'other' } } | Register-Completer -Force } | Should -Throw $refusal
             { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; SourcePath = (Join-Path -Path $TestDrive -ChildPath 'kelvin.ps1') } | Export-CompleterSet -Path (Join-Path -Path $TestDrive -ChildPath 'kelvin.psd1') } | Should -Throw $refusal
+            Test-Path -LiteralPath (Join-Path -Path $TestDrive -ChildPath 'kelvin.psd1') | Should -BeFalse -Because 'a refused export writes no set file'
 
             Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'", "sign/Active/'sign-result'")
 
@@ -2229,6 +2237,9 @@ Describe 'Registration identity' {
             Split-Path -Path $pending.ScriptPath -Leaf | Should -BeExactly 'Identity_completer.ps1'
         }
 
+        # Safety guard: script paths now compare the way the file system does, and on a
+        # case-insensitive one that must keep two spellings of one file as one script, so
+        # this passes before and after that change; its Linux sibling above fails before it.
         It 'treats two spellings of one script path as the same script on a case-insensitive file system' -Skip:(-not ($IsWindows -or $IsMacOS)) {
             $path = Join-Path -Path $TestDrive -ChildPath 'identity_completer.ps1'
             $otherSpelling = Join-Path -Path $TestDrive -ChildPath 'IDENTITY_COMPLETER.PS1'
@@ -2499,6 +2510,7 @@ function Register-TestIdentitySameArgument
                 $script:value = $Value
 
                 function Get-TestIdentityBlock { { $script:value } }
+                Export-ModuleMember
             }
 
             $firstMaker = New-Module -Name 'TestIdentityMakerA' -ScriptBlock $makerBody -ArgumentList 'alpha'
@@ -2524,6 +2536,96 @@ function Register-TestIdentitySameArgument
                 Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $other
             } | Should -Throw '*already exists*Use -Force*'
 
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+
+        # Safety guard: these pin the limits of the owner-ruled replacement by a new module
+        # instance, so they pass before and after it; the text case fails if the rule stops
+        # comparing the script block's text.
+        It 'still needs -Force for a block from a new instance of a module with the same name that differs in <Difference>' -ForEach @(
+            @{ Difference = 'text' }
+            @{ Difference = 'ScriptPath' }
+            @{ Difference = 'tier' }
+        ) {
+            $makerBody = {
+                param(
+                    [string] $Value
+                )
+
+                $script:value = $Value
+
+                function Get-TestIdentityBlock { { $script:value } }
+                function Get-TestIdentityChangedBlock { { "changed $script:value" } }
+                Export-ModuleMember
+            }
+
+            $firstMaker = New-Module -Name 'TestIdentityMakerC' -ScriptBlock $makerBody -ArgumentList 'alpha'
+            $againMaker = New-Module -Name 'TestIdentityMakerC' -ScriptBlock $makerBody -ArgumentList 'beta'
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock (& $firstMaker { Get-TestIdentityBlock })
+
+            $candidate = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; ScriptBlock = (& $againMaker { Get-TestIdentityBlock }) }
+
+            switch ($Difference)
+            {
+                'text' { $candidate.ScriptBlock = & $againMaker { Get-TestIdentityChangedBlock } }
+                'ScriptPath' { $candidate | Add-Member -NotePropertyName 'ScriptPath' -NotePropertyValue (Join-Path -Path $TestDrive -ChildPath 'identity-claimed.ps1') }
+                'tier' { $candidate | Add-Member -NotePropertyName 'Trusted' -NotePropertyValue $true }
+            }
+
+            [object]::ReferenceEquals($candidate.ScriptBlock.Module, $againMaker) | Should -BeTrue
+
+            { $candidate | Register-Completer } | Should -Throw '*already exists*Use -Force*'
+            Get-TestIdentityCompletion | Should -Be @('alpha') -Because 'the record of the first instance stays in place'
+        }
+
+        # Safety guard: pins that the file defining the block bounds the owner-ruled
+        # replacement by a new module instance, so it passes before and after that rule.
+        It 'still needs -Force for a block from a module with the same name that is defined in another file' {
+            $makerText = "New-Module -Name 'TestIdentityMakerD' -ScriptBlock { function Get-TestIdentityBlock { { 'same' } }; Export-ModuleMember }"
+            $firstPath = Join-Path -Path $TestDrive -ChildPath 'identity-maker-first.ps1'
+            $otherPath = Join-Path -Path $TestDrive -ChildPath 'identity-maker-other.ps1'
+            Set-Content -LiteralPath $firstPath -Value $makerText -Encoding utf8
+            Set-Content -LiteralPath $otherPath -Value $makerText -Encoding utf8
+            $first = & (& $firstPath) { Get-TestIdentityBlock }
+            $other = & (& $otherPath) { Get-TestIdentityBlock }
+            $other.Module.Name | Should -BeExactly $first.Module.Name
+            $other.ToString() | Should -BeExactly $first.ToString()
+            $other.File | Should -Not -Be $first.File
+
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $other
+            } | Should -Throw '*already exists*Use -Force*'
+        }
+
+        # Safety guard: pins the documented precondition that the owner-ruled replacement
+        # by a new module instance applies only to a live record, so it passes before and
+        # after the help states it.
+        It 'still needs -Force for a block from a new instance of a module with the same name over a stale record' {
+            $makerBody = {
+                param(
+                    [string] $Value
+                )
+
+                $script:value = $Value
+
+                function Get-TestIdentityBlock { { $script:value } }
+                Export-ModuleMember
+            }
+
+            $first = & (New-Module -Name 'TestIdentityMakerE' -ScriptBlock $makerBody -ArgumentList 'alpha') { Get-TestIdentityBlock }
+            $again = & (New-Module -Name 'TestIdentityMakerE' -ScriptBlock $makerBody -ArgumentList 'beta') { Get-TestIdentityBlock }
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'outside' }
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again
+            } | Should -Throw '*is stale*Use -Force*'
+            Get-TestIdentityCompletion | Should -Be @('outside')
+
+            $forced = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $again) | Should -BeTrue
             Get-TestIdentityCompletion | Should -Be @('beta')
         }
     }

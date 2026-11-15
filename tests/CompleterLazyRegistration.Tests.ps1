@@ -875,6 +875,10 @@ Describe 'Lazy registration of native names that lowercase to the same key, or o
         Get-TestLazyNativeCompletion -CommandName 'test-lazycasey' | Should -Be @('lower')
     }
 
+    # Safety guard: sibling paths now compare the way the file system does, and on a
+    # case-insensitive one that must keep swapping a sibling registered through another
+    # spelling of the file, so this passes before and after that change; its Linux
+    # sibling above fails before it.
     It 'swaps a sibling registered through another spelling of the same file on a case-insensitive file system' -Skip:(-not ($IsWindows -or $IsMacOS)) {
         $path = Join-Path -Path $TestDrive -ChildPath 'lazy_case_completer.ps1'
         $otherSpelling = Join-Path -Path $TestDrive -ChildPath 'LAZY_CASE_COMPLETER.PS1'
