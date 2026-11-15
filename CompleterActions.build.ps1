@@ -83,7 +83,9 @@ task build clean, compile, external_help, {
             Where-Object { Test-Path -Path $_ -PathType Container }
     )
     $public = Get-childitem -Path (Join-Path -Path $sourceRoot -ChildPath 'Public') -Filter *.ps1 -File
-    $files = Get-ChildItem -Path $sourceFolders -Filter *.ps1 -File
+    # Every file that goes into the packaged psm1 is read the same way, so the duplicate check below sees each definition
+    # the package makes. Bootstrap.ps1 runs the import-time work, so it goes last, after the functions it calls.
+    $files = @(Get-ChildItem -Path $sourceFolders -Filter *.ps1 -File) + (Get-Item -LiteralPath (Join-Path -Path $sourceRoot -ChildPath 'Bootstrap.ps1'))
     $moduleFilePath = Join-Path -Path $modulepath -ChildPath "$modulename.psm1"
     $moduleHelpPath = Join-Path -Path $modulepath -ChildPath 'en-US'
     $formatFiles = @($sourceManifestData.FormatsToProcess | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
@@ -224,9 +226,6 @@ task build clean, compile, external_help, {
     if ($duplicates.Count -gt 0) {
         throw "build: a public command must be defined once, in its own file, so the definition that is exported reads its help from the MAML: $($duplicates -join '; ')."
     }
-
-    Get-Content -Path (Join-Path -Path $sourceRoot -ChildPath 'Bootstrap.ps1') |
-        Out-File -FilePath $moduleFilePath -Append -Encoding utf8
 
     if ($usingStatements.Count -gt 0) {
 

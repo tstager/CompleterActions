@@ -2226,11 +2226,13 @@ Describe 'Packaged command help' {
             Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
         }
 
-        # Only the command's own definition carries the directive, so a second definition in its file, or one in a
-        # private file that loads after it, would ship the command without the MAML.
+        # Only the command's own definition carries the directive, so a second definition in its file, or one in any
+        # other file that goes into the package after it, a private file or Bootstrap.ps1, would ship the command
+        # without the MAML.
         $stagingRoot = New-TestBuildStage -Name 'duplicates'
         Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Public/Get-Completer.ps1') -Value '', "function Get-Completer { 'second' }"
         Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Get-BuildProbeShadow.ps1') -Value "function Reset-Completer { 'private' }"
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "function Test-CompleterSet { 'bootstrap' }"
 
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
         $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
@@ -2238,6 +2240,7 @@ Describe 'Packaged command help' {
         $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
         $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Get-Completer\.ps1:\d+"
         $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Get-BuildProbeShadow\.ps1:1\b"
+        $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
     }
 }
 
