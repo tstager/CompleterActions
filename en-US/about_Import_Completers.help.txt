@@ -239,9 +239,16 @@ OUTPUT OBJECTS
       instance, as `Get-Help Register-Completer` describes, and never counts
       as imported. A closure is bound to a module of its own, so it is a
       different completer and replaces the registration only with `-Force`.
-      Every capture module has a name of its own, so the exception
+      Each import runs the script in a new capture module with a name of its
+      own, so importing a script again never meets the exception
       `Register-Completer` makes for a new instance of a module with the same
-      name never applies to it.
+      name. A module that other code creates under a capture module's name is
+      not a capture module, and `Register-Completer` treats it as any other
+      module with that name: a script block bound to it whose text, file,
+      ScriptPath, and tier equal those of a live record whose script block is
+      bound to the capture module of that name replaces the record and its
+      runtime script block without `-Force`, and the new record has no
+      `ImportModule`.
 
 SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 

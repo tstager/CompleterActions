@@ -2430,6 +2430,34 @@ Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name
             [object]::ReferenceEquals($lazy[0], $own[0]) | Should -BeTrue -Because 'the record now holds what the script imported under the same tier'
         }
 
+        # Safety guard: pins the documented treatment of a module that other code creates
+        # under a capture module's name, so it passes before and after
+        # about_Import_Completers states it.
+        It 'treats a module that other code creates under a capture module''s name as any other module with that name' {
+            $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath)
+            $own = @($imported | Register-Completer -PassThru)
+            $capture = $imported[0].ImportModule
+            $namesake = New-Module -Name $capture.Name -ScriptBlock { Export-ModuleMember }
+            $rebound = $namesake.NewBoundScriptBlock($imported[0].ScriptBlock)
+            [object]::ReferenceEquals($rebound.Module, $capture) | Should -BeFalse
+            $rebound.ToString() | Should -BeExactly $own[0].ScriptText
+            $rebound.File | Should -BeExactly $imported[0].ScriptBlock.File
+
+            $claim = [pscustomobject] @{ CommandName = $imported[0].CommandName; IsNative = $true; ScriptBlock = $rebound; SourcePath = $imported[0].SourcePath; Trusted = $false }
+            $replaced = $claim | Register-Completer -PassThru
+
+            [object]::ReferenceEquals($replaced.ScriptBlock, $rebound) | Should -BeTrue -Because 'a block from another module with the name of the live record''s module and the same text, file, ScriptPath, and tier replaces the record without -Force'
+            [object]::ReferenceEquals((Get-Completer -CommandName $imported[0].CommandName -Native).ScriptBlock, $rebound) | Should -BeTrue
+            $replaced.ImportModule | Should -BeNullOrEmpty -Because 'the import did not emit the rebound script block'
+            {
+                Register-Completer -LiteralPath $fixturePath -Lazy
+            } | Should -Throw '*already exists*Use -Force*' -Because 'the record no longer holds what the script imported'
+            {
+                Import-CompleterScript -LiteralPath $fixturePath | Register-Completer
+            } | Should -Throw '*already exists*Use -Force*' -Because 'importing the script again runs it in a capture module with a new name'
+        }
+
         It 'refuses a lazy registration over an active record that only names the script path without -Force' {
             $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-lazy.ps1'
             Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-file' }"
