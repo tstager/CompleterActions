@@ -114,6 +114,11 @@ function Import-CompleterScript
 
                 $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath
 
+                # The module, not the emitted record, records where the capture module's
+                # script blocks came from: Register-Completer checks a block's binding
+                # against this table, so no property a caller sets can claim an import.
+                $script:CompleterImportModules.Add($importSession.Module, [pscustomobject] @{ ScriptPath = $resolvedPath; Trusted = [bool] $Trusted })
+
                 foreach ($definition in $importSession.Definitions)
                 {
                     $targetParameters = @{

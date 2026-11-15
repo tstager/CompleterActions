@@ -2284,6 +2284,42 @@ Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name
             Get-TestIdentityCompletion | Should -Be @('beta')
         }
 
+        It 'does not take an ImportModule property as proof that a script block was imported' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-provenance.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+$value = 'alpha'
+Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $value }
+'@
+
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $record = $imported | Register-Completer -PassThru
+            [object]::ReferenceEquals($record.ImportModule, $imported[0].ImportModule) | Should -BeTrue -Because 'the managed record of an imported block names the capture module the import ran the script in'
+
+            $closure = & {
+                param(
+                    [string] $value
+                )
+
+                $imported[0].ScriptBlock.GetNewClosure()
+            } 'beta'
+            $selfClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; SourcePath = $scriptPath; Trusted = $true; ImportModule = $closure.Module }
+            [object]::ReferenceEquals($closure.Module, $selfClaim.ImportModule) | Should -BeTrue -Because 'the claim names the very module its script block is bound to'
+
+            { $selfClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*' -Because 'only the import itself vouches for a capture module'
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $record.ScriptBlock) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $forced = $selfClaim | Register-Completer -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $closure) | Should -BeTrue
+            $forced.ImportModule | Should -BeNullOrEmpty -Because 'the claimed ImportModule is not carried onto the managed record'
+            Get-TestIdentityCompletion | Should -Be @('beta')
+
+            $retiered = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $retiered[0].Trusted = $false
+            $strictClaim = $retiered | Register-Completer -Force -PassThru
+            $strictClaim.ImportModule | Should -BeNullOrEmpty -Because 'the import ran the script under the trusted tier, not the tier the record now claims'
+        }
+
         It 'refuses a lazy registration over an active record that only names the script path without -Force' {
             $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-lazy.ps1'
             Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-file' }"

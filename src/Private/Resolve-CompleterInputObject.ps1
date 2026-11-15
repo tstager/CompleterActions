@@ -18,9 +18,12 @@ target only through one of them resolves through Resolve-CompleterKeyTarget:
 to the registered target of its kind whose key it is, with an error when the
 key belongs to more than one.
 
-A ScriptBlock, ImportModule, ScriptPath or SourcePath, and Trusted property
-are carried through when present so imported and managed records round-trip
-into Register-Completer.
+A ScriptBlock, ScriptPath or SourcePath, and Trusted property are carried
+through when present so imported and managed records round-trip into
+Register-Completer. An ImportModule property is ignored: the resolved
+ImportModule is the capture module Import-CompleterScript ran the script in,
+as Get-CompleterImportModule finds it for the script block, ScriptPath, and
+tier, and it is null for any other script block.
 
 IsNative, Native, and Trusted take a Boolean, a number, or the text 'True' or
 'False' in any casing, as Export-Csv writes a Boolean, and empty text counts
@@ -151,12 +154,6 @@ function Resolve-CompleterInputObject
                 $scriptBlock = [scriptblock] $scriptBlockProperty.Value
             }
 
-            $importModuleProperty = $InputObject.PSObject.Properties['ImportModule']
-            if ($null -ne $importModuleProperty -and $importModuleProperty.Value -is [System.Management.Automation.PSModuleInfo])
-            {
-                $importModule = [System.Management.Automation.PSModuleInfo] $importModuleProperty.Value
-            }
-
             foreach ($propertyName in 'ScriptPath', 'SourcePath')
             {
                 $property = $InputObject.PSObject.Properties[$propertyName]
@@ -177,6 +174,8 @@ function Resolve-CompleterInputObject
             {
                 throw 'InputObject must expose a ScriptBlock property whose value is a script block.'
             }
+
+            $importModule = Get-CompleterImportModule -ScriptBlock $scriptBlock -ScriptPath $scriptPath -Trusted $trusted
 
             if (-not [string]::IsNullOrWhiteSpace($commandName))
             {

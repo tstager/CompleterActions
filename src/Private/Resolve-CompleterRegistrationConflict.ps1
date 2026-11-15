@@ -15,11 +15,14 @@ paths compare the way the file system does: ignoring case on Windows and
 macOS, and ordinally elsewhere, where two paths that differ only in case name
 two files.
 
-A record is imported when it carries a ScriptPath and its script block is
-bound to the record's ImportModule, the module Import-CompleterScript created
-to run that script. Records that Import-CompleterScript emits and records a
-lazy load activated are imported; a record that only names a ScriptPath is
-not, because the path alone does not show where its script block came from.
+A record is imported when its script block is bound to the capture module
+Import-CompleterScript created to run the record's ScriptPath under the
+record's tier, as Get-CompleterImportModule finds it in the table the import
+writes. Records that Import-CompleterScript emits and records a lazy load
+activated are imported. A record that only names a ScriptPath is not, and
+neither is one whose ImportModule property names the module its own script
+block is bound to, such as a closure of an imported block: provenance comes
+from the module's table, never from a property the caller can set.
 
 A record is lazy when its State is 'Pending'. A lazy record describes the
 same completer as a managed record that loads, or already loaded, the same
@@ -116,9 +119,7 @@ function Resolve-CompleterRegistrationConflict
             [psobject] $Record
         )
 
-        -not [string]::IsNullOrEmpty($Record.ScriptPath) -and
-            $null -ne $Record.ImportModule -and
-            [object]::ReferenceEquals($Record.ScriptBlock.Module, $Record.ImportModule)
+        $null -ne (Get-CompleterImportModule -ScriptBlock $Record.ScriptBlock -ScriptPath $Record.ScriptPath -Trusted ([bool] $Record.Trusted))
     }
 
     $plannedRegistrations = @{}
