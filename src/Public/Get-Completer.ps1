@@ -21,10 +21,14 @@ CommandName, then ParameterName before -Skip and -First are applied, so paging
 across several calls stays stable while unrelated targets change; only a
 target that sorts before the current window can shift it. The command accepts
 arrays for command and parameter lookups, and records piped back from
-Get-Completer or Import-CompleterScript resolve through their Key and IsNative
-properties. Keys are output-only identifiers: a hand-typed key string is not
-accepted, so name the target with -CommandName plus -Native or -ParameterName
-instead.
+Get-Completer or Import-CompleterScript resolve through their CommandName,
+ParameterName, and IsNative properties. Keys are output-only identifiers: a
+hand-typed key string is not accepted, so name the target with -CommandName
+plus -Native or -ParameterName instead. A key does not identify a target on
+its own: a native command whose name contains a colon, such as an alias named
+'Get-Thing:Name', has the same key as the parameter target Get-Thing / Name.
+The two are separate registrations, and a lookup returns only the kind it
+names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -41,6 +45,13 @@ object binds here. An input object describes one target: it exposes
 CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
 or RuntimeKey together with IsNative/Native. To look up several targets at
 once, pass arrays to -CommandName and -ParameterName instead.
+CommandName, or RuntimeKey, names the target exactly. Key and
+RegistrationKey are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter
@@ -122,7 +133,7 @@ function Get-Completer
 
     begin
     {
-        $registrationsByKey = [ordered] @{}
+        $registrationsByIdentity = [ordered] @{}
     }
 
     process
@@ -170,8 +181,8 @@ function Get-Completer
             {
                 foreach ($target in $targets)
                 {
-                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Key $target.Key)
-                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Key $target.Key)
+                    $managedRegistrations += @(Find-ManagedCompleterRegistration -Target $target)
+                    $discoveredRegistrations += @(Find-RuntimeCompleterRegistration -Target $target)
                 }
             }
 
@@ -184,31 +195,39 @@ function Get-Completer
                     continue
                 }
 
-                $registrationState = Resolve-CompleterRegistrationState -Key $registration.Key -Snapshot $snapshot
+                $registrationState = Resolve-CompleterRegistrationState -Target $registration -Snapshot $snapshot
+                $identity = Get-CompleterTargetIdentity -Target $registration
 
                 if ($registrationState.ManagedState -in 'Active', 'Pending', 'Failed')
                 {
-                    $registrationsByKey["Managed:$($registration.Key)"] = $registration
+                    $registrationsByIdentity["Managed:$identity"] = $registration
                 }
                 else
                 {
-                    $registrationsByKey["Managed:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
+                    $registrationsByIdentity["Managed:$identity"] = New-CompleterRegistrationRecord -Target $registration -ScriptBlock $registration.ScriptBlock -Source 'Managed' -ImportModule $registration.ImportModule -State 'Stale' -ScriptPath $registration.ScriptPath -Trusted:$registration.Trusted
                 }
 
                 if ($registrationState.ManagedState -in 'Stale', 'Failed' -and $null -ne $registrationState.RuntimeRegistration)
                 {
-                    $registrationsByKey["Discovered:$($registration.Key)"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
+                    $registrationsByIdentity["Discovered:$identity"] = New-CompleterRegistrationRecord -Target $registrationState.RuntimeRegistration -ScriptBlock $registrationState.RuntimeRegistration.ScriptBlock -Source 'Discovered' -State 'Conflicted'
                 }
             }
 
             foreach ($registration in $discoveredRegistrations)
             {
-                if ($null -eq $registration -or $registrationsByKey.Contains("Managed:$($registration.Key)"))
+                if ($null -eq $registration)
                 {
                     continue
                 }
 
-                $registrationsByKey["Discovered:$($registration.Key)"] = $registration
+                $identity = Get-CompleterTargetIdentity -Target $registration
+
+                if ($registrationsByIdentity.Contains("Managed:$identity"))
+                {
+                    continue
+                }
+
+                $registrationsByIdentity["Discovered:$identity"] = $registration
             }
         }
         catch
@@ -225,7 +244,7 @@ function Get-Completer
 
     end
     {
-        $registrations = @($registrationsByKey.Values)
+        $registrations = @($registrationsByIdentity.Values)
 
         if ($PSBoundParameters.ContainsKey('State'))
         {

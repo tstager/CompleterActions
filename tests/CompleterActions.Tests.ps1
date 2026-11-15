@@ -45,7 +45,7 @@ BeforeAll {
 
         foreach ($candidateKey in @($registrations.Keys))
         {
-            if ($candidateKey -ieq $targetKey)
+            if ([string]::Equals($candidateKey, $targetKey, [System.StringComparison]::OrdinalIgnoreCase))
             {
                 $null = $registrations.Remove($candidateKey)
                 break
@@ -161,7 +161,7 @@ Describe 'Completer registration public API' {
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['test-managedtool:name'] | Should -Not -BeNullOrEmpty
+        InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' } | Should -Not -BeNullOrEmpty
 
         $inputScript = 'Test-ManagedTool -Name a'
         $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
@@ -1269,7 +1269,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        [object]::ReferenceEquals($state['Registrations']['test-managedtool:name'], $original) | Should -BeTrue
+        [object]::ReferenceEquals((InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' }), $original) | Should -BeTrue
 
         $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
@@ -1309,7 +1309,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations']['test-managedtool:name'].ScriptText | Should -Match 'old'
+        (InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' }).ScriptText | Should -Match 'old'
 
         $registration = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
         $registration.Source | Should -Be 'Managed'
@@ -1379,7 +1379,7 @@ else
         }
 
         $state['Registrations'].Count | Should -Be 1
-        $state['Registrations'].Contains('test-arrayone:name') | Should -BeTrue
+        InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ArrayOne' -ParameterName 'Name' } | Should -Not -BeNullOrEmpty
 
         $kept = Get-Completer -CommandName 'Test-ArrayOne' -ParameterName 'Name'
         $kept.Source | Should -Be 'Managed'
@@ -1746,5 +1746,1666 @@ Describe 'Removed surface' {
         {
             Join-Path -Path $repoRoot -ChildPath $removedFile | Should -Not -Exist
         }
+    }
+}
+
+Describe 'Packaged command help' {
+    BeforeAll {
+        function New-TestBuildStage
+        {
+            [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only copies the build inputs into TestDrive.')]
+            [CmdletBinding()]
+            param(
+                [Parameter(Mandatory)]
+                [string] $Name
+            )
+
+            # The build derives the module name from its folder, so the inputs are staged under a folder with that name.
+            $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+            $stagingRoot = Join-Path -Path $TestDrive -ChildPath "$Name/CompleterActions"
+            New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+            foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.Format.ps1xml', 'en-US', 'src')
+            {
+                Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+            }
+
+            foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+            {
+                Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+            }
+
+            $stagingRoot
+        }
+    }
+
+    It 'points every packaged command at the generated MAML and renders it' {
+        $commands = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $helpError = $null
+                    try
+                    {
+                        $null = Get-Help -Name $command.Name -Full -ErrorAction Stop | Out-String -Width 4096
+                    }
+                    catch
+                    {
+                        $helpError = $_.Exception.Message
+                    }
+
+                    [pscustomobject] @{
+                        Name         = $command.Name
+                        MamlHelpFile = [string] $command.ScriptBlock.Ast.GetHelpContent().MamlHelpFile
+                        HelpError    = [string] $helpError
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($commands.Name | Sort-Object) | Should -Be $publicCommands
+        foreach ($command in $commands)
+        {
+            $command.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml' -Because "the packaged $($command.Name) must carry a recognized .EXTERNALHELP directive"
+            $command.HelpError | Should -BeNullOrEmpty -Because "Get-Help $($command.Name) -Full must render the MAML"
+        }
+    }
+
+    It 'shows Reset-Completer wording that only the MAML has' {
+        # Both sentences come from the maintained markdown help and are absent from the source comment help,
+        # so finding them in the packaged Get-Help output shows the MAML was selected.
+        $mamlOnlyPhrases = @(
+            'the first of these rules that applies decides it'
+            'whose script was deleted is therefore left alone without an error'
+        )
+        $sourceHelp = (Get-Content -LiteralPath (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public/Reset-Completer.ps1') -Raw) -replace '\s+', ' '
+        $text = (@(
+                Invoke-TestBuildHelp -Script {
+                    Get-Help -Name 'Reset-Completer' -Full -ErrorAction Stop | Out-String -Width 4096
+                }
+            ) -join "`n") -replace '\s+', ' '
+
+        foreach ($phrase in $mamlOnlyPhrases)
+        {
+            $sourceHelp | Should -Not -Match ([regex]::Escape($phrase)) -Because 'the phrase must be unique to the MAML to show which help Get-Help selected'
+            $text | Should -Match ([regex]::Escape($phrase))
+        }
+    }
+
+    It 'links every packaged command online to its maintained markdown page and to no relative or pinned URI' {
+        $links = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    foreach ($link in (Get-Help -Name $command.Name -Full -ErrorAction Stop).relatedLinks.navigationLink)
+                    {
+                        [pscustomobject] @{
+                            Name     = $command.Name
+                            LinkText = [string] $link.linkText
+                            Uri      = [string] $link.uri
+                        }
+                    }
+                }
+            }
+        )
+        $projectUri = (Import-PowerShellDataFile -Path (Join-Path -Path $PSScriptRoot -ChildPath '../CompleterActions.psd1')).PrivateData.PSData.ProjectUri
+        $publicCommands = @(Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+
+        foreach ($name in $publicCommands)
+        {
+            $onlineLink = @($links | Where-Object { $_.Name -eq $name })[0]
+
+            $onlineLink.LinkText | Should -BeExactly 'Online Version' -Because "Get-Help -Online $name uses the first related link"
+            $onlineLink.Uri | Should -BeExactly "$projectUri/blob/main/src/docs/CompleterActions/$name.md"
+            Join-Path -Path $PSScriptRoot -ChildPath "../src/docs/CompleterActions/$name.md" | Should -Exist
+        }
+
+        foreach ($link in $links | Where-Object { $_.Uri })
+        {
+            $link.Uri | Should -Match '^https?://' -Because "Get-Help stops on a related link of $($link.Name) that is not absolute"
+            $link.Uri | Should -Not -Match '/blob/[0-9a-f]{40}/' -Because "a related link of $($link.Name) must not point at one old commit"
+        }
+    }
+
+    It 'documents in a full sentence each output type a packaged command declares, and no other' {
+        $outputs = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $returnValues = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).returnValues.returnValue)
+
+                    [pscustomobject] @{
+                        Name         = $command.Name
+                        Declared     = @($command.OutputType.Name | Sort-Object)
+                        Documented   = @($returnValues | ForEach-Object { [string] $_.type.name } | Sort-Object)
+                        Descriptions = @($returnValues | ForEach-Object { ($_.description | ForEach-Object Text) -join ' ' })
+                    }
+                }
+            }
+        )
+
+        $outputs | Should -Not -BeNullOrEmpty
+        foreach ($command in $outputs)
+        {
+            @($command.Documented) | Should -Be @($command.Declared) -Because "the OUTPUTS of the packaged $($command.Name) must list its OutputType"
+            foreach ($description in $command.Descriptions)
+            {
+                $description | Should -Match '\.\s*$' -Because "each OUTPUTS entry of $($command.Name) must say what the command returns"
+            }
+        }
+    }
+
+    It 'describes each parameter of a packaged command in Get-Help as the command declares it' {
+        # The MAML is built from hand-maintained markdown, so only this comparison keeps installed Get-Help in step
+        # with the parameters the commands declare. A PARAMETERS entry describes the parameter across all its sets, as
+        # the MAML builder writes it: it takes pipeline input in any way one of its sets does, is required when any set
+        # makes it mandatory, and names one position, which must be one of its sets' positions. The syntax test
+        # checks each set on its own.
+        $parameters = @(
+            Invoke-TestBuildHelp -Script {
+                $commonParameters = [System.Management.Automation.PSCmdlet]::CommonParameters
+
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $helpParameters = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).parameters.parameter)
+                    $names = @(@($command.Parameters.Keys) + @($helpParameters.name) | Where-Object { $_ -notin $commonParameters } | Sort-Object -Unique)
+
+                    foreach ($name in $names)
+                    {
+                        $metadata = $command.Parameters[$name]
+                        $help = @($helpParameters | Where-Object { $_.name -eq $name })
+                        $sets = @(if ($null -ne $metadata) { $metadata.ParameterSets.Values })
+                        $byValue = @($sets | Where-Object ValueFromPipeline).Count -gt 0
+                        $byPropertyName = @($sets | Where-Object ValueFromPipelineByPropertyName).Count -gt 0
+
+                        [pscustomobject] @{
+                            Command               = $command.Name
+                            Parameter             = $name
+                            Declared              = $null -ne $metadata
+                            HelpEntries           = $help.Count
+                            PipelineInput         = [string] $help.pipelineInput
+                            Required              = [string] $help.required
+                            Position              = [string] $help.position
+                            Aliases               = @(([string] $help.aliases) -split ',\s*' | Sort-Object) -join ', '
+                            Type                  = [string] $help.type.name
+                            DeclaredPipelineInput = if ($byValue -or $byPropertyName) { 'true ({0})' -f (@(if ($byValue) { 'ByValue' }; if ($byPropertyName) { 'ByPropertyName' }) -join ', ') } else { 'false' }
+                            DeclaredRequired      = if (@($sets | Where-Object IsMandatory).Count -gt 0) { 'true' } else { 'false' }
+                            DeclaredPositions     = @($sets | ForEach-Object { if ($_.Position -lt 0) { 'Named' } else { [string] $_.Position } } | Sort-Object -Unique)
+                            DeclaredAliases       = if ($null -ne $metadata -and $metadata.Aliases.Count -gt 0) { @($metadata.Aliases | Sort-Object) -join ', ' } else { 'none' }
+                            DeclaredType          = if ($null -ne $metadata) { $metadata.ParameterType.FullName } else { '' }
+                        }
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($parameters.Command | Sort-Object -Unique) | Should -Be $publicCommands
+        $drift = @(
+            foreach ($parameter in $parameters)
+            {
+                $target = '{0} -{1}' -f $parameter.Command, $parameter.Parameter
+
+                if (-not $parameter.Declared)
+                {
+                    "$target is in Get-Help but not declared"
+                    continue
+                }
+
+                if ($parameter.HelpEntries -ne 1)
+                {
+                    "$target has $($parameter.HelpEntries) Get-Help entries"
+                    continue
+                }
+
+                if ($parameter.PipelineInput -ne $parameter.DeclaredPipelineInput)
+                {
+                    "$target pipeline input is '$($parameter.PipelineInput)' in Get-Help but '$($parameter.DeclaredPipelineInput)' declared"
+                }
+
+                if ($parameter.Required -ne $parameter.DeclaredRequired)
+                {
+                    "$target required is '$($parameter.Required)' in Get-Help but '$($parameter.DeclaredRequired)' declared"
+                }
+
+                if ($parameter.Position -notin $parameter.DeclaredPositions)
+                {
+                    "$target position is '$($parameter.Position)' in Get-Help but '$($parameter.DeclaredPositions -join "', '")' declared"
+                }
+
+                if ($parameter.Aliases -ne $parameter.DeclaredAliases)
+                {
+                    "$target aliases are '$($parameter.Aliases)' in Get-Help but '$($parameter.DeclaredAliases)' declared"
+                }
+
+                if ($parameter.Type -ne $parameter.DeclaredType)
+                {
+                    "$target type is '$($parameter.Type)' in Get-Help but '$($parameter.DeclaredType)' declared"
+                }
+            }
+        )
+
+        $drift | Should -BeNullOrEmpty
+    }
+
+    It 'shows each parameter set of a packaged command in its syntax with the required flags, positions and pipeline input the set declares' {
+        # A set's syntax entry is the one that lists exactly the set's parameters, as parameter sets differ in them.
+        $setParameters = @(
+            Invoke-TestBuildHelp -Script {
+                $commonParameters = [System.Management.Automation.PSCmdlet]::CommonParameters
+
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function)
+                {
+                    $syntaxItems = @((Get-Help -Name $command.Name -Full -ErrorAction Stop).syntax.syntaxItem)
+
+                    foreach ($set in $command.ParameterSets)
+                    {
+                        $parameters = @($set.Parameters | Where-Object { $_.Name -notin $commonParameters })
+                        $names = @($parameters.Name | Sort-Object) -join ', '
+                        $items = @($syntaxItems | Where-Object { (@($_.parameter.name | Sort-Object) -join ', ') -eq $names })
+
+                        foreach ($parameter in $parameters)
+                        {
+                            $help = @(if ($items.Count -eq 1) { $items[0].parameter | Where-Object { $_.name -eq $parameter.Name } })
+
+                            [pscustomobject] @{
+                                Command               = $command.Name
+                                SetCount              = $command.ParameterSets.Count
+                                SyntaxCount           = $syntaxItems.Count
+                                Set                   = $set.Name
+                                SetParameters         = $names
+                                SyntaxItems           = $items.Count
+                                Parameter             = $parameter.Name
+                                Required              = [string] $help.required
+                                Position              = [string] $help.position
+                                PipelineInput         = [string] $help.pipelineInput
+                                DeclaredRequired      = if ($parameter.IsMandatory) { 'true' } else { 'false' }
+                                DeclaredPosition      = if ($parameter.Position -lt 0) { 'named' } else { [string] $parameter.Position }
+                                DeclaredPipelineInput = if ($parameter.ValueFromPipeline -or $parameter.ValueFromPipelineByPropertyName) { 'true ({0})' -f (@(if ($parameter.ValueFromPipeline) { 'ByValue' }; if ($parameter.ValueFromPipelineByPropertyName) { 'ByPropertyName' }) -join ', ') } else { 'false' }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        $publicCommands = @(
+            Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '../src/Public') -Filter '*.ps1' |
+                Sort-Object -Property BaseName |
+                Select-Object -ExpandProperty BaseName
+        )
+
+        @($setParameters.Command | Sort-Object -Unique) | Should -Be $publicCommands
+        $drift = @(
+            foreach ($command in $setParameters | Group-Object -Property Command)
+            {
+                if ($command.Group[0].SyntaxCount -ne $command.Group[0].SetCount)
+                {
+                    "$($command.Name) has $($command.Group[0].SyntaxCount) syntax entries for $($command.Group[0].SetCount) parameter sets"
+                }
+            }
+
+            foreach ($parameter in $setParameters)
+            {
+                $target = '{0} -{1} in set {2}' -f $parameter.Command, $parameter.Parameter, $parameter.Set
+
+                if ($parameter.SyntaxItems -ne 1)
+                {
+                    "set $($parameter.Set) of $($parameter.Command) ($($parameter.SetParameters)) has $($parameter.SyntaxItems) syntax entries"
+                    continue
+                }
+
+                if ($parameter.Required -ne $parameter.DeclaredRequired)
+                {
+                    "$target required is '$($parameter.Required)' in the syntax but '$($parameter.DeclaredRequired)' declared"
+                }
+
+                if ($parameter.Position -ne $parameter.DeclaredPosition)
+                {
+                    "$target position is '$($parameter.Position)' in the syntax but '$($parameter.DeclaredPosition)' declared"
+                }
+
+                if ($parameter.PipelineInput -ne $parameter.DeclaredPipelineInput)
+                {
+                    "$target pipeline input is '$($parameter.PipelineInput)' in the syntax but '$($parameter.DeclaredPipelineInput)' declared"
+                }
+            }
+        )
+
+        @($drift | Select-Object -Unique) | Should -BeNullOrEmpty
+    }
+
+    It 'replaces only the help that leads into each public command, in any layout, and keeps every other source line' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        $stagingRoot = New-TestBuildStage -Name 'layouts'
+        $publicRoot = Join-Path -Path $stagingRoot -ChildPath 'src/Public'
+        $helpLineLikeDeclaration = 'function names in this description are informational only.'
+
+        # A help line that starts with the word 'function', which a line pattern takes for the declaration.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Get-Completer.ps1'
+        $lines = [System.Collections.Generic.List[string]] @(Get-Content -LiteralPath $path)
+        $lines.IndexOf('.DESCRIPTION') | Should -BeGreaterOrEqual 0
+        $lines.Insert($lines.IndexOf('.DESCRIPTION') + 1, $helpLineLikeDeclaration)
+        Set-Content -LiteralPath $path -Value $lines
+
+        # A blank line between the help block and the declaration.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Unregister-Completer.ps1'
+        $lines = [System.Collections.Generic.List[string]] @(Get-Content -LiteralPath $path)
+        $lines.IndexOf('function Unregister-Completer') | Should -BeGreaterThan 0
+        $lines.Insert($lines.IndexOf('function Unregister-Completer'), '')
+        Set-Content -LiteralPath $path -Value $lines
+
+        # Help written as line comments instead of a block.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterScript.ps1'
+        $lines = @(Get-Content -LiteralPath $path)
+        $helpEnd = [array]::IndexOf($lines, '#>')
+        $lines[0] | Should -BeExactly '<#'
+        Set-Content -LiteralPath $path -Value @(@($lines[1..($helpEnd - 1)] | ForEach-Object { "# $_" }) + $lines[($helpEnd + 1)..($lines.Count - 1)])
+
+        # The help closes on the declaration's line.
+        $path = Join-Path -Path $publicRoot -ChildPath 'Import-CompleterSet.ps1'
+        $lines = @(Get-Content -LiteralPath $path)
+        $declarationIndex = [array]::IndexOf($lines, 'function Import-CompleterSet')
+        $lines[$declarationIndex - 1] | Should -BeExactly '#>'
+        Set-Content -LiteralPath $path -Value @($lines[0..($declarationIndex - 2)] + "#> $($lines[$declarationIndex])" + $lines[($declarationIndex + 1)..($lines.Count - 1)])
+
+        # A #requires line, and a statement that ends in a comment, each directly above the help.
+        $requiresLine = '#requires -Version 7.4'
+        $trailingComment = '# a comment that ends a statement'
+        $statementLine = "`$script:BuildProbeMarker = 'kept'  $trailingComment"
+        $path = Join-Path -Path $publicRoot -ChildPath 'Export-CompleterSet.ps1'
+        Set-Content -LiteralPath $path -Value @(@($requiresLine) + @(Get-Content -LiteralPath $path))
+        $path = Join-Path -Path $publicRoot -ChildPath 'Import-CompleterScript.ps1'
+        Set-Content -LiteralPath $path -Value @(@($statementLine) + @(Get-Content -LiteralPath $path))
+
+        # A helper function with its own comment help ahead of the command.
+        $helperSynopsis = 'A helper defined ahead of the command.'
+        $path = Join-Path -Path $publicRoot -ChildPath 'Test-CompleterSet.ps1'
+        Set-Content -LiteralPath $path -Value @(@('<#', '.SYNOPSIS', $helperSynopsis, '#>', 'function Get-BuildProbeHelper { 1 }', '') + @(Get-Content -LiteralPath $path))
+
+        # A comment a blank line above the help, which is outside the block PowerShell reads the help from.
+        $regionLine = '#region BuildProbeRegion'
+        $path = Join-Path -Path $publicRoot -ChildPath 'Register-Completer.ps1'
+        Set-Content -LiteralPath $path -Value @(@($regionLine, '') + @(Get-Content -LiteralPath $path))
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($buildOutput -join [Environment]::NewLine)
+
+        $packagedPath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psm1'
+        $tokens = $null
+        $parseErrors = $null
+        $packagedAst = [System.Management.Automation.Language.Parser]::ParseFile($packagedPath, [ref] $tokens, [ref] $parseErrors)
+
+        @($parseErrors | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }) | Should -BeNullOrEmpty
+        $packagedText = Get-Content -LiteralPath $packagedPath -Raw
+        $packagedText | Should -Not -Match ([regex]::Escape($helpLineLikeDeclaration))
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($requiresLine))\r?$"
+        $packagedAst.ScriptRequirements.RequiredPSVersion | Should -Be ([version] '7.4') -Because 'the #requires line must stay a requirement of the packaged module'
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($statementLine))\r?$"
+        $packagedText | Should -Match "(?m)^$([regex]::Escape($regionLine))\r?$"
+
+        $functions = @($packagedAst.EndBlock.Statements | Where-Object { $_ -is [System.Management.Automation.Language.FunctionDefinitionAst] })
+        $publicNames = @(Get-ChildItem -LiteralPath $publicRoot -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+        $privateNames = @(Get-ChildItem -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private') -Filter '*.ps1' | Select-Object -ExpandProperty BaseName)
+
+        @($functions | Where-Object Name -in $publicNames).Count | Should -Be $publicNames.Count
+        @($functions | Where-Object Name -in $privateNames).Count | Should -Be $privateNames.Count
+
+        foreach ($function in $functions | Where-Object Name -in $publicNames)
+        {
+            $leadingTokens = @($tokens | Where-Object { $_.Extent.EndOffset -le $function.Extent.StartOffset })
+            $leadingComments = @(
+                for ($index = $leadingTokens.Count - 1; $index -ge 0 -and $leadingTokens[$index].Kind -in 'Comment', 'NewLine'; $index--)
+                {
+                    if ($leadingTokens[$index].Kind -eq 'Comment')
+                    {
+                        $leadingTokens[$index].Text
+                    }
+                }
+            )
+
+            $leadingComments[0] -replace '\r', '' | Should -BeExactly "<#`n.EXTERNALHELP CompleterActions-help.xml`n#>"
+            @($leadingComments | Select-Object -Skip 1 | Where-Object { $_ -notin $requiresLine, $trailingComment, $regionLine }) | Should -BeNullOrEmpty -Because "only the directive may lead into the packaged $($function.Name)"
+
+            $help = $function.GetHelpContent()
+            $help.MamlHelpFile | Should -BeExactly 'CompleterActions-help.xml'
+            $help.Synopsis | Should -BeNullOrEmpty -Because "no comment may join the directive of the packaged $($function.Name)"
+        }
+
+        foreach ($function in $functions | Where-Object Name -in ($privateNames + 'Get-BuildProbeHelper'))
+        {
+            $help = $function.GetHelpContent()
+
+            $help.MamlHelpFile | Should -BeNullOrEmpty
+            $help.Synopsis | Should -Not -BeNullOrEmpty -Because "the packaged private $($function.Name) keeps its comment help"
+        }
+
+        @($functions | Where-Object Name -eq 'Get-BuildProbeHelper') | Should -HaveCount 1
+        ($functions | Where-Object Name -eq 'Get-BuildProbeHelper').GetHelpContent().Synopsis.Trim() | Should -BeExactly $helperSynopsis
+
+        $manifestPath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1'
+        $imported = & pwsh -NoProfile -NonInteractive -Command {
+            param($ManifestPath)
+
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name $ManifestPath -Force
+            $commands = @(Get-Command -Module 'CompleterActions' -CommandType Function)
+
+            [pscustomobject] @{
+                Exported = @($commands.Name | Sort-Object)
+                Maml     = @($commands | ForEach-Object { [string] $_.ScriptBlock.Ast.GetHelpContent().MamlHelpFile } | Sort-Object -Unique)
+                Marker   = & (Get-Module -Name 'CompleterActions') { $script:BuildProbeMarker }
+            }
+        } -args $manifestPath
+
+        $LASTEXITCODE | Should -Be 0
+        @($imported.Exported) | Should -Be @($publicNames | Sort-Object) -Because 'the package must export every public command and no helper'
+        @($imported.Maml) | Should -Be @('CompleterActions-help.xml')
+        $imported.Marker | Should -BeExactly 'kept' -Because 'the statement above the help of Import-CompleterScript must run when the package is imported'
+    }
+
+    It 'fails the build when a public command is defined more than once' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # Only the command's own definition carries the directive, so a second definition in its file, or one in any
+        # other file that goes into the package after it, a private file or Bootstrap.ps1, would ship the command
+        # without the MAML. A scope modifier on the name defines the same command.
+        $stagingRoot = New-TestBuildStage -Name 'duplicates'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Public/Get-Completer.ps1') -Value '', "function Get-Completer { 'second' }"
+        Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Get-BuildProbeShadow.ps1') -Value "function Reset-Completer { 'private' }"
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "function Test-CompleterSet { 'bootstrap' }", "function script:Unregister-Completer { 'bootstrap' }"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Get-Completer\.ps1:\d+"
+        $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Get-BuildProbeShadow\.ps1:1\b"
+        $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Unregister-Completer' at [^'\r\n]*Unregister-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+    }
+
+    It 'fails the build when the sources name a public command on the Function: drive, under any condition' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # Each write runs only when the package is imported into a session the build's import check does not match:
+        # one with PSReadLine loaded, one with an environment variable set, or not at all, from a helper nothing
+        # calls. Only the sources show them.
+        $stagingRoot = New-TestBuildStage -Name 'drive'
+        Set-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Private/Set-BuildProbeShadow.ps1') -Value @(
+            'function Set-BuildProbeShadow'
+            '{'
+            "    New-Item -Path 'Function:\script:Test-CompleterSet' -Value { 'private' } -Force"
+            '}'
+        )
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value @(
+            ''
+            "if (Get-Module -Name 'PSReadLine') { Set-Item -Path Function:Reset-Completer -Value { 'bootstrap' } }"
+            "if (`$env:COMPLETERACTIONS_BUILD_PROBE) { `${function:Get-Completer} = { 'bootstrap' } }"
+        )
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Reset-Completer' at [^'\r\n]*Reset-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Get-Completer' at [^'\r\n]*Get-Completer\.ps1:\d+, [^'\r\n]*Bootstrap\.ps1:\d+"
+        $buildOutput | Should -Match "'Test-CompleterSet' at [^'\r\n]*Test-CompleterSet\.ps1:\d+, [^'\r\n]*Set-BuildProbeShadow\.ps1:3\b"
+    }
+
+    It 'fails the build when the package replaces a public command while it loads' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # A Function: path built at run time names no command the sources show, so only the imported package reveals
+        # that the exported command lost the directive.
+        $stagingRoot = New-TestBuildStage -Name 'replaced'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "`$buildProbeName = 'Reset-Completer'", "Set-Item -Path `"Function:`$buildProbeName`" -Value { 'bootstrap' }"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Not -Be 0 -Because $buildOutput
+        $buildOutput | Should -Match "'Reset-Completer' is defined at [^'\r\n]*CompleterActions\.psm1:\d+"
+    }
+
+    It 'builds a package that writes to the host while it loads' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        # The import check reads what its pwsh returns, and host text comes back with it; that text is no finding.
+        $stagingRoot = New-TestBuildStage -Name 'host'
+        Add-Content -LiteralPath (Join-Path -Path $stagingRoot -ChildPath 'src/Bootstrap.ps1') -Value '', "Write-Host 'build probe host text'", "Write-Information 'build probe information' -InformationAction Continue"
+
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+
+        $LASTEXITCODE | Should -Be 0 -Because $buildOutput
+    }
+}
+
+Describe 'Registration identity' {
+    BeforeAll {
+        # The Kelvin sign (U+212A) lowercases to the letter k, so both Kelvin names
+        # below have the key 'test-kelvintool', yet the runtime compares its keys
+        # ordinally ignoring case and keeps them as two entries.
+        $script:KelvinLetterName = 'Test-KelvinTool'
+        $script:KelvinSignName = 'Test-{0}elvinTool' -f [char] 0x212A
+
+        # The runtime takes the final sigma (U+03C2) and the sigma (U+03C3) for one
+        # another, but lowercasing keeps them apart, so this key names the final-sigma
+        # name without being its lowercase form.
+        $script:FinalSigmaName = 'Test-Sigma{0}Tool' -f [char] 0x03C2
+        $script:SigmaKey = 'test-sigma{0}tool' -f [char] 0x03C3
+
+        $script:IdentityCleanupTargets = @(
+            @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = 'Test-IdentityTool:Name'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = $script:KelvinLetterName; CompleterType = 'Native' }
+            @{ CommandName = $script:KelvinSignName; CompleterType = 'Native' }
+            @{ CommandName = $script:KelvinLetterName; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = $script:KelvinSignName; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = $script:FinalSigmaName; CompleterType = 'Native' }
+        )
+
+        function Get-TestIdentityCompletion
+        {
+            $inputScript = 'Test-IdentityTool -Name '
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText)
+        }
+
+        function Get-TestIdentityState
+        {
+            param(
+                [Parameter(Mandatory)]
+                [ValidateSet('Parameter', 'Native')]
+                [string] $CompleterType
+            )
+
+            $records = if ($CompleterType -eq 'Native')
+            {
+                @(Get-Completer -CommandName 'Test-IdentityTool:Name' -Native)
+            }
+            else
+            {
+                @(Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name')
+            }
+
+            @($records | ForEach-Object { '{0}/{1}/{2}' -f $_.CompleterType, $_.State, $_.ScriptText.Trim() })
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:IdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+
+        function global:Test-IdentityTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:IdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-IdentityTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    Context 'ownership is the exact script block, not its text' {
+        BeforeAll {
+            function Get-TestIdentityClosure
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [string] $Value
+                )
+
+                { $Value }.GetNewClosure()
+            }
+        }
+
+        It 'reports an equal-text closure that replaced a managed closure as Stale and Conflicted and gates its removal' {
+            $managed = Get-TestIdentityClosure -Value 'alpha'
+            $external = Get-TestIdentityClosure -Value 'beta'
+            $managed.ToString() | Should -BeExactly $external.ToString() -Because 'the closures differ only in their captured value'
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $managed
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $external
+
+            Get-TestIdentityCompletion | Should -Be @('beta')
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Stale/$Value', 'Parameter/Conflicted/$Value')
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            } | Should -Throw '*is stale*-AllowUnmanaged*'
+
+            Get-TestIdentityCompletion | Should -Be @('beta') -Because 'the refused removal leaves the live value alone'
+
+            $removed = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+            [object]::ReferenceEquals($removed.ScriptBlock, $external) | Should -BeTrue
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+        }
+
+        It 'refuses to replace a managed closure with an equal-text closure without -Force' {
+            $first = Get-TestIdentityClosure -Value 'alpha'
+            $second = Get-TestIdentityClosure -Value 'beta'
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $forced = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $second) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('beta')
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$Value')
+        }
+
+        It 'treats script blocks whose text differs only in case as different completers' {
+            $upper = [scriptblock]::Create("'Value'")
+            $lower = [scriptblock]::Create("'value'")
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $upper
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $lower
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -BeExactly @('Value')
+
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $lower
+
+            Get-TestIdentityCompletion | Should -BeExactly @('value')
+            Get-TestIdentityState -CompleterType Parameter | Should -BeExactly @("Parameter/Stale/'Value'", "Parameter/Conflicted/'value'")
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            } | Should -Throw '*is stale*-AllowUnmanaged*'
+        }
+
+        # Safety guard: ownership moved from text to the exact script block, and this pins
+        # the two reuse paths the rewritten comparison must keep, equal unbound text and
+        # a re-import of the same script, so it passes before and after that change.
+        It 'reuses the managed record for equal unbound text and for a re-imported script' {
+            $first = [scriptblock]::Create("'same'")
+            $second = [scriptblock]::Create("'same'")
+
+            $firstRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
+            $secondRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -PassThru
+
+            [object]::ReferenceEquals($secondRecord, $firstRecord) | Should -BeTrue -Because 'two unbound script blocks with the same text are the same completer'
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'same'")
+
+            $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath | Register-Completer -PassThru)
+            $reimported = @(Import-CompleterScript -LiteralPath $fixturePath | Register-Completer -PassThru)
+
+            $imported.Count | Should -Be 2
+            $reimported.Count | Should -Be 2
+
+            for ($index = 0; $index -lt $imported.Count; $index++)
+            {
+                [object]::ReferenceEquals($reimported[$index], $imported[$index]) | Should -BeTrue -Because 'importing and registering the same script again is a no-op, although each import binds its script blocks to a new module'
+            }
+
+            @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | ForEach-Object { [string] $_.State }) | Should -Be @('Active', 'Active')
+        }
+
+        # Safety guard: the rewritten comparison binds equal text to its module and file,
+        # and this pins that one module instance registering the same text from the same
+        # file stays a no-op, so it passes before and after that change.
+        It 'reuses the managed record for equal text bound to the same module and defined in the same file' {
+            $maker = New-Module -Name 'TestIdentityMaker' -ScriptBlock {
+                function Get-TestIdentityBlock { { 'same' } }
+                Export-ModuleMember
+            }
+
+            $first = & $maker { Get-TestIdentityBlock }
+            $second = & $maker { Get-TestIdentityBlock }
+
+            [object]::ReferenceEquals($first, $second) | Should -BeFalse -Because 'each call creates a new script block'
+            [object]::ReferenceEquals($first.Module, $maker) | Should -BeTrue
+            [object]::ReferenceEquals($second.Module, $maker) | Should -BeTrue
+            $second.File | Should -BeExactly $first.File
+
+            $firstRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
+            $secondRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -PassThru
+
+            [object]::ReferenceEquals($secondRecord, $firstRecord) | Should -BeTrue -Because 'a script block with the same text, bound to the same module and defined in the same file, is the same completer'
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'same'")
+            Get-TestIdentityCompletion | Should -Be @('same')
+        }
+
+        It 'treats equal text defined in another file as a different completer' {
+            $firstPath = Join-Path -Path $TestDrive -ChildPath 'identity-first.ps1'
+            $secondPath = Join-Path -Path $TestDrive -ChildPath 'identity-second.ps1'
+            Set-Content -LiteralPath $firstPath -Value "{ 'same' }" -Encoding utf8
+            Set-Content -LiteralPath $secondPath -Value "{ 'same' }" -Encoding utf8
+            $first = & $firstPath
+            $second = & $secondPath
+            $first.ToString() | Should -BeExactly $second.ToString()
+
+            Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second
+            } | Should -Throw '*already exists*Use -Force*' -Because 'the file that defines a script block is part of its context, whatever its text'
+        }
+    }
+
+    Context 'a native command whose name has the same key as a parameter target' {
+        It 'returns only the kind each Get-Completer lookup names, and both from an unfiltered lookup' {
+            Register-ArgumentCompleter -Native -CommandName 'Test-IdentityTool:Name' -ScriptBlock { 'native-result' }
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Discovered/'parameter-result'")
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Discovered/'native-result'")
+
+            $all = @(Get-Completer | Where-Object -Property 'CommandName' -Like -Value 'Test-IdentityTool*')
+            @($all | ForEach-Object { [string] $_.CompleterType }) | Should -Be @('Native', 'Parameter')
+            @($all.Key | Select-Object -Unique) | Should -Be @('test-identitytool:name') -Because 'the two targets share the key, which is why the kind is part of their identity'
+        }
+
+        It 'registers both kinds side by side without -Force' {
+            $parameter = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' } -PassThru
+            $native = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' } -PassThru
+
+            $native.CompleterType | Should -Be 'Native'
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool:Name' -Native), $native) | Should -BeTrue
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'parameter-result'")
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
+            Get-TestIdentityCompletion | Should -Be @('parameter-result')
+
+            $state = InModuleScope CompleterActions {
+                Get-CompleterActionState
+            }
+
+            $state['Registrations'].Count | Should -Be 2
+        }
+
+        It 'replaces only the kind Register-Completer -Force names' {
+            $parameter = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' } -PassThru
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-first' } -Force
+
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue -Because 'a forced native registration must not replace the parameter record'
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-first'")
+
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-second' } -Force
+
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-second'")
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('parameter-result')
+
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-second' } -Force
+
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-second'")
+            Get-TestIdentityCompletion | Should -Be @('parameter-second')
+        }
+
+        It 'removes only the kind Unregister-Completer names' {
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' }
+
+            $removed = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false -PassThru
+
+            $removed.CompleterType | Should -Be 'Parameter'
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            } | Should -Throw '*No completer registration was found*'
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool:Name' -Native -Confirm:$false
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+
+            {
+                Unregister-Completer -CommandName 'Test-IdentityTool:Name' -Native -Confirm:$false
+            } | Should -Throw '*No completer registration was found*' -Because 'a native removal must not find the parameter registration'
+
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'parameter-result'")
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            Register-ArgumentCompleter -Native -CommandName 'Test-IdentityTool:Name' -ScriptBlock { 'native-result' }
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+
+            $removedUnmanaged = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru
+
+            $removedUnmanaged.CompleterType | Should -Be 'Parameter'
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Discovered/'native-result'")
+        }
+    }
+
+    Context 'two native names that lowercase to the same key' {
+        BeforeAll {
+            function Get-TestKelvinState
+            {
+                @(
+                    Get-Completer |
+                        Where-Object { $_.IsNative -and $_.Key -eq 'test-kelvintool' } |
+                        ForEach-Object {
+                            $spelling = if ([string]::Equals($_.CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal)) { 'sign' } else { 'letter' }
+                            '{0}/{1}/{2}' -f $spelling, $_.State, $_.ScriptText.Trim()
+                        } |
+                        Sort-Object
+                )
+            }
+
+            function Get-TestKelvinCompletion
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [string] $CommandName
+                )
+
+                $inputScript = "$CommandName "
+                @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText)
+            }
+        }
+
+        It 'finds and removes only the name each command is given' {
+            $letter = Register-Completer -CommandName $script:KelvinLetterName -Native -ScriptBlock { 'letter-result' } -PassThru
+            $letter.Key | Should -BeExactly 'test-kelvintool'
+
+            @(Get-Completer -CommandName $script:KelvinSignName -Native) | Should -BeNullOrEmpty -Because 'the runtime does not complete the Kelvin-sign name with the letter name''s completer'
+
+            {
+                Unregister-Completer -CommandName $script:KelvinSignName -Native -Confirm:$false
+            } | Should -Throw '*No completer registration was found*'
+
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
+        }
+
+        It 'registers both names side by side without -Force and removes each one alone' {
+            $letter = Register-Completer -CommandName $script:KelvinLetterName -Native -ScriptBlock { 'letter-result' } -PassThru
+            $sign = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' } -PassThru
+
+            $sign.Key | Should -BeExactly $letter.Key -Because 'the two names share the lowercase key, which is why the key is not their identity'
+            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinLetterName -Native), $letter) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinSignName -Native), $sign) | Should -BeTrue
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'", "sign/Active/'sign-result'")
+            Get-TestKelvinCompletion -CommandName $script:KelvinLetterName | Should -Be @('letter-result')
+            Get-TestKelvinCompletion -CommandName $script:KelvinSignName | Should -Be @('sign-result')
+
+            $removed = Unregister-Completer -CommandName $script:KelvinSignName -Native -Confirm:$false -PassThru
+
+            [string]::Equals($removed.CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $removed.ScriptText.Trim() | Should -BeExactly "'sign-result'"
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
+            Get-TestKelvinCompletion -CommandName $script:KelvinLetterName | Should -Be @('letter-result')
+        }
+
+        It 'refuses an object that names only a key two native targets share, on every -InputObject command' {
+            $null = Register-Completer -CommandName $script:KelvinLetterName -Native -ScriptBlock { 'letter-result' }
+            $null = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' }
+            $keyOnly = Get-Completer -CommandName $script:KelvinSignName -Native | Select-Object -Property Key, IsNative
+            $keyOnly.Key | Should -BeExactly 'test-kelvintool'
+            $refusal = "*The key 'test-kelvintool' belongs to 2 registered native targets*Supply RuntimeKey, or CommandName*"
+
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw $refusal
+            { $keyOnly | Get-Completer } | Should -Throw $refusal
+            { $keyOnly | Reset-Completer -Confirm:$false -ErrorAction Stop } | Should -Throw $refusal
+            { $keyOnly | Test-CompleterRegistration -InputText 'x ' } | Should -Throw $refusal
+            { [pscustomobject] @{ RegistrationKey = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'other' } } | Register-Completer -Force } | Should -Throw $refusal
+            { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; SourcePath = (Join-Path -Path $TestDrive -ChildPath 'kelvin.ps1') } | Export-CompleterSet -Path (Join-Path -Path $TestDrive -ChildPath 'kelvin.psd1') } | Should -Throw $refusal
+            Test-Path -LiteralPath (Join-Path -Path $TestDrive -ChildPath 'kelvin.psd1') | Should -BeFalse -Because 'a refused export writes no set file'
+
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'", "sign/Active/'sign-result'")
+
+            $removed = Get-Completer -CommandName $script:KelvinSignName -Native | Select-Object -Property RuntimeKey, IsNative | Unregister-Completer -Confirm:$false -PassThru
+
+            [string]::Equals($removed.RuntimeKey, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'RuntimeKey names the target exactly'
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'")
+
+            $keyOnly | Get-Completer | ForEach-Object { [string]::Equals($_.RuntimeKey, $script:KelvinLetterName, [System.StringComparison]::Ordinal) } | Should -BeTrue -Because 'the key now belongs to one registered target'
+            $null = $keyOnly | Unregister-Completer -Confirm:$false
+            Get-TestKelvinState | Should -BeNullOrEmpty
+        }
+
+        It 'refuses an object that names only a key two parameter targets share' {
+            $null = Register-Completer -CommandName $script:KelvinLetterName -ParameterName 'Name' -ScriptBlock { 'letter-result' }
+            $null = Register-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' -ScriptBlock { 'sign-result' }
+            $keyOnly = Get-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' | Select-Object -Property Key, IsNative
+
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw "*The key 'test-kelvintool:name' belongs to 2 registered parameter targets*"
+
+            $removed = Get-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' | Select-Object -Property RuntimeKey, IsNative | Unregister-Completer -Confirm:$false -PassThru
+
+            [string]::Equals($removed.CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $remaining = @(Get-Completer | Where-Object { -not $_.IsNative -and $_.Key -eq 'test-kelvintool:name' })
+            $remaining.Count | Should -Be 1
+            [string]::Equals($remaining[0].CommandName, $script:KelvinLetterName, [System.StringComparison]::Ordinal) | Should -BeTrue
+        }
+
+        It 'refuses an object that names only a key a registered target holds under another spelling, on every -InputObject command' {
+            $null = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' }
+            $keyOnly = [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true }
+            $refusal = "*The key 'test-kelvintool' belongs to the registered native target '$script:KelvinSignName'*could also name the native target 'test-kelvintool'*Supply RuntimeKey, or CommandName*"
+            $setPath = Join-Path -Path $TestDrive -ChildPath 'kelvin-sign.psd1'
+
+            { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'letter-from-key' } } | Register-Completer -Force } | Should -Throw $refusal
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw $refusal
+            { $keyOnly | Get-Completer } | Should -Throw $refusal
+            { $keyOnly | Reset-Completer -Confirm:$false -ErrorAction Stop } | Should -Throw $refusal
+            { $keyOnly | Test-CompleterRegistration -InputText 'x ' } | Should -Throw $refusal
+            { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; SourcePath = (Join-Path -Path $TestDrive -ChildPath 'kelvin.ps1') } | Export-CompleterSet -Path $setPath } | Should -Throw $refusal
+            Test-Path -LiteralPath $setPath | Should -BeFalse -Because 'a refused export writes no set file'
+
+            Get-TestKelvinState | Should -Be @("sign/Active/'sign-result'") -Because 'the forced registration neither replaced the Kelvin-sign target nor created the letter one'
+            Get-TestKelvinCompletion -CommandName $script:KelvinSignName | Should -Be @('sign-result')
+
+            $spelled = [pscustomobject] @{ Key = $script:KelvinSignName; IsNative = $true } | Get-Completer
+            [string]::Equals($spelled.RuntimeKey, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'a key spelled as the registered name names that target'
+
+            $null = Unregister-Completer -CommandName $script:KelvinSignName -Native -Confirm:$false
+            $letter = [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'letter-from-key' } } | Register-Completer -PassThru
+
+            [string]::Equals($letter.RuntimeKey, 'test-kelvintool', [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'with no other spelling registered the key names the target it spells'
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-from-key'")
+        }
+
+        It 'refuses an object that names only a key a registered parameter target holds under another spelling' {
+            $null = Register-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' -ScriptBlock { 'sign-result' }
+            $keyOnly = [pscustomobject] @{ Key = 'test-kelvintool:name'; IsNative = $false }
+
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw "*The key 'test-kelvintool:name' belongs to the registered parameter target*could also name the parameter target 'test-kelvintool:name'*"
+
+            $remaining = @(Get-Completer | Where-Object { -not $_.IsNative -and $_.Key -eq 'test-kelvintool:name' })
+            $remaining.Count | Should -Be 1
+            [string]::Equals($remaining[0].CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue
+        }
+
+        It 'lists and removes both unmanaged runtime entries' {
+            Register-ArgumentCompleter -Native -CommandName $script:KelvinLetterName -ScriptBlock { 'letter-result' }
+            Register-ArgumentCompleter -Native -CommandName $script:KelvinSignName -ScriptBlock { 'sign-result' }
+
+            Get-TestKelvinState | Should -Be @("letter/Discovered/'letter-result'", "sign/Discovered/'sign-result'")
+
+            $removed = @(Unregister-Completer -CommandName $script:KelvinLetterName, $script:KelvinSignName -Native -AllowUnmanaged -Confirm:$false -PassThru)
+
+            $removed.Count | Should -Be 2
+            Get-TestKelvinState | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a key the runtime takes for a registered name that lowercasing does not reach' {
+        It 'names the registered target and keeps its spelling' {
+            [string]::Equals($script:FinalSigmaName.ToLowerInvariant(), $script:SigmaKey, [System.StringComparison]::Ordinal) | Should -BeFalse -Because 'lowercasing keeps the final sigma'
+            [string]::Equals($script:FinalSigmaName, $script:SigmaKey, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue -Because 'the runtime takes the two sigmas for one another'
+
+            $null = Register-Completer -CommandName $script:FinalSigmaName -Native -ScriptBlock { 'final-result' }
+            $keyOnly = [pscustomobject] @{ Key = $script:SigmaKey; IsNative = $true }
+
+            $found = $keyOnly | Get-Completer
+            [string]::Equals($found.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue
+
+            {
+                [pscustomobject] @{ Key = $script:SigmaKey; IsNative = $true; ScriptBlock = { 'from-key' } } | Register-Completer
+            } | Should -Throw '*already exists*Use -Force*'
+
+            $forced = [pscustomobject] @{ Key = $script:SigmaKey; IsNative = $true; ScriptBlock = { 'from-key' } } | Register-Completer -Force -PassThru
+
+            [string]::Equals($forced.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'the key names the registered target, so the record keeps the spelling the runtime entry has'
+            $records = @(Get-Completer | Where-Object { $_.IsNative -and [string]::Equals($_.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::OrdinalIgnoreCase) })
+            $records.Count | Should -Be 1
+            $records[0].State | Should -Be 'Active'
+            [string]::Equals($records[0].RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $inputScript = "$script:FinalSigmaName "
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('from-key')
+
+            $removed = $keyOnly | Unregister-Completer -Confirm:$false -PassThru
+
+            [string]::Equals($removed.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            @(Get-Completer | Where-Object { $_.IsNative -and [string]::Equals($_.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::OrdinalIgnoreCase) }) | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a script path compares the way the file system does' {
+        BeforeAll {
+            $script:IdentityScriptText = "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'same' }"
+        }
+
+        It 'treats two scripts whose paths differ only in case as two scripts on a case-sensitive file system' -Skip:($IsWindows -or $IsMacOS) {
+            $upperPath = Join-Path -Path $TestDrive -ChildPath 'Identity_completer.ps1'
+            $lowerPath = Join-Path -Path $TestDrive -ChildPath 'identity_completer.ps1'
+            Set-Content -LiteralPath $upperPath -Value $script:IdentityScriptText -Encoding utf8
+            Set-Content -LiteralPath $lowerPath -Value $script:IdentityScriptText -Encoding utf8
+
+            $null = Import-CompleterScript -LiteralPath $upperPath | Register-Completer
+
+            {
+                Import-CompleterScript -LiteralPath $lowerPath | Register-Completer
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Split-Path -Path (Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptPath -Leaf | Should -BeExactly 'Identity_completer.ps1'
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            $null = Register-Completer -LiteralPath $upperPath -Lazy
+
+            {
+                Register-Completer -LiteralPath $lowerPath -Lazy
+            } | Should -Throw '*already exists*Use -Force*'
+
+            $pending = Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'
+            $pending.State | Should -Be 'Pending'
+            Split-Path -Path $pending.ScriptPath -Leaf | Should -BeExactly 'Identity_completer.ps1'
+        }
+
+        # Safety guard: script paths now compare the way the file system does, and on a
+        # case-insensitive one that must keep two spellings of one file as one script, so
+        # this passes before and after that change; its Linux sibling above fails before it.
+        It 'treats two spellings of one script path as the same script on a case-insensitive file system' -Skip:(-not ($IsWindows -or $IsMacOS)) {
+            $path = Join-Path -Path $TestDrive -ChildPath 'identity_completer.ps1'
+            $otherSpelling = Join-Path -Path $TestDrive -ChildPath 'IDENTITY_COMPLETER.PS1'
+            Set-Content -LiteralPath $path -Value $script:IdentityScriptText -Encoding utf8
+
+            $imported = Import-CompleterScript -LiteralPath $path | Register-Completer -PassThru
+            $reimported = Import-CompleterScript -LiteralPath $otherSpelling | Register-Completer -PassThru
+
+            [object]::ReferenceEquals($reimported, $imported) | Should -BeTrue -Because 'both spellings name one file'
+
+            $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
+            $lazy = Register-Completer -LiteralPath $path -Lazy -PassThru
+            $lazyAgain = Register-Completer -LiteralPath $otherSpelling -Lazy -PassThru
+
+            [object]::ReferenceEquals($lazyAgain, $lazy) | Should -BeTrue
+        }
+    }
+
+    Context 'a script path on an input object does not vouch for its script block' {
+        It 'refuses an equal-text script block that is not bound to the imported script without -Force' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-trusted.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+$value = 'alpha'
+Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $value }
+'@
+
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $record = $imported | Register-Completer -PassThru
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $closure = & {
+                param(
+                    [string] $value
+                )
+
+                [scriptblock]::Create($record.ScriptText).GetNewClosure()
+            } 'beta'
+            $unbound = [scriptblock]::Create($record.ScriptText)
+            $closure.ToString() | Should -BeExactly $record.ScriptText
+            $pathClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; ScriptPath = $scriptPath; Trusted = $true }
+            $moduleClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; ScriptPath = $scriptPath; Trusted = $true; ImportModule = $imported[0].ImportModule }
+
+            { $pathClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*'
+            { $moduleClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*' -Because 'the closure is not bound to the module the import created'
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $unbound
+            } | Should -Throw '*already exists*Use -Force*' -Because 'an unbound block does not see the $value the script set'
+
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $record.ScriptBlock) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $reimported = Import-CompleterScript -LiteralPath $scriptPath -Trusted | Register-Completer -PassThru
+            [object]::ReferenceEquals($reimported, $record) | Should -BeTrue -Because 'importing and registering the same script again is still a no-op'
+
+            $forced = $pathClaim | Register-Completer -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $closure) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+
+        It 'refuses a closure of the imported script block itself without -Force' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-closure.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+$value = 'alpha'
+Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $value }
+'@
+
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $record = $imported | Register-Completer -PassThru
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $closure = & {
+                param(
+                    [string] $value
+                )
+
+                $record.ScriptBlock.GetNewClosure()
+            } 'beta'
+            $closure.ToString() | Should -BeExactly $record.ScriptText
+            $closure.File | Should -BeExactly $record.ScriptBlock.File -Because 'the closure keeps the file of the block it was made from, so only its binding tells the two apart'
+            $pathClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; ScriptPath = $scriptPath; Trusted = $true }
+            $moduleClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; ScriptPath = $scriptPath; Trusted = $true; ImportModule = $imported[0].ImportModule }
+
+            { $pathClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*'
+            { $moduleClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*' -Because 'the closure is bound to a module of its own, not to the module the import created'
+
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $record.ScriptBlock) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $forced = $pathClaim | Register-Completer -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $closure) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+
+        It 'does not take an ImportModule property as proof that a script block was imported' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-provenance.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+$value = 'alpha'
+Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $value }
+'@
+
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $record = $imported | Register-Completer -PassThru
+            [object]::ReferenceEquals($record.ImportModule, $imported[0].ImportModule) | Should -BeTrue -Because 'the managed record of an imported block names the capture module the import ran the script in'
+
+            $closure = & {
+                param(
+                    [string] $value
+                )
+
+                $imported[0].ScriptBlock.GetNewClosure()
+            } 'beta'
+            $selfClaim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = $closure; SourcePath = $scriptPath; Trusted = $true; ImportModule = $closure.Module }
+            [object]::ReferenceEquals($closure.Module, $selfClaim.ImportModule) | Should -BeTrue -Because 'the claim names the very module its script block is bound to'
+
+            { $selfClaim | Register-Completer } | Should -Throw '*already exists*Use -Force*' -Because 'only the import itself vouches for a capture module'
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $record.ScriptBlock) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $forced = $selfClaim | Register-Completer -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $closure) | Should -BeTrue
+            $forced.ImportModule | Should -BeNullOrEmpty -Because 'the claimed ImportModule is not carried onto the managed record'
+            Get-TestIdentityCompletion | Should -Be @('beta')
+
+            $retiered = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted)
+            $retiered[0].Trusted = $false
+            $strictClaim = $retiered | Register-Completer -Force -PassThru
+            $strictClaim.ImportModule | Should -BeNullOrEmpty -Because 'the import ran the script under the trusted tier, not the tier the record now claims'
+        }
+
+        It 'does not take a script block bound to the capture module as one the import emitted' {
+            $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath)
+            $capture = $imported[0].ImportModule
+            $minted = $capture.NewBoundScriptBlock({ 'minted' })
+            [object]::ReferenceEquals($minted.Module, $capture) | Should -BeTrue -Because 'any caller can bind a script block to the capture module an imported record exposes'
+
+            $claim = [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; ScriptBlock = $minted; SourcePath = $imported[0].SourcePath; Trusted = $false; ImportModule = $capture }
+            $record = $claim | Register-Completer -PassThru
+
+            $record.ImportModule | Should -BeNullOrEmpty -Because 'the import did not emit the minted script block'
+            {
+                Register-Completer -LiteralPath $fixturePath -Lazy
+            } | Should -Throw '*already exists*Use -Force*' -Because 'the record does not hold what the script imported, so registering the script lazily is not a no-op over it'
+            @((TabExpansion2 -InputScript 'importfixture ' -CursorColumn 14).CompletionMatches.CompletionText) | Should -Be @('minted')
+
+            $own = @($imported | Register-Completer -Force -PassThru)
+            [object]::ReferenceEquals($own[0].ImportModule, $capture) | Should -BeTrue -Because 'the script blocks the import emitted are still its own'
+            $lazy = @(Register-Completer -LiteralPath $fixturePath -Lazy -PassThru)
+            [object]::ReferenceEquals($lazy[0], $own[0]) | Should -BeTrue -Because 'the record now holds what the script imported under the same tier'
+        }
+
+        # Safety guard: pins the documented treatment of a module that other code creates
+        # under a capture module's name, so it passes before and after
+        # about_Import_Completers states it.
+        It 'treats a module that other code creates under a capture module''s name as any other module with that name' {
+            $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
+            $imported = @(Import-CompleterScript -LiteralPath $fixturePath)
+            $own = @($imported | Register-Completer -PassThru)
+            $capture = $imported[0].ImportModule
+            $namesake = New-Module -Name $capture.Name -ScriptBlock { Export-ModuleMember }
+            $rebound = $namesake.NewBoundScriptBlock($imported[0].ScriptBlock)
+            [object]::ReferenceEquals($rebound.Module, $capture) | Should -BeFalse
+            $rebound.ToString() | Should -BeExactly $own[0].ScriptText
+            $rebound.File | Should -BeExactly $imported[0].ScriptBlock.File
+
+            $claim = [pscustomobject] @{ CommandName = $imported[0].CommandName; IsNative = $true; ScriptBlock = $rebound; SourcePath = $imported[0].SourcePath; Trusted = $false }
+            $replaced = $claim | Register-Completer -PassThru
+
+            [object]::ReferenceEquals($replaced.ScriptBlock, $rebound) | Should -BeTrue -Because 'a block from another module with the name of the live record''s module and the same text, file, ScriptPath, and tier replaces the record without -Force'
+            [object]::ReferenceEquals((Get-Completer -CommandName $imported[0].CommandName -Native).ScriptBlock, $rebound) | Should -BeTrue
+            $replaced.ImportModule | Should -BeNullOrEmpty -Because 'the import did not emit the rebound script block'
+            {
+                Register-Completer -LiteralPath $fixturePath -Lazy
+            } | Should -Throw '*already exists*Use -Force*' -Because 'the record no longer holds what the script imported'
+            {
+                Import-CompleterScript -LiteralPath $fixturePath | Register-Completer
+            } | Should -Throw '*already exists*Use -Force*' -Because 'importing the script again runs it in a capture module with a new name'
+        }
+
+        It 'refuses a lazy registration over an active record that only names the script path without -Force' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-lazy.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-file' }"
+
+            $claim = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = { 'hand-built' }; ScriptPath = $scriptPath }
+            $null = $claim | Register-Completer
+
+            {
+                Register-Completer -LiteralPath $scriptPath -Lazy
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -Be @('hand-built')
+
+            $imported = Import-CompleterScript -LiteralPath $scriptPath | Register-Completer -Force -PassThru
+            $lazy = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+
+            [object]::ReferenceEquals($lazy, $imported) | Should -BeTrue -Because 'the active record already loaded that script under the same tier'
+            $lazy.State | Should -Be 'Active'
+            Get-TestIdentityCompletion | Should -Be @('from-file')
+        }
+    }
+
+    Context 'a module that registers its completer again' {
+        It 'replaces the managed record with the block of the module imported again, and refuses its closures without -Force' {
+            $modulePath = Join-Path -Path $TestDrive -ChildPath 'TestIdentityProbe.psm1'
+            Set-Content -LiteralPath $modulePath -Encoding utf8 -Value @'
+param(
+    [string] $Value
+)
+
+$script:value = $Value
+
+function Register-TestIdentityProbe
+{
+    Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $script:value } -PassThru
+}
+
+function Register-TestIdentityProbeClosure
+{
+    Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $script:value }.GetNewClosure() -PassThru
+}
+'@
+
+            try
+            {
+                $probe = Import-Module -Name $modulePath -ArgumentList 'alpha' -Force -PassThru
+                $first = Register-TestIdentityProbe
+                [object]::ReferenceEquals($first.ScriptBlock.Module, $probe) | Should -BeTrue
+                [object]::ReferenceEquals((Register-TestIdentityProbe), $first) | Should -BeTrue -Because 'the same module instance registering the same text again is a no-op'
+                Get-TestIdentityCompletion | Should -Be @('alpha')
+
+                $reimportedProbe = Import-Module -Name $modulePath -ArgumentList 'beta' -Force -PassThru
+                [object]::ReferenceEquals($reimportedProbe, $probe) | Should -BeFalse
+                $second = Register-TestIdentityProbe
+
+                [object]::ReferenceEquals($second, $first) | Should -BeFalse -Because 'the new instance of the module holds its own state'
+                [object]::ReferenceEquals($second.ScriptBlock.Module, $reimportedProbe) | Should -BeTrue
+                [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $second.ScriptBlock) | Should -BeTrue
+                Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
+                Get-TestIdentityCompletion | Should -Be @('beta') -Because 'completion runs in the module that is loaded now'
+
+                {
+                    Register-TestIdentityProbeClosure
+                } | Should -Throw '*already exists*Use -Force*' -Because 'a closure is bound to a module of its own'
+            }
+            finally
+            {
+                Remove-Module -Name 'TestIdentityProbe' -Force -ErrorAction SilentlyContinue
+            }
+
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+
+        It 'replaces the managed record without -Force when the module is imported again with the same arguments' {
+            $modulePath = Join-Path -Path $TestDrive -ChildPath 'TestIdentitySameArgument.psm1'
+            Set-Content -LiteralPath $modulePath -Encoding utf8 -Value @'
+param(
+    [string] $Value
+)
+
+$script:value = $Value
+
+function Register-TestIdentitySameArgument
+{
+    Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $script:value } -PassThru
+}
+'@
+
+            try
+            {
+                $probe = Import-Module -Name $modulePath -ArgumentList 'alpha' -Force -PassThru
+                $first = Register-TestIdentitySameArgument
+
+                $reimportedProbe = Import-Module -Name $modulePath -ArgumentList 'alpha' -Force -PassThru
+                [object]::ReferenceEquals($reimportedProbe, $probe) | Should -BeFalse
+                $second = Register-TestIdentitySameArgument
+
+                [object]::ReferenceEquals($second, $first) | Should -BeFalse -Because 'the owner ruling has a new instance replace the record, not reuse it, even with the same arguments'
+                [object]::ReferenceEquals($second.ScriptBlock.Module, $reimportedProbe) | Should -BeTrue
+                [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $second.ScriptBlock) | Should -BeTrue -Because 'the runtime block is the new instance''s'
+                Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
+                Get-TestIdentityCompletion | Should -Be @('alpha')
+                [object]::ReferenceEquals((Register-TestIdentitySameArgument), $second) | Should -BeTrue -Because 'the instance that owns the record registering again is a no-op'
+            }
+            finally
+            {
+                Remove-Module -Name 'TestIdentitySameArgument' -Force -ErrorAction SilentlyContinue
+            }
+        }
+
+        It 'replaces the record of an earlier instance of a module with the same name, and refuses equal text from a module with another name' {
+            $makerBody = {
+                param(
+                    [string] $Value
+                )
+
+                $script:value = $Value
+
+                function Get-TestIdentityBlock { { $script:value } }
+                Export-ModuleMember
+            }
+
+            $firstMaker = New-Module -Name 'TestIdentityMakerA' -ScriptBlock $makerBody -ArgumentList 'alpha'
+            $againMaker = New-Module -Name 'TestIdentityMakerA' -ScriptBlock $makerBody -ArgumentList 'beta'
+            $otherMaker = New-Module -Name 'TestIdentityMakerB' -ScriptBlock $makerBody -ArgumentList 'gamma'
+            $first = & $firstMaker { Get-TestIdentityBlock }
+            $again = & $againMaker { Get-TestIdentityBlock }
+            $other = & $otherMaker { Get-TestIdentityBlock }
+            $again.File | Should -BeExactly $first.File
+            $other.File | Should -BeExactly $first.File
+
+            $record = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
+            Get-TestIdentityCompletion | Should -Be @('alpha')
+
+            $replaced = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again -PassThru
+
+            [object]::ReferenceEquals($replaced, $record) | Should -BeFalse -Because 'the block of the other instance would run with that instance''s state'
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $again) | Should -BeTrue
+            Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
+            Get-TestIdentityCompletion | Should -Be @('beta')
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $other
+            } | Should -Throw '*already exists*Use -Force*'
+
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+
+        # Safety guard: these pin the limits of the owner-ruled replacement by a new module
+        # instance, so they pass before and after it; the text case fails if the rule stops
+        # comparing the script block's text.
+        It 'still needs -Force for a block from a new instance of a module with the same name that differs in <Difference>' -ForEach @(
+            @{ Difference = 'text' }
+            @{ Difference = 'ScriptPath' }
+            @{ Difference = 'tier' }
+        ) {
+            $makerBody = {
+                param(
+                    [string] $Value
+                )
+
+                $script:value = $Value
+
+                function Get-TestIdentityBlock { { $script:value } }
+                function Get-TestIdentityChangedBlock { { "changed $script:value" } }
+                Export-ModuleMember
+            }
+
+            $firstMaker = New-Module -Name 'TestIdentityMakerC' -ScriptBlock $makerBody -ArgumentList 'alpha'
+            $againMaker = New-Module -Name 'TestIdentityMakerC' -ScriptBlock $makerBody -ArgumentList 'beta'
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock (& $firstMaker { Get-TestIdentityBlock })
+
+            $candidate = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; ScriptBlock = (& $againMaker { Get-TestIdentityBlock }) }
+
+            switch ($Difference)
+            {
+                'text' { $candidate.ScriptBlock = & $againMaker { Get-TestIdentityChangedBlock } }
+                'ScriptPath' { $candidate | Add-Member -NotePropertyName 'ScriptPath' -NotePropertyValue (Join-Path -Path $TestDrive -ChildPath 'identity-claimed.ps1') }
+                'tier' { $candidate | Add-Member -NotePropertyName 'Trusted' -NotePropertyValue $true }
+            }
+
+            [object]::ReferenceEquals($candidate.ScriptBlock.Module, $againMaker) | Should -BeTrue
+
+            { $candidate | Register-Completer } | Should -Throw '*already exists*Use -Force*'
+            Get-TestIdentityCompletion | Should -Be @('alpha') -Because 'the record of the first instance stays in place'
+        }
+
+        # Safety guard: pins that the file defining the block bounds the owner-ruled
+        # replacement by a new module instance, so it passes before and after that rule.
+        It 'still needs -Force for a block from a module with the same name that is defined in another file' {
+            $makerText = "New-Module -Name 'TestIdentityMakerD' -ScriptBlock { function Get-TestIdentityBlock { { 'same' } }; Export-ModuleMember }"
+            $firstPath = Join-Path -Path $TestDrive -ChildPath 'identity-maker-first.ps1'
+            $otherPath = Join-Path -Path $TestDrive -ChildPath 'identity-maker-other.ps1'
+            Set-Content -LiteralPath $firstPath -Value $makerText -Encoding utf8
+            Set-Content -LiteralPath $otherPath -Value $makerText -Encoding utf8
+            $first = & (& $firstPath) { Get-TestIdentityBlock }
+            $other = & (& $otherPath) { Get-TestIdentityBlock }
+            $other.Module.Name | Should -BeExactly $first.Module.Name
+            $other.ToString() | Should -BeExactly $first.ToString()
+            $other.File | Should -Not -Be $first.File
+
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $other
+            } | Should -Throw '*already exists*Use -Force*'
+        }
+
+        # Safety guard: pins the documented precondition that the owner-ruled replacement
+        # by a new module instance applies only to a live record, so it passes before and
+        # after the help states it.
+        It 'still needs -Force for a block from a new instance of a module with the same name over a stale record' {
+            $makerBody = {
+                param(
+                    [string] $Value
+                )
+
+                $script:value = $Value
+
+                function Get-TestIdentityBlock { { $script:value } }
+                Export-ModuleMember
+            }
+
+            $first = & (New-Module -Name 'TestIdentityMakerE' -ScriptBlock $makerBody -ArgumentList 'alpha') { Get-TestIdentityBlock }
+            $again = & (New-Module -Name 'TestIdentityMakerE' -ScriptBlock $makerBody -ArgumentList 'beta') { Get-TestIdentityBlock }
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first
+            Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'outside' }
+
+            {
+                Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again
+            } | Should -Throw '*is stale*Use -Force*'
+            Get-TestIdentityCompletion | Should -Be @('outside')
+
+            $forced = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again -Force -PassThru
+            [object]::ReferenceEquals($forced.ScriptBlock, $again) | Should -BeTrue
+            Get-TestIdentityCompletion | Should -Be @('beta')
+        }
+    }
+
+    Context 'kind and tier written as text' {
+        It 'reads IsNative from a record exported with Export-Csv and acts on that kind only' {
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' }
+            $csvPath = Join-Path -Path $TestDrive -ChildPath 'identity.csv'
+            Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' | Export-Csv -LiteralPath $csvPath
+            $row = Import-Csv -LiteralPath $csvPath
+
+            $row.IsNative | Should -BeExactly 'False'
+            @($row | Get-Completer | ForEach-Object { [string] $_.CompleterType }) | Should -Be @('Parameter')
+
+            $removed = $row | Unregister-Completer -Confirm:$false -PassThru
+
+            $removed.CompleterType | Should -Be 'Parameter'
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
+        }
+
+        It 'reads Trusted written as text and rejects text that is not a Boolean' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-text.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-row' }"
+
+            $strict = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'false'; ScriptBlock = { 'from-row' }; ScriptPath = $scriptPath; Trusted = 'FALSE' } |
+                Register-Completer -PassThru
+            $strict.CompleterType | Should -Be 'Parameter'
+            $strict.Trusted | Should -BeFalse
+
+            $trusted = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'False'; ScriptBlock = { 'from-row' }; ScriptPath = $scriptPath; Trusted = ' True ' } |
+                Register-Completer -Force -PassThru
+            $trusted.Trusted | Should -BeTrue
+
+            $empty = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = ''; ScriptBlock = { 'from-row' }; Trusted = '' } |
+                Register-Completer -Force -PassThru
+            $empty.CompleterType | Should -Be 'Parameter' -Because 'empty text counts as False'
+            $empty.Trusted | Should -BeFalse
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'no' } | Get-Completer
+            } | Should -Throw "*'no' for IsNative, which is not a Boolean value*"
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = { 'from-row' }; Trusted = 'yes' } | Register-Completer -Force
+            } | Should -Throw "*'yes' for Trusted, which is not a Boolean value*"
+
+            Get-TestIdentityState -CompleterType Native | Should -BeNullOrEmpty
+        }
+
+        It 'exports the tier a record exported with Export-Csv was written with, and rejects text that is not a Boolean' {
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-export.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-set' }"
+            $csvPath = Join-Path -Path $TestDrive -ChildPath 'identity-export.csv'
+            Import-CompleterScript -LiteralPath $scriptPath | Select-Object -Property CommandName, ParameterName, IsNative, SourcePath, Trusted | Export-Csv -LiteralPath $csvPath
+            $row = Import-Csv -LiteralPath $csvPath
+            $row.Trusted | Should -BeExactly 'False'
+
+            $strictSetPath = Join-Path -Path $TestDrive -ChildPath 'identity-strict.psd1'
+            $row | Export-CompleterSet -Path $strictSetPath
+            $strictEntry = (Import-PowerShellDataFile -LiteralPath $strictSetPath).Entries[0]
+            $strictEntry.Trusted | Should -BeExactly $false -Because "the text 'False' is the strict tier"
+            @($strictEntry.Targets | ForEach-Object { '{0}/{1}' -f $_.CommandName, $_.ParameterName }) | Should -Be @('Test-IdentityTool/Name')
+
+            $trustedSetPath = Join-Path -Path $TestDrive -ChildPath 'identity-trusted.psd1'
+            [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = 'False'; SourcePath = $scriptPath; Trusted = 'true' } | Export-CompleterSet -Path $trustedSetPath
+            (Import-PowerShellDataFile -LiteralPath $trustedSetPath).Entries[0].Trusted | Should -BeExactly $true
+
+            $badSetPath = Join-Path -Path $TestDrive -ChildPath 'identity-bad.psd1'
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; SourcePath = $scriptPath; Trusted = 'nope' } | Export-CompleterSet -Path $badSetPath
+            } | Should -Throw "*'nope' for Trusted, which is not a Boolean value*"
+            Test-Path -LiteralPath $badSetPath | Should -BeFalse
+        }
+
+        It 'reads True or False with white space around it and counts white-space text as False' {
+            $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' }
+            $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' }
+
+            @([pscustomobject] @{ CommandName = 'Test-IdentityTool:Name'; IsNative = " True`t" } | Get-Completer | ForEach-Object { [string] $_.CompleterType }) |
+                Should -Be @('Native')
+            @([pscustomobject] @{ RuntimeKey = 'Test-IdentityTool:Name'; IsNative = ' false ' } | Get-Completer | ForEach-Object { [string] $_.CompleterType }) |
+                Should -Be @('Parameter')
+            @([pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; Native = " `t " } | Get-Completer | ForEach-Object { [string] $_.CompleterType }) |
+                Should -Be @('Parameter') -Because 'text that is only white space counts as False'
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = ' yes ' } | Get-Completer
+            } | Should -Throw "*' yes ' for IsNative, which is not a Boolean value*"
+        }
+    }
+}
+
+Describe 'Startup benchmark tool' {
+    # Code points keep this file ASCII. Each typographic quote alone, and all five together, must
+    # come back unchanged from the child script's literals.
+    It 'writes child scripts that parse back to paths holding <Name>' -ForEach @(
+        @{ Name = 'U+2018'; Codes = @(0x2018) }
+        @{ Name = 'U+2019'; Codes = @(0x2019) }
+        @{ Name = 'U+201A'; Codes = @(0x201A) }
+        @{ Name = 'U+201B'; Codes = @(0x201B) }
+        @{ Name = 'every single-quote character the tokenizer accepts'; Codes = @(0x0027, 0x2018, 0x2019, 0x201A, 0x201B) }
+    ) {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $toolPath = Join-Path -Path $repoRoot -ChildPath 'tools' -AdditionalChildPath 'Measure-CompleterStartup.ps1'
+
+        # The tool dot-sources the module's quoting helper; load it the same way, then
+        # define the tool's own quoting and child-script helpers from its source.
+        . (Join-Path -Path $repoRoot -ChildPath 'src' -AdditionalChildPath 'Private', 'ConvertTo-CompleterSingleQuotedText.ps1')
+        $toolAst = [System.Management.Automation.Language.Parser]::ParseFile($toolPath, [ref] $null, [ref] $null)
+        $helpers = @($toolAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in 'ConvertTo-SingleQuoted', 'ConvertTo-TimedScript' }, $false))
+        $helpers.Count | Should -Be 2
+
+        foreach ($helper in $helpers)
+        {
+            . ([scriptblock]::Create($helper.Extent.Text))
+        }
+
+        $quotes = -join @($Codes | ForEach-Object { [char] $_ })
+        $modulePath = Join-Path -Path $TestDrive -ChildPath "module $quotes" -AdditionalChildPath 'CompleterActions.psd1'
+        $setPath = Join-Path -Path $TestDrive -ChildPath "set $quotes" -AdditionalChildPath 'startup.psd1'
+
+        $childScript = ConvertTo-TimedScript -Module $modulePath -Body "Import-CompleterSet -LiteralPath $(ConvertTo-SingleQuoted -Value $setPath) -Force | Out-Null"
+
+        $parseErrors = $null
+        $childAst = [System.Management.Automation.Language.Parser]::ParseInput($childScript, [ref] $null, [ref] $parseErrors)
+
+        $parseErrors | Should -BeNullOrEmpty
+        $commands = @($childAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in 'Import-Module', 'Import-CompleterSet' }, $true))
+        @($commands | ForEach-Object { $_.CommandElements[2].Value }) | Should -BeExactly @($modulePath, $setPath)
     }
 }

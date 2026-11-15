@@ -6,16 +6,18 @@ Removes a completer registration directly from the live PowerShell runtime.
 Targets the current session's runtime completer dictionaries and removes the
 matching discovered registration. Maintainers use this helper when internal
 module workflows need to reconcile or replace registrations that already exist
-in PowerShell's live runtime state.
+in PowerShell's live runtime state. Only the dictionary of the target's kind is
+touched, so removing a parameter target never removes a native entry that
+shares its key, and the reverse.
 
 This helper mutates dictionaries reached through PowerShell runtime internals,
 not a public management API. It is therefore intentionally private and should
 only be used from higher-level module operations that already understand the
 runtime caveats and session-scoped effects.
 
-.PARAMETER Key
-The normalized registration key used by the module to find the runtime entry to
-remove.
+.PARAMETER Target
+The completer target or registration record whose runtime entry to remove. It
+must expose RuntimeKey and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name that identifies the completer target to
@@ -31,10 +33,10 @@ Indicates that the target to remove is a native completer registration.
 CompleterActions.CompleterRegistration
 
 .EXAMPLE
-Remove-RuntimeCompleterRegistration -Key 'get-item:path'
+Remove-RuntimeCompleterRegistration -Target $registration
 
-Shows the maintainer-oriented path for removing a discovered registration by the
-module's normalized key.
+Removes the live runtime entry for the target of a registration record from
+the dictionary of that record's kind.
 
 .EXAMPLE
 Remove-RuntimeCompleterRegistration -CommandName git -Native
@@ -50,14 +52,14 @@ to be updated together.
 #>
 function Remove-RuntimeCompleterRegistration
 {
-    [CmdletBinding(DefaultParameterSetName = 'ByKey')]
+    [CmdletBinding(DefaultParameterSetName = 'Target')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper removes entries from PowerShell runtime completer dictionaries for higher-level callers.')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -74,67 +76,49 @@ function Remove-RuntimeCompleterRegistration
 
     $runtime = $null
     $runtimeRegistration = $null
-    $target = $null
+    $removalTarget = $null
     $dictionary = $null
 
     try
     {
-        $runtime = Get-CompleterRuntime
-
-        if ($PSCmdlet.ParameterSetName -eq 'ByKey')
+        $removalTarget = switch ($PSCmdlet.ParameterSetName)
         {
-            $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $Key
+            'Target' { $Target }
+            'Native'
+            {
+                if (-not $Native)
+                {
+                    throw 'Native target resolution requires the -Native switch.'
+                }
 
-            if ($null -eq $runtimeRegistration)
-            {
-                return
+                Resolve-CompleterTarget -CommandName $CommandName -Native
             }
-
-            if ($runtimeRegistration.IsNative)
-            {
-                $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey -Native
-            }
-            else
-            {
-                $target = Resolve-CompleterTarget -RuntimeKey $runtimeRegistration.RuntimeKey
-            }
-        }
-        elseif ($PSCmdlet.ParameterSetName -eq 'Native')
-        {
-            if (-not $Native)
-            {
-                throw 'Native target resolution requires the -Native switch.'
-            }
-
-            $target = Resolve-CompleterTarget -CommandName $CommandName -Native
-        }
-        else
-        {
-            $target = Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
+            'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
         }
 
-        $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+        $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $removalTarget
 
-        if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
+        if ($null -eq $runtimeRegistration)
         {
             return
         }
 
-        $removedScriptBlock = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey
-        $removedRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock $removedScriptBlock -Source 'Discovered' -State Discovered
+        $runtime = Get-CompleterRuntime
+        $dictionary = if ($runtimeRegistration.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+        $null = Remove-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeRegistration.RuntimeKey
 
-        return $removedRegistration
+        return $runtimeRegistration
     }
     catch
     {
-        $targetDescription = if ($null -ne $target) { $target.RuntimeKey } elseif (-not [string]::IsNullOrWhiteSpace($Key)) { $Key } else { $CommandName }
+        $targetDescription = if ($null -ne $removalTarget) { $removalTarget.RuntimeKey } else { $CommandName }
         throw "Failed to remove the runtime completer registration '$targetDescription'. $($_.Exception.Message)"
     }
     finally
     {
         $runtime = $null
         $runtimeRegistration = $null
-        $target = $null
+        $removalTarget = $null
         $dictionary = $null
     }
 }

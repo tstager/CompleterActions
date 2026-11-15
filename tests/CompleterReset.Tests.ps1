@@ -63,7 +63,9 @@ BeforeAll {
         & (Get-Module -Name 'CompleterActions') {
             param($RuntimeLookupKey)
 
-            $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $RuntimeLookupKey
+            # No fixture's native command name contains a colon, so a key with one is a parameter target.
+            $lookupTarget = if ($RuntimeLookupKey.Contains(':')) { Resolve-CompleterTarget -RuntimeKey $RuntimeLookupKey } else { Resolve-CompleterTarget -RuntimeKey $RuntimeLookupKey -Native }
+            $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $lookupTarget
 
             if ($null -ne $runtimeRegistration)
             {
@@ -82,7 +84,9 @@ BeforeAll {
         & (Get-Module -Name 'CompleterActions') {
             param($ManagedLookupKey)
 
-            Find-ManagedCompleterRegistration -Key $ManagedLookupKey
+            # No fixture's native command name contains a colon, so a key with one is a parameter target.
+            $lookupTarget = if ($ManagedLookupKey.Contains(':')) { Resolve-CompleterTarget -RuntimeKey $ManagedLookupKey } else { Resolve-CompleterTarget -RuntimeKey $ManagedLookupKey -Native }
+            Find-ManagedCompleterRegistration -Target $lookupTarget
         } $Key
     }
 
@@ -678,5 +682,114 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
 
         $before.Count | Should -BeGreaterThan 0
         $after | Should -Be $before
+    }
+
+    Context 'Typographic apostrophes in the lazy stub' {
+        BeforeAll {
+            # U+2019, a single-quote delimiter to the tokenizer, written as a code point so this file stays ASCII.
+            $script:ResetQuote = [string] [char] 0x2019
+            $script:ResetQuoteName = 'reset{0}quote' -f $script:ResetQuote
+        }
+
+        AfterEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName $script:ResetQuoteName -CompleterType 'Native'
+        }
+
+        It 'returns an Active record named with U+2019 to Pending and reloads it on the next completion' {
+            $quotedName = $script:ResetQuoteName.Replace($script:ResetQuote, $script:ResetQuote + $script:ResetQuote)
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'resetquote.ps1'
+            Write-TestResetScript -Path $scriptPath -CommandName $quotedName -Value 'before-edit'
+            $null = Import-CompleterScript -LiteralPath $scriptPath | Register-Completer
+
+            $inputScript = "& '$quotedName' "
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('before-edit')
+
+            Write-TestResetScript -Path $scriptPath -CommandName $quotedName -Value 'after-edit'
+            $record = Reset-Completer -CommandName $script:ResetQuoteName -Native -PassThru
+
+            $record.State | Should -Be 'Pending'
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('after-edit')
+            (Get-Completer -CommandName $script:ResetQuoteName -Native).State | Should -Be 'Active'
+        }
+    }
+}
+
+Describe 'Reset-Completer with a native command that shares a parameter target key' {
+    BeforeAll {
+        $script:ResetIdentityCleanupTargets = @(
+            @{ CommandName = 'Test-ResetIdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = 'Test-ResetIdentityTool:Name'; CompleterType = 'Native' }
+        )
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:ResetIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name $script:ManifestPath -Force | Out-Null
+
+        function global:Test-ResetIdentityTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:ResetIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Item -Path 'Function:\global:Test-ResetIdentityTool' -ErrorAction SilentlyContinue
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'resets only the kind it names' {
+        $nativePath = Join-Path -Path $TestDrive -ChildPath 'identity_native_completer.ps1'
+        $parameterPath = Join-Path -Path $TestDrive -ChildPath 'identity_parameter_completer.ps1'
+        Set-Content -LiteralPath $nativePath -Encoding utf8 -Value @'
+Register-ArgumentCompleter -Native -CommandName 'Test-ResetIdentityTool:Name' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+    'native-result'
+}
+'@
+        Set-Content -LiteralPath $parameterPath -Encoding utf8 -Value @'
+Register-ArgumentCompleter -CommandName 'Test-ResetIdentityTool' -ParameterName 'Name' -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+    'parameter-result'
+}
+'@
+
+        $native = @(Import-CompleterScript -LiteralPath $nativePath | Register-Completer -PassThru)
+        $parameter = @(Import-CompleterScript -LiteralPath $parameterPath | Register-Completer -PassThru)
+
+        @($native | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Active')
+        @($parameter | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Parameter/Active')
+
+        $reset = @(Reset-Completer -CommandName 'Test-ResetIdentityTool' -ParameterName 'Name' -PassThru)
+
+        @($reset | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Parameter/Pending')
+        $reset[0].ScriptPath | Should -Be $parameterPath
+        [object]::ReferenceEquals((Get-Completer -CommandName 'Test-ResetIdentityTool:Name' -Native), $native[0]) | Should -BeTrue -Because 'resetting the parameter target must leave the native record and its loaded script block alone'
+
+        $inputScript = 'Test-ResetIdentityTool -Name '
+        @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('parameter-result')
+        (Get-Completer -CommandName 'Test-ResetIdentityTool' -ParameterName 'Name').State | Should -Be 'Active'
+
+        $nativeReset = @(Reset-Completer -CommandName 'Test-ResetIdentityTool:Name' -Native -PassThru)
+
+        @($nativeReset | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending')
+        (Get-Completer -CommandName 'Test-ResetIdentityTool' -ParameterName 'Name').State | Should -Be 'Active'
     }
 }

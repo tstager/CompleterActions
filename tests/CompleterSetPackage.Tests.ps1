@@ -540,6 +540,29 @@ Describe 'Import-CompleterSet -Name' {
         Get-TestPackageRegistration | Should -BeNullOrEmpty
     }
 
+    It 'fails on a manifest over the 128 KB set file limit without parsing it' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $manifestPath = Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psd1'
+        # A comment past the limit leaves the manifest valid data, so only a read held to the limit refuses it.
+        Add-Content -LiteralPath $manifestPath -Value ('# ' + ('x' * 128KB)) -Encoding utf8
+        (Import-PowerShellDataFile -LiteralPath $manifestPath).PrivateData.CompleterSet | Should -Be 'completers/completers.psd1'
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $thrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. The module manifest '$manifestPath' is larger than the 131072-byte limit for completer set files and their module manifests."
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
     It 'fails a wildcard name before resolving anything' {
         $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
         $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
@@ -1524,6 +1547,34 @@ finally
         @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
     }
 
+    It 'treats a parent .psd1 over the 128 KB set file limit as no manifest, and fails -Name on it, without parsing it' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding) | Should -Be @(Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath)
+
+        # A comment past the limit leaves the manifest valid data that declares the set, so only a read held to the
+        # limit finds no manifest.
+        Add-Content -LiteralPath $manifestPath -Value ('# ' + ('x' * 128KB)) -Encoding utf8
+        (Import-PowerShellDataFile -LiteralPath $manifestPath).PrivateData.CompleterSet | Should -Be 'completers/completers.psd1'
+
+        @(Test-CompleterSet -LiteralPath $setPath) | Should -BeNullOrEmpty
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $thrown = { Test-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. The module manifest '$manifestPath' is larger than the 131072-byte limit for completer set files and their module manifests."
+    }
+
     It 'treats a parent folder that cannot be listed as holding no manifest' {
         if ($IsWindows)
         {
@@ -1688,6 +1739,34 @@ finally
 
         @($help.Syntax.syntaxItem).Count | Should -Be 3
         @($help.Parameters.parameter).name | Should -Contain 'Name'
+    }
+
+    It 'takes every package finding from its one read of the set, even when the set file is deleted after it' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $qualifiedPath = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'beta'
+        $expected = @(
+            Get-TestOutsideFinding -SetPath $setPath -Index 2 -DeclaredPath $qualifiedPath
+            Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath ([System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1'))
+        )
+
+        @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding) | Should -Be $expected
+
+        # A second read of the set, for an entry's position or for line 1, would fail on the deleted file.
+        & (Get-Module -Name 'CompleterActions') {
+            $script:TestReadDefinition = ${function:Import-CompleterSetDefinition}
+
+            function script:Import-CompleterSetDefinition
+            {
+                param($LiteralPath)
+
+                & $script:TestReadDefinition -LiteralPath $LiteralPath
+                [System.IO.File]::Delete($LiteralPath)
+            }
+        }
+
+        @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding) | Should -Be $expected
+        Test-Path -LiteralPath $setPath | Should -BeFalse
     }
 }
 

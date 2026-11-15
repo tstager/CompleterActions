@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Unregister-Completer.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -60,9 +60,15 @@ A Pending lazy registration is removed like any managed registration, stub and
 record together. A Failed lazy registration has no runtime entry of its own, so
 only its managed record is removed.
 The command supports array inputs for the target fields, plus pipeline input
-from Get-Completer output. Keys are output-only identifiers: a
+from Get-Completer output; each target is decided once per call, so the
+Conflicted twin of a Stale record is skipped rather than confirmed again or
+reported as missing, and a declined confirmation stands. Keys are output-only
+identifiers: a
 hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+plus -Native or -ParameterName instead. Only the kind of target named is
+removed: a native command whose name contains a colon, such as an alias named
+`Get-Thing:Name`, shares its key with the parameter target `Get-Thing` /
+`Name`, and removing one never touches the other.
 To reload a Failed or Active script-backed registration instead of removing
 it, use Reset-Completer.
 
@@ -72,7 +78,9 @@ it, use Reset-Completer.
 
 ### -AllowUnmanaged
 
-Allows removal of runtime registrations that are not tracked by this module.
+Allows removal of runtime registrations that are not tracked by this module,
+including a live value that replaced a managed registration outside this
+module.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -145,6 +153,13 @@ HelpMessage: ''
 Supplies one or more objects that describe registrations to remove.
 Input objects expose CommandName with IsNative/Native or ParameterName, or a
 Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 ```yaml
 Type: System.Object[]
@@ -269,14 +284,11 @@ This cmdlet supports the common parameters: -Debug, -ErrorAction, -ErrorVariable
 
 ### CompleterActions.CompleterRegistration
 
-When -PassThru is used
-
-### System.Management.Automation.PSObject
+When `-PassThru` is used, returns the removed
+`CompleterActions.CompleterRegistration` records.
 
 ## NOTES
 
 ## RELATED LINKS
-
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Unregister-Completer.md)
 
 [Reset-Completer](Reset-Completer.md)

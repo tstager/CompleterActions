@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Import-CompleterSet.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -42,9 +42,12 @@ Import-CompleterSet -Name <string[]> [-SkipInvalid] [-Force] [-WhatIf] [-Confirm
 
 Reads a completer set, a `.psd1` data file written by `Export-CompleterSet` or
 by hand, validates every entry up front, and then registers each valid entry's
-targets as managed registrations. The set is read with
-`Import-PowerShellDataFile`, which evaluates data only, and validation never
-executes a completer script.
+targets as managed registrations. The set file is read once and evaluated as
+data only, with the evaluator `Import-PowerShellDataFile` uses, and validation
+never executes a completer script. A set file that holds more than 128 KB
+(131072 bytes) is refused before it is parsed, as `Export-CompleterSet` refuses
+to write one, and nothing from it is registered; split a larger set into
+several.
 
 Every entry is checked before anything is registered: the script file must
 exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because
@@ -104,9 +107,10 @@ holds the manifest as its only `.psd1`. The module is found the way
 that has the module wins, and within it the highest version, which is used
 even when its set is broken. The manifest is read as data, so the package's
 `RootModule`, `ScriptsToProcess`, `NestedModules`, and `RequiredModules` never
-load or run. Every name is resolved before any set is imported, and the set is
-then imported as `-LiteralPath` imports it, with two rules for packages. An
-entry whose script resolves outside the module folder is an invalid entry. A
+load or run, and a manifest larger than 128 KB, the set file limit, is refused
+before it is parsed. Every name is resolved before any set is imported, and the
+set is then imported as `-LiteralPath` imports it, with two rules for packages.
+An entry whose script resolves outside the module folder is an invalid entry. A
 set with trusted entries writes one warning per name that counts them.
 Installing a completer set package and importing it by name is a decision to
 run its scripts: each one runs at its first tab, under its entry's trust tier.

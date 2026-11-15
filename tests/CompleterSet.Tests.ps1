@@ -90,10 +90,13 @@ BeforeAll {
             foreach ($keyItem in $Key)
             {
                 $runtimeScriptBlock = $null
+                # No fixture's native command name contains a colon, so a key with one is a parameter target.
+                $target = if ($keyItem.Contains(':')) { Resolve-CompleterTarget -RuntimeKey $keyItem } else { Resolve-CompleterTarget -RuntimeKey $keyItem -Native }
+                $identity = Get-CompleterTargetIdentity -Target $target
 
                 foreach ($view in $snapshot.Runtime)
                 {
-                    if ($view.Keys.ContainsKey($keyItem))
+                    if ($view.IsNative -eq $target.IsNative -and $view.Keys.ContainsKey($keyItem))
                     {
                         $runtimeScriptBlock = $view.Dictionary[$view.Keys[$keyItem]]
                         break
@@ -102,7 +105,7 @@ BeforeAll {
 
                 [pscustomobject] @{
                     Key     = $keyItem
-                    Managed = if ($snapshot.Managed.Contains($keyItem)) { $snapshot.Managed[$keyItem] } else { $null }
+                    Managed = if ($snapshot.Managed.Contains($identity)) { $snapshot.Managed[$identity] } else { $null }
                     Runtime = $runtimeScriptBlock
                 }
             }
@@ -604,6 +607,177 @@ Describe 'Completer sets' {
         }
     }
 
+    Context 'Export-CompleterSet input selection' {
+        BeforeEach {
+            # An existing set for one script, plus a managed registration from another
+            # script that only the no-input fallback may export.
+            Import-CompleterScript -Path $script:ParameterFixturePath | Export-CompleterSet -Path $script:SetPath
+            $script:ExistingSetHash = (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash
+            $null = Import-CompleterScript -LiteralPath $script:NativeFixturePath | Register-Completer
+            $script:EmptySelectionWarning = "No registrations were selected for export, so nothing was written to '$script:SetPath'."
+        }
+
+        It 'leaves an existing set byte-identical and warns when <Case> selects no registrations' -TestCases @(
+            @{ Case = 'a Get-Completer filter that matches nothing'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'an empty pipeline'; Export = { param($Path) @() | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'an empty -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject @() -PassThru } }
+            @{ Case = 'a filter that matches nothing under -WhatIf'; Export = { param($Path) Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $Path -PassThru -WhatIf } }
+            @{ Case = 'a filter that matches nothing passed to -InputObject'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject (Get-Completer -CommandName 'review-does-not-exist' -Native) -PassThru } }
+            @{ Case = '-InputObject $null'; Export = { param($Path) Export-CompleterSet -Path $Path -InputObject $null -PassThru } }
+            @{ Case = 'a piped $null'; Export = { param($Path) $null | Export-CompleterSet -Path $Path -PassThru } }
+            @{ Case = 'a wrapper that passes an empty $input on'; Export = { param($Path) @() | & { param($SetPath) $input | Export-CompleterSet -Path $SetPath -PassThru } $Path } }
+        ) {
+            param($Case, $Export)
+
+            (Get-Completer -CommandName 'importfixture' -Native).ScriptPath | Should -Be $script:NativeFixturePath -Because "the session must hold a registration that $Case must not export"
+
+            $streamed = @(& $Export -Path $script:SetPath 3>&1 2>&1)
+            $warnings = @($streamed | Where-Object { $_ -is [System.Management.Automation.WarningRecord] })
+            $errors = @($streamed | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] })
+            $output = @($streamed | Where-Object { $_ -isnot [System.Management.Automation.WarningRecord] -and $_ -isnot [System.Management.Automation.ErrorRecord] })
+
+            $errors | Should -BeNullOrEmpty -Because 'an empty selection is reported by the warning alone'
+            @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
+            $output | Should -BeNullOrEmpty -Because 'no file was written, so -PassThru has nothing to return'
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'skips nulls among the records it is given and exports the rest' {
+            $records = @(Import-CompleterScript -LiteralPath $script:NativeFixturePath)
+
+            $written = @(Export-CompleterSet -Path $script:SetPath -InputObject (@($null) + $records + @($null)) -PassThru | Select-Object -ExpandProperty FullName)
+
+            $written | Should -Be @($script:SetPath)
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1 -Because 'only the records given are exported, not the existing set or every managed registration'
+            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
+            @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+        }
+
+        It 'does not ask for confirmation when no registrations are selected' {
+            $scriptedHost = [CompleterActionsTests.ScriptedHost]::new()
+            $scriptedHost.ScriptedUI.Answers.Enqueue('Yes')
+            $runspace = [runspacefactory]::CreateRunspace($scriptedHost)
+            $powerShell = [powershell]::Create()
+
+            try
+            {
+                $runspace.Open()
+                $powerShell.Runspace = $runspace
+                $null = $powerShell.AddScript({
+                        param($ModulePath, $FixturePath, $SetPath)
+
+                        Import-Module -Name $ModulePath -Force
+                        $null = Import-CompleterScript -LiteralPath $FixturePath | Register-Completer
+                        Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $SetPath -Confirm
+                    }).AddArgument((Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1')).AddArgument($script:NativeFixturePath).AddArgument($script:SetPath)
+                $result = @($powerShell.Invoke())
+                $errors = @($powerShell.Streams.Error)
+                $warnings = @($powerShell.Streams.Warning)
+            }
+            finally
+            {
+                $powerShell.Dispose()
+                $runspace.Dispose()
+            }
+
+            $errors | Should -BeNullOrEmpty
+            $result | Should -BeNullOrEmpty
+            $scriptedHost.ScriptedUI.Prompts | Should -BeNullOrEmpty -Because 'an empty selection writes nothing, so there is nothing to confirm'
+            $scriptedHost.ScriptedUI.Answers.Count | Should -Be 1
+            @($warnings.Message) | Should -BeExactly @($script:EmptySelectionWarning)
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'exports every managed registration when nothing is piped, also as the first command of a pipeline' {
+            $null = Import-CompleterScript -LiteralPath $script:ParameterFixturePath | Register-Completer
+
+            $written = @(Export-CompleterSet -Path $script:SetPath -PassThru | Select-Object -ExpandProperty FullName)
+
+            $written | Should -Be @($script:SetPath)
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $entriesByScript = @{}
+
+            foreach ($entry in $data.Entries)
+            {
+                $entriesByScript[[System.IO.Path]::GetFullPath($entry.Path, $script:SetRoot)] = $entry
+            }
+
+            @($entriesByScript.Keys | Sort-Object) | Should -Be @($script:NativeFixturePath, $script:ParameterFixturePath | Sort-Object)
+            @($entriesByScript[$script:NativeFixturePath].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            $entriesByScript[$script:ParameterFixturePath].Targets.CommandName | Should -Be 'Test-ImportedFixtureTool'
+        }
+
+        It 'prints no What if line under -WhatIf when no registrations are selected' {
+            # ShouldProcess writes its What if line to the host, so a child pwsh is
+            # the only place the test can read it. The second export is the control
+            # that shows the capture sees the line when there is something to write.
+            $childScriptPath = Join-Path -Path $script:SetRoot -ChildPath 'whatif-child.ps1'
+            Set-Content -LiteralPath $childScriptPath -Encoding utf8 -Value @'
+param($ModulePath, $FixturePath, $SetPath)
+
+$ErrorActionPreference = 'Stop'
+Import-Module -Name $ModulePath -Force
+$null = Import-CompleterScript -LiteralPath $FixturePath | Register-Completer
+Get-Completer -CommandName 'review-does-not-exist' -Native | Export-CompleterSet -Path $SetPath -WhatIf 3>$null
+'-- selected registrations --'
+Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $SetPath -WhatIf
+'@
+            $modulePath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'CompleterActions.psd1'))
+
+            $lines = @(& pwsh -NoProfile -NonInteractive -File $childScriptPath -ModulePath $modulePath -FixturePath $script:NativeFixturePath -SetPath $script:SetPath 2>&1 | ForEach-Object { [string] $_ })
+
+            $LASTEXITCODE | Should -Be 0 -Because ($lines -join [Environment]::NewLine)
+            $split = [System.Array]::IndexOf([string[]] $lines, '-- selected registrations --')
+            $split | Should -BeGreaterOrEqual 0
+            @($lines[0..$split] -match '^What if:') | Should -BeNullOrEmpty -Because 'an empty selection returns before ShouldProcess'
+            @($lines[$split..($lines.Count - 1)] -match '^What if:').Count | Should -Be 1 -Because 'a selection that would be written does print its What if line'
+            (Get-FileHash -LiteralPath $script:SetPath -Algorithm SHA256).Hash | Should -Be $script:ExistingSetHash
+        }
+
+        It 'states the input-selection contract in the <Source> of Export-CompleterSet' -TestCases @(
+            @{ Source = 'comment-based help' }
+            @{ Source = 'markdown help' }
+            @{ Source = 'MAML help' }
+        ) {
+            param($Source)
+
+            $docRoot = [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'docs', 'CompleterActions')
+            $text = switch ($Source)
+            {
+                'comment-based help' { Get-Help -Name 'Export-CompleterSet' -Full | Out-String -Width 4096 }
+                'markdown help' { Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'Export-CompleterSet.md')) -Raw }
+                'MAML help'
+                {
+                    $maml = [xml] (Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'CompleterActions', 'CompleterActions-Help.xml')) -Raw)
+                    $command = $maml.helpItems.command | Where-Object { $_.details.verb -eq 'Export' -and $_.details.noun -eq 'CompleterSet' }
+                    $inputObjectParameter = $command.parameters.parameter | Where-Object { $_.name -eq 'InputObject' }
+                    @($command.description.para) + @($inputObjectParameter.description.para) -join ' '
+                }
+            }
+            $flatText = $text -replace '`', '' -replace '\s+', ' '
+
+            foreach ($expectedText in @(
+                    'When the command comes after a pipe or is given -InputObject, it exports only the records that arrive that way, even when none do.'
+                    'A Get-Completer filter that matches nothing selects nothing, whether it is piped to the command or passed to -InputObject, and so do an empty array and $null'
+                    'Only a call with no pipe before it and no -InputObject, such as the command on its own or as the first command of a pipeline, exports every managed registration that records a ScriptPath.'
+                    'The command cannot see a pipe in front of a function or script block that calls it, so a wrapper must pass its input on, for example as $input | Export-CompleterSet'
+                    'A null carries no record and is skipped, so -InputObject $null, like the output of a Get-Completer filter that matches nothing, selects nothing.'
+                ))
+            {
+                $flatText | Should -Match ([regex]::Escape($expectedText))
+            }
+        }
+
+        It 'states the input-selection contract in about_Completer_Sets' {
+            $topicPath = [System.IO.Path]::Combine($PSScriptRoot, '..', 'en-US', 'about_Completer_Sets.help.txt')
+            $flatText = (Get-Content -LiteralPath $topicPath -Raw) -replace '`', '' -replace '\s+', ' '
+
+            $flatText | Should -Match ([regex]::Escape('Export-CompleterSet after a pipe exports only the records the pipe delivers, so a pipeline that delivers none'))
+            $flatText | Should -Match ([regex]::Escape('which is what the command exports when it has no pipe before it and no -InputObject:'))
+        }
+    }
+
     Context 'Import-CompleterSet' {
         It 'restores the same targets as Pending records after an Export then Import round trip and loads them on first tab' {
             $imported = @(Import-CompleterScript -Path $script:ParameterFixturePath) +
@@ -1036,10 +1210,10 @@ Describe 'Completer sets' {
 
                 function script:Resolve-CompleterRegistrationState
                 {
-                    param($Key, $Snapshot)
+                    param($Target, $Snapshot)
 
                     $script:TestStateCount++
-                    & $script:TestStateFunction -Key $Key -Snapshot $Snapshot
+                    & $script:TestStateFunction -Target $Target -Snapshot $Snapshot
                 }
             }
 
@@ -1450,10 +1624,10 @@ Describe 'Completer sets' {
 
                 function script:Resolve-CompleterRegistrationState
                 {
-                    param($Key, $Snapshot)
+                    param($Target, $Snapshot)
 
                     $script:TestStateCount++
-                    & $script:TestStateFunction -Key $Key -Snapshot $Snapshot
+                    & $script:TestStateFunction -Target $Target -Snapshot $Snapshot
                 }
 
                 function script:Add-CompleterRegistration
@@ -1488,7 +1662,7 @@ Describe 'Completer sets' {
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
 
-        It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {
+        It 'reads the set as data only, without Import-PowerShellDataFile, and never evaluates set content' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
             Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 1; Entries = @( (New-Item -ItemType File -Path '$probePath') ) }" -Encoding utf8
 
@@ -1497,11 +1671,13 @@ Describe 'Completer sets' {
             Test-Path -LiteralPath $probePath | Should -BeFalse
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
 
+            # The data come from the bytes the reader measured, so Import-PowerShellDataFile, which would open
+            # the set a second time, is not used.
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
             Mock -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -MockWith { throw 'reader sentinel' }
 
-            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*reader sentinel*'
-            Should -Invoke -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -Times 1 -Exactly
+            @(Import-CompleterSet -Path $script:SetPath).Key | Should -Be @('test-importedfixturetool:name')
+            Should -Invoke -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -Times 0 -Exactly
         }
 
         It 'supports WhatIf without importing or registering anything' {
@@ -2140,5 +2316,595 @@ Describe 'Completer sets' {
             $parses = @(& (Get-Module -Name 'CompleterActions') { $script:TestParseCalls })
             $parses | Should -BeExactly @($script:ParameterFixturePath, $script:NativeFixturePath, $script:UnsafeSetScriptPath) -Because 'the grammar and the target derivation share one parse per entry'
         }
+    }
+
+    Context 'Reading completer set files' {
+        BeforeAll {
+            # The review's fixture: 385 strict scripts of one native target each, the first count whose exported
+            # set the data reader's default limits refused.
+            $script:LargeSetScriptCount = 385
+            $script:LargeSetTargetNames = @(foreach ($index in 1..$script:LargeSetScriptCount) { 'calargeset{0:d4}' -f $index })
+
+            # Hand-written entries past the default limits; their scripts do not exist.
+            $script:LargeSetFillerEntries = @(
+                foreach ($index in 1..1000)
+                {
+                    "@{ Path = 'calargeset$($index)_completer.ps1'; Targets = @( @{ CommandName = 'calargeset$index'; Native = `$true } ) }"
+                }
+            )
+
+            function Limit-TestCompleterSetFileSize
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [long] $Bytes
+                )
+
+                & (Get-Module -Name 'CompleterActions') { param($Bytes) $script:CompleterSetMaxFileBytes = $Bytes } $Bytes
+            }
+        }
+
+        BeforeEach {
+            $script:DefaultSetMaxFileBytes = & (Get-Module -Name 'CompleterActions') { $script:CompleterSetMaxFileBytes }
+        }
+
+        AfterEach {
+            Limit-TestCompleterSetFileSize -Bytes $script:DefaultSetMaxFileBytes
+
+            foreach ($targetName in $script:LargeSetTargetNames)
+            {
+                Invoke-TestRuntimeCompleterCleanup -CommandName $targetName -CompleterType Native
+            }
+        }
+
+        It 'round-trips an exported set larger than the data reader''s default limits' {
+            $records = @(
+                foreach ($index in 1..$script:LargeSetScriptCount)
+                {
+                    $commandName = 'calargeset{0:d4}' -f $index
+                    $scriptPath = Join-Path -Path $script:SetRoot -ChildPath "$($commandName)_completer.ps1"
+                    Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName '$commandName' -ScriptBlock { 'ok' }" -Encoding utf8
+
+                    [pscustomobject] @{ CommandName = $commandName; IsNative = $true; ScriptPath = $scriptPath; Trusted = $false }
+                }
+            )
+
+            $records | Export-CompleterSet -Path $script:SetPath
+
+            { Import-PowerShellDataFile -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*' -Because 'the set must exceed the default key and node limits for this test to cover them'
+            @((Import-PowerShellDataFile -LiteralPath $script:SetPath -SkipLimitCheck).Entries).Count | Should -Be $script:LargeSetScriptCount
+            (Get-Item -LiteralPath $script:SetPath).Length | Should -BeLessOrEqual 128KB
+
+            $registered = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($registered.Key | Sort-Object) | Should -Be @($script:LargeSetTargetNames | Sort-Object)
+            @($registered | Where-Object -Property State -NE -Value 'Pending') | Should -BeNullOrEmpty
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
+        }
+
+        It 'reads a large set as data and refuses the same set with an expression, without evaluating it' {
+            $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
+            $entries = $script:LargeSetFillerEntries
+            Write-TestCompleterSet -Path $script:SetPath -Entry $entries
+
+            $entryCount = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) @((Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries).Count } $script:SetPath
+            $entryCount | Should -Be 1000 -Because 'a set this large reads, so only the data-only check can refuse the same set with an expression'
+
+            # The expression sits past the default node limit.
+            Write-TestCompleterSet -Path $script:SetPath -Entry ($entries + "(New-Item -ItemType File -Path '$probePath')")
+
+            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*'
+            { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*'
+
+            Test-Path -LiteralPath $probePath | Should -BeFalse
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'refuses to write or read a set over the size limit and accepts one at the limit' {
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $records = @(Import-CompleterScript -Path $scriptPath)
+            $records | Export-CompleterSet -Path $script:SetPath
+            $resolvedSetPath = (Resolve-Path -LiteralPath $script:SetPath).ProviderPath
+            $setBytes = (Get-Item -LiteralPath $script:SetPath).Length
+
+            Limit-TestCompleterSetFileSize -Bytes ($setBytes - 1)
+
+            $overLimitPath = Join-Path -Path $script:SetRoot -ChildPath 'over-limit.psd1'
+            Set-Content -LiteralPath $overLimitPath -Value 'placeholder' -Encoding utf8
+            $thrown = { $records | Export-CompleterSet -Path $overLimitPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to export completer set. The set would be $setBytes bytes, larger than the $($setBytes - 1)-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
+            Get-Content -LiteralPath $overLimitPath | Should -BeExactly 'placeholder'
+
+            $readProblem = "Completer set '$resolvedSetPath' is larger than the $($setBytes - 1)-byte limit for completer set files. Split its entries across several sets."
+            $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+            $thrown = { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+
+            Limit-TestCompleterSetFileSize -Bytes $setBytes
+
+            $atLimitPath = Join-Path -Path $script:SetRoot -ChildPath 'at-limit.psd1'
+            $records | Export-CompleterSet -Path $atLimitPath
+            (Get-Item -LiteralPath $atLimitPath).Length | Should -Be $setBytes -Because 'the export measures exactly the bytes it writes'
+            Test-CompleterSet -LiteralPath $atLimitPath | Should -BeNullOrEmpty
+            @(Import-CompleterSet -LiteralPath $atLimitPath).Key | Should -Be @('importfixture', 'importfixture.exe')
+        }
+
+        It 'refuses to export a set over 128 KB, naming its size, under -WhatIf too, and writes no destination' {
+            & (Get-Module -Name 'CompleterActions') { $script:CompleterSetMaxFileBytes } | Should -Be 131072
+
+            # A trusted entry takes its targets as given, so one script with 2,000 targets makes a set over the limit.
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath 'caoverlimit_completer.ps1'
+            Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName 'caoverlimit' -ScriptBlock { 'ok' }" -Encoding utf8
+            $records = @(foreach ($index in 1..2000) { [pscustomobject] @{ CommandName = 'caoverlimit{0:d4}' -f $index; IsNative = $true; ScriptPath = $scriptPath; Trusted = $true } })
+            Set-Content -LiteralPath $script:SetPath -Value 'placeholder' -Encoding utf8
+
+            $thrown = { $records | Export-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message -match '^Failed to export completer set\. The set would be (\d+) bytes, larger than the 131072-byte limit for completer set files, so Import-CompleterSet could not read it\. Export the registrations as several sets\. Nothing was written\.$' | Should -BeTrue -Because $thrown.Exception.Message
+            [long] $Matches[1] | Should -BeGreaterThan 131072
+            Get-Content -LiteralPath $script:SetPath | Should -BeExactly 'placeholder'
+
+            $whatIfThrown = { $records | Export-CompleterSet -Path $script:SetPath -WhatIf } | Should -Throw -PassThru
+            $whatIfThrown.Exception.Message | Should -BeExactly $thrown.Exception.Message
+            Get-Content -LiteralPath $script:SetPath | Should -BeExactly 'placeholder'
+
+            $newSetPath = Join-Path -Path $script:SetRoot -ChildPath 'new.psd1'
+            $newThrown = { $records | Export-CompleterSet -Path $newSetPath } | Should -Throw -PassThru
+            $newThrown.Exception.Message | Should -BeExactly $thrown.Exception.Message
+            Test-Path -LiteralPath $newSetPath | Should -BeFalse
+        }
+
+        It 'limits what it reads through a symbolic link to a set file' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            $setBytes = (Get-Item -LiteralPath $script:SetPath).Length
+            $linkPath = Join-Path -Path $script:SetRoot -ChildPath 'linked.psd1'
+
+            try
+            {
+                New-Item -ItemType SymbolicLink -Path $linkPath -Target $script:SetPath -ErrorAction Stop | Out-Null
+            }
+            catch
+            {
+                Set-ItResult -Skipped -Because "this session cannot create symbolic links: $($_.Exception.Message)"
+                return
+            }
+
+            Limit-TestCompleterSetFileSize -Bytes ($setBytes - 1)
+
+            { Import-CompleterSet -LiteralPath $linkPath } | Should -Throw "*is larger than the $($setBytes - 1)-byte limit*"
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'limits the bytes it reads, not the size the file system reports' {
+            $procfsPath = '/proc/self/status'
+
+            if (-not (Test-Path -LiteralPath $procfsPath) -or (Get-Item -LiteralPath $procfsPath).Length -ne 0)
+            {
+                Set-ItResult -Skipped -Because 'this platform has no procfs file whose reported size is 0'
+                return
+            }
+
+            $linkPath = Join-Path -Path $script:SetRoot -ChildPath 'procfs.psd1'
+            New-Item -ItemType SymbolicLink -Path $linkPath -Target $procfsPath | Out-Null
+
+            try
+            {
+                Limit-TestCompleterSetFileSize -Bytes 64
+                $readProblem = "Completer set '$((Resolve-Path -LiteralPath $linkPath).ProviderPath)' is larger than the 64-byte limit for completer set files. Split its entries across several sets."
+
+                $thrown = { Import-CompleterSet -LiteralPath $linkPath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+                $thrown = { Test-CompleterSet -LiteralPath $linkPath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+            }
+            finally
+            {
+                # TestDrive cleanup's Remove-Item -Force would try to clear the
+                # read-only attribute of the procfs file and fail.
+                [System.IO.File]::Delete($linkPath)
+            }
+        }
+
+        It 'refuses a set read from a named pipe that never ends with the size limit error' {
+            $mkfifo = Get-Command -Name 'mkfifo' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+
+            if ($IsWindows -or $null -eq $mkfifo)
+            {
+                Set-ItResult -Skipped -Because 'it needs named pipes in the file system and mkfifo to create one, as on Linux and macOS'
+                return
+            }
+
+            $setTextPath = Join-Path -Path $script:SetRoot -ChildPath 'set.txt'
+            Write-TestCompleterSet -Path $setTextPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            Limit-TestCompleterSetFileSize -Bytes 4096
+
+            $pipePath = Join-Path -Path $script:SetRoot -ChildPath 'pipe.psd1'
+            & $mkfifo.Source $pipePath
+
+            # Every open of the pipe gets the set and then lines that never end; yes exits when the reader closes.
+            $writerStart = [System.Diagnostics.ProcessStartInfo]::new('sh')
+            foreach ($argument in '-c', 'while :; do { cat "$1"; yes; } > "$2"; done', 'sh', $setTextPath, $pipePath)
+            {
+                $writerStart.ArgumentList.Add($argument)
+            }
+
+            $writer = [System.Diagnostics.Process]::Start($writerStart)
+
+            try
+            {
+                $readProblem = "Completer set '$((Resolve-Path -LiteralPath $pipePath).ProviderPath)' is larger than the 4096-byte limit for completer set files. Split its entries across several sets."
+
+                $thrown = { Import-CompleterSet -LiteralPath $pipePath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+                $thrown = { Test-CompleterSet -LiteralPath $pipePath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+                Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+            }
+            finally
+            {
+                $writer.Kill($true)
+                $writer.WaitForExit()
+                $writer.Dispose()
+                [System.IO.File]::Delete($pipePath)
+            }
+        }
+
+        It 'takes the findings of Test-CompleterSet from its one read of the set, even when the set is rewritten after it' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            $setBytes = (Get-Item -LiteralPath $script:SetPath).Length
+            Limit-TestCompleterSetFileSize -Bytes $setBytes
+            $expected = @(Test-CompleterSet -LiteralPath $script:SetPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+            $expected | Should -Not -BeNullOrEmpty
+
+            # Over the limit, with the entry 40 lines further down, so a second read of the set would show in the findings.
+            $rewrittenSet = ("`n" * 40) + [System.IO.File]::ReadAllText($script:SetPath) + '# ' + ('x' * 4096)
+
+            & (Get-Module -Name 'CompleterActions') {
+                param($RewrittenSet)
+
+                $script:TestRewrittenSet = $RewrittenSet
+                $script:TestReadDefinition = ${function:Import-CompleterSetDefinition}
+
+                function script:Import-CompleterSetDefinition
+                {
+                    param($LiteralPath)
+
+                    & $script:TestReadDefinition -LiteralPath $LiteralPath
+                    [System.IO.File]::WriteAllText($LiteralPath, $script:TestRewrittenSet)
+                }
+            } $rewrittenSet
+
+            $findings = @(Test-CompleterSet -LiteralPath $script:SetPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+
+            $findings | Should -Be $expected
+            (Get-Item -LiteralPath $script:SetPath).Length | Should -BeGreaterThan $setBytes -Because 'the set was rewritten over the limit after it was read'
+        }
+
+        It 'takes no package finding from a <LinkType> to the set beside its folder, even when the set is rewritten past the limit after it is read' -TestCases @(
+            @{ LinkType = 'HardLink' }
+            @{ LinkType = 'SymbolicLink' }
+        ) {
+            param($LinkType)
+
+            $setFolder = Join-Path -Path $script:SetRoot -ChildPath 'completers'
+            New-Item -Path $setFolder -ItemType Directory | Out-Null
+            $setPath = Join-Path -Path $setFolder -ChildPath 'completers.psd1'
+            Write-TestCompleterSet -Path $setPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            $linkPath = Join-Path -Path $script:SetRoot -ChildPath 'alias.psd1'
+
+            try
+            {
+                New-Item -ItemType $LinkType -Path $linkPath -Target $setPath -ErrorAction Stop | Out-Null
+            }
+            catch
+            {
+                Set-ItResult -Skipped -Because "this session cannot create a $($LinkType): $($_.Exception.Message)"
+                return
+            }
+
+            $setBytes = (Get-Item -LiteralPath $setPath).Length
+            Limit-TestCompleterSetFileSize -Bytes $setBytes
+            $expected = @(Test-CompleterSet -LiteralPath $setPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+            $expected | Should -Not -BeNullOrEmpty
+            ($expected -join '; ') | Should -Not -Match 'PackageLayout' -Because 'the link names the set, which declares no package'
+
+            # The rewritten set declares itself a package's set past the limit, so a read of the link that went past the
+            # limit would make the link the package manifest and add PackageLayout findings.
+            $setText = [System.IO.File]::ReadAllText($setPath)
+            $rewrittenSet = $setText.Substring(0, $setText.LastIndexOf('}')) + '# ' + ('x' * $setBytes) + "`nPrivateData = @{ CompleterSet = 'completers/completers.psd1' }`n}"
+
+            & (Get-Module -Name 'CompleterActions') {
+                param($RewrittenSet)
+
+                $script:TestRewrittenSet = $RewrittenSet
+                $script:TestReadDefinition = ${function:Import-CompleterSetDefinition}
+
+                function script:Import-CompleterSetDefinition
+                {
+                    param($LiteralPath)
+
+                    & $script:TestReadDefinition -LiteralPath $LiteralPath
+                    [System.IO.File]::WriteAllText($LiteralPath, $script:TestRewrittenSet)
+                }
+            } $rewrittenSet
+
+            $findings = @(Test-CompleterSet -LiteralPath $setPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+
+            $findings | Should -Be $expected
+            [System.IO.File]::ReadAllText($linkPath) | Should -BeExactly $rewrittenSet -Because 'the link must show the rewritten set for this test to cover a read of it'
+        }
+
+        It 'returns a script block literal in a set past the default limits as a value and never runs it' {
+            # A guard for the lifted limits, not a regression test: the default reader also returns a script block
+            # literal as a value. The literal sits past the default limits, where only the lifted read reaches it,
+            # and must still come back as a value that nothing runs.
+            $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
+            $probe = "{ New-Item -ItemType File -Path '$probePath' }"
+            Write-TestCompleterSet -Path $script:SetPath -Entry ($script:LargeSetFillerEntries + "@{ Path = $probe; Trusted = $probe; Targets = @( @{ CommandName = $probe; Native = $probe } ) }")
+            { Import-PowerShellDataFile -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*' -Because 'the script block must sit past the default limits'
+
+            $entry = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) (Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries[-1] } $script:SetPath
+
+            foreach ($value in $entry['Path'], $entry['Trusted'], $entry['Targets'][0]['CommandName'], $entry['Targets'][0]['Native'])
+            {
+                $value | Should -BeOfType [scriptblock]
+            }
+
+            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*has 1001 invalid entries and nothing was registered*'
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -Not -BeNullOrEmpty
+
+            Test-Path -LiteralPath $probePath | Should -BeFalse
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a set nested too deeply for the parser with the parse error Import-PowerShellDataFile gives' {
+            # A guard for the reader's own parse, not a regression test: a reader that calls Import-PowerShellDataFile
+            # gives this text too. The reader parses the bytes it read itself, so it must check the parse errors before
+            # it looks for the hashtable, because a parser that gives up returns no AST, only its error. 65,000 levels
+            # fit under the limit and lie far past the depth at which the parser gives up.
+            $nestedSet = '@{ Version = 1; Entries = ' + ('@(' * 65000)
+            [System.IO.File]::WriteAllText($script:SetPath, $nestedSet)
+            $parseErrors = $null
+            $nestedAst = [System.Management.Automation.Language.Parser]::ParseInput($nestedSet, [ref] $null, [ref] $parseErrors)
+            $nestedAst | Should -BeNullOrEmpty -Because 'the parser must give up for this test to cover a parse without an AST'
+
+            $readProblem = "The file '$((Resolve-Path -LiteralPath $script:SetPath).ProviderPath)' could not be parsed as a PowerShell Data File."
+            $thrown = { Import-PowerShellDataFile -LiteralPath $script:SetPath -ErrorAction Stop } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly $readProblem
+
+            $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
+            $thrown = { Test-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeExactly "Failed to test completer set. $readProblem"
+        }
+
+        It 'decodes a set <Case> as Import-PowerShellDataFile does' -TestCases @(
+            @{ Case = 'in UTF-8 with a byte order mark'; Encoding = [System.Text.UTF8Encoding]::new($true); Reads = $true }
+            @{ Case = 'in UTF-16 LE with a byte order mark'; Encoding = [System.Text.UnicodeEncoding]::new($false, $true); Reads = $true }
+            @{ Case = 'in UTF-16 BE with a byte order mark'; Encoding = [System.Text.UnicodeEncoding]::new($true, $true); Reads = $true }
+            @{ Case = 'in UTF-16 LE without a byte order mark'; Encoding = [System.Text.UnicodeEncoding]::new($false, $false); Reads = $false }
+        ) {
+            param($Case, $Encoding, $Reads)
+
+            # A guard for the reader's own decoding, not a regression test: a reader that calls
+            # Import-PowerShellDataFile decodes the same way. U+00E9 is written as a code point so this file stays ASCII.
+            $null = $Case
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath ('caf{0}_completer.ps1' -f [char] 0x00E9)
+            $setText = "@{ Version = 1; Entries = @( @{ Path = '$scriptPath' } ) }"
+            [System.IO.File]::WriteAllBytes($script:SetPath, [byte[]] ($Encoding.GetPreamble() + $Encoding.GetBytes($setText)))
+
+            if ($Reads)
+            {
+                (Import-PowerShellDataFile -LiteralPath $script:SetPath).Entries[0].Path | Should -BeExactly $scriptPath
+                $entry = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) (Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries[0] } $script:SetPath
+                $entry['Path'] | Should -BeExactly $scriptPath
+            }
+            else
+            {
+                $expected = { Import-PowerShellDataFile -LiteralPath $script:SetPath -ErrorAction Stop } | Should -Throw -PassThru
+                $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+                $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $($expected.Exception.Message)"
+            }
+        }
+    }
+
+    Context 'Typographic apostrophes in set data' {
+        BeforeAll {
+            # U+2019, a single-quote delimiter to the tokenizer, written as a code point so this file stays ASCII.
+            $script:Apostrophe = [string] [char] 0x2019
+            $script:QuoteNativeName = 'set{0}quote' -f $script:Apostrophe
+            $script:QuoteParameterName = 'Na{0}me' -f $script:Apostrophe
+        }
+
+        AfterEach {
+            Invoke-TestRuntimeCompleterCleanup -CommandName $script:QuoteNativeName -CompleterType 'Native'
+            Invoke-TestRuntimeCompleterCleanup -CommandName 'Test-SetQuoteTool' -ParameterName $script:QuoteParameterName -CompleterType 'Parameter'
+        }
+
+        It 'roundtrips a script in a folder named with U+2019 through Register-Completer, Export-CompleterSet and Import-CompleterSet' {
+            $folderName = 'author{0}s scripts' -f $script:Apostrophe
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath $folderName
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+
+            $registered = @(Import-CompleterScript -LiteralPath $scriptPath | Register-Completer -PassThru)
+            @($registered.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+
+            Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written Path must be doubled'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $data.Entries[0].Path | Should -BeExactly "$folderName/Native.ps1"
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
+
+            Get-Completer -State Active, Pending, Failed, Stale | Unregister-Completer -Confirm:$false
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($reimported.Key | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+            @($reimported.ScriptPath | Select-Object -Unique) | Should -Be @($scriptPath)
+
+            $completion = TabExpansion2 -InputScript 'importfixture a' -CursorColumn 15
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
+        }
+
+        It 'writes command and parameter names with U+2019 that Import-CompleterSet reads back and activates' {
+            $doubled = $script:Apostrophe + $script:Apostrophe
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath 'QuoteTargets.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @"
+Register-ArgumentCompleter -Native -CommandName '$($script:QuoteNativeName.Replace($script:Apostrophe, $doubled))' -ScriptBlock {
+    param(`$wordToComplete, `$commandAst, `$cursorPosition)
+
+    `$null = `$wordToComplete, `$commandAst, `$cursorPosition
+
+    [System.Management.Automation.CompletionResult]::new('alpha', 'alpha', 'ParameterValue', 'alpha')
+}
+
+Register-ArgumentCompleter -CommandName 'Test-SetQuoteTool' -ParameterName '$($script:QuoteParameterName.Replace($script:Apostrophe, $doubled))' -ScriptBlock {
+    param(`$commandName, `$parameterName, `$wordToComplete, `$commandAst, `$fakeBoundParameters)
+
+    `$null = `$commandName, `$parameterName, `$wordToComplete, `$commandAst, `$fakeBoundParameters
+
+    [System.Management.Automation.CompletionResult]::new('beta', 'beta', 'ParameterValue', 'beta')
+}
+"@
+
+            Import-CompleterScript -LiteralPath $scriptPath | Export-CompleterSet -Path $script:SetPath
+
+            $parseErrors = $null
+            $null = [System.Management.Automation.Language.Parser]::ParseFile($script:SetPath, [ref] $null, [ref] $parseErrors)
+            $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in the written names must be doubled'
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @($script:QuoteNativeName, 'Test-SetQuoteTool')
+            @($data.Entries[0].Targets.ParameterName | Where-Object { $_ }) | Should -BeExactly @($script:QuoteParameterName)
+
+            $reimported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($reimported.Key) | Should -BeExactly @($script:QuoteNativeName, "test-setquotetool:$($script:QuoteParameterName.ToLowerInvariant())")
+            @($reimported.State | Select-Object -Unique) | Should -Be @('Pending')
+
+            $inputScript = "& '$($script:QuoteNativeName.Replace($script:Apostrophe, $doubled))' a"
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be @('alpha')
+            (Get-Completer -CommandName $script:QuoteNativeName -Native).State | Should -Be 'Active'
+        }
+    }
+}
+
+Describe 'Completer sets with a native command that shares a parameter target key' {
+    BeforeAll {
+        $script:SetIdentityCleanupTargets = @(
+            @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = 'Test-SetIdentityTool:Name'; CompleterType = 'Native' }
+            @{ CommandName = 'Test-SetIdentityTool'; CompleterType = 'Native' }
+        )
+
+        $script:SetIdentityNativeText = @'
+Register-ArgumentCompleter -Native -CommandName 'Test-SetIdentityTool:Name' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+    'native-result'
+}
+'@
+
+        $script:SetIdentityParameterText = @'
+Register-ArgumentCompleter -CommandName 'Test-SetIdentityTool' -ParameterName 'Name' -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+    $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters
+    'parameter-result'
+}
+'@
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:SetIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
+        $script:SetIdentityRoot = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Path $script:SetIdentityRoot
+    }
+
+    AfterEach {
+        foreach ($cleanupTarget in $script:SetIdentityCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'exports, tests, and imports one script that registers both kinds' {
+        $scriptPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_both_completer.ps1'
+        $setPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity.psd1'
+        Set-Content -LiteralPath $scriptPath -Value ($script:SetIdentityNativeText + [Environment]::NewLine + $script:SetIdentityParameterText) -Encoding utf8
+
+        Import-CompleterScript -LiteralPath $scriptPath | Export-CompleterSet -Path $setPath
+        $data = Import-PowerShellDataFile -LiteralPath $setPath
+
+        @($data.Entries).Count | Should -Be 1
+        @($data.Entries[0].Targets | ForEach-Object { if ($_.Native) { "Native/$($_.CommandName)" } else { "Parameter/$($_.CommandName)/$($_.ParameterName)" } }) |
+            Should -Be @('Native/Test-SetIdentityTool:Name', 'Parameter/Test-SetIdentityTool/Name') -Because 'the native and the parameter target are two targets of the entry'
+        Test-CompleterSet -LiteralPath $setPath | Should -BeNullOrEmpty
+
+        $imported = @(Import-CompleterSet -LiteralPath $setPath)
+
+        @($imported | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending', 'Parameter/Pending')
+    }
+
+    It 'imports two entries whose targets differ only in kind without a DuplicateTarget problem' {
+        $nativePath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_native_completer.ps1'
+        $parameterPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_parameter_completer.ps1'
+        $setPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity.psd1'
+        Set-Content -LiteralPath $nativePath -Value $script:SetIdentityNativeText -Encoding utf8
+        Set-Content -LiteralPath $parameterPath -Value $script:SetIdentityParameterText -Encoding utf8
+        Write-TestCompleterSet -Path $setPath -Entry @(
+            "@{ Path = 'identity_native_completer.ps1' }"
+            "@{ Path = 'identity_parameter_completer.ps1' }"
+        )
+
+        @(Test-CompleterSet -LiteralPath $setPath | ForEach-Object { [string] $_.Construct }) | Should -Be @('MissingHash', 'MissingHash') -Because 'the hand-written entries carry no Hash, and two targets that differ in kind are not a DuplicateTarget'
+
+        $imported = @(Import-CompleterSet -LiteralPath $setPath)
+
+        @($imported | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending', 'Parameter/Pending')
+    }
+
+    It 'rejects a target whose Native is <Case> instead of reading it as either kind' -TestCases @(
+        @{ Case = 'the text nope'; NativeText = "'nope'" }
+        @{ Case = 'the text False'; NativeText = "'False'" }
+        @{ Case = 'the text True'; NativeText = "'True'" }
+        @{ Case = 'the number 1'; NativeText = '1' }
+    ) {
+        $parameterPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_parameter_completer.ps1'
+        $setPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity.psd1'
+        Set-Content -LiteralPath $parameterPath -Value $script:SetIdentityParameterText -Encoding utf8
+        Write-TestCompleterSet -Path $setPath -Entry "@{ Path = 'identity_parameter_completer.ps1'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; Native = $NativeText } ) }"
+
+        $invalidEntries = @(Test-CompleterSet -LiteralPath $setPath | Where-Object -Property 'Construct' -EQ -Value 'InvalidEntry')
+        @($invalidEntries | ForEach-Object { '{0}/{1}' -f $_.Severity, $_.Message }) | Should -BeExactly @("Error/Entry 1 ('identity_parameter_completer.ps1'): Target 'Test-SetIdentityTool' must set Native to `$true or `$false.")
+        { Import-CompleterSet -LiteralPath $setPath } | Should -Throw "*Entry 1 ('identity_parameter_completer.ps1'): Target 'Test-SetIdentityTool' must set Native to `$true or `$false.*"
+        @(Get-Completer -CommandName 'Test-SetIdentityTool' -ParameterName 'Name') | Should -BeNullOrEmpty
+        @(Get-Completer -CommandName 'Test-SetIdentityTool' -Native) | Should -BeNullOrEmpty
+
+        Write-TestCompleterSet -Path $setPath -Entry "@{ Path = 'identity_parameter_completer.ps1'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; Native = `$false } ) }"
+        $imported = @(Import-CompleterSet -LiteralPath $setPath)
+
+        @($imported | ForEach-Object { '{0}/{1}/{2}' -f $_.CompleterType, $_.RuntimeKey, $_.State }) | Should -Be @('Parameter/Test-SetIdentityTool:Name/Pending') -Because 'the Boolean $false with a ParameterName is a parameter target'
     }
 }

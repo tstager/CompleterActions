@@ -62,7 +62,7 @@ function Get-CompleterScriptTarget
             $false
         ))
 
-    $targetsByKey = [ordered] @{}
+    $targetsByIdentity = [ordered] @{}
 
     foreach ($registerCommand in $registerCommands)
     {
@@ -138,14 +138,14 @@ function Get-CompleterScriptTarget
 
         foreach ($target in @(Resolve-CompleterTargetList @targetParameters))
         {
-            $targetsByKey[[string] $target.Key] = $target
+            $targetsByIdentity[(Get-CompleterTargetIdentity -Target $target)] = $target
         }
     }
 
-    if ($targetsByKey.Count -eq 0)
+    if ($targetsByIdentity.Count -eq 0)
     {
         throw "The script '$LiteralPath' does not call Register-ArgumentCompleter with literal targets, so nothing can be registered lazily. Run Test-CompleterScript to work through the findings, or register it with -Trusted and name the targets."
     }
 
-    return @($targetsByKey.Values)
+    return @($targetsByIdentity.Values)
 }

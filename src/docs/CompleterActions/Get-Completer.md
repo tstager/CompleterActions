@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Get-Completer.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/11/2026
@@ -71,9 +71,14 @@ stable while unrelated targets change; only a target that sorts before the
 current window can shift it.
 The command accepts arrays for command and parameter lookups, and records
 piped back from Get-Completer or Import-CompleterScript resolve
-through their Key and IsNative properties. Keys are output-only identifiers: a
-hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+through their CommandName, ParameterName, and IsNative properties. Keys are
+output-only identifiers: a hand-typed key string is not accepted, so name the
+target with -CommandName plus -Native or -ParameterName instead. A key does
+not identify a target on its own: a native command whose name contains a
+colon, such as an alias named
+`Get-Thing:Name`, has the same key as the parameter target `Get-Thing` /
+`Name`. The two are separate registrations, and a lookup returns only the kind
+it names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -129,13 +134,13 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 - Name: Native
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -183,9 +188,18 @@ HelpMessage: ''
 ### -InputObject
 
 Supplies one or more objects that describe the registrations to get, such as
-records returned by Get-Completer or Import-CompleterScript. An
-input object exposes CommandName with IsNative/Native or ParameterName, or a
-Key, RegistrationKey, or RuntimeKey together with IsNative/Native.
+records returned by Get-Completer or Import-CompleterScript. Every piped
+object binds here. An input object describes one target: it exposes
+CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
+or RuntimeKey together with IsNative/Native. To look up several targets at
+once, pass arrays to -CommandName and -ParameterName instead.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 ```yaml
 Type: System.Object[]
@@ -220,7 +234,7 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -241,7 +255,7 @@ ParameterSets:
   Position: Named
   IsRequired: true
   ValueFromPipeline: false
-  ValueFromPipelineByPropertyName: true
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []
@@ -274,7 +288,7 @@ Stale, Conflicted, Pending, Failed, or Discovered. Several values return the
 union.
 
 ```yaml
-Type: CompleterState[]
+Type: CompleterActions.CompleterState[]
 DefaultValue: ''
 SupportsWildcards: false
 Aliases: []
@@ -328,5 +342,3 @@ the failure message of a Failed record.
 ## NOTES
 
 ## RELATED LINKS
-
-[text](https://github.com/tstager/CompleterActions/blob/deae4ca162751c60861237e1d2825f9b0f1fd0ff/src/docs/CompleterActions/Get-Completer.md)

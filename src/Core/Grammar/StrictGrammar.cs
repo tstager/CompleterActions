@@ -155,6 +155,10 @@ public static class StrictGrammar
             AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
         }
 
+        // Recognizes @('name') and @('name', 'name.exe'). The array expression runs when the script
+        // executes, so every node it unwraps must do nothing beyond yielding its strings: a
+        // redirection would write a file during import, and a background operator is refused as
+        // well, because it is not part of a literal array even where it starts no job.
         private static IReadOnlyList<Ast>? GetLiteralArrayExpressionElement(ArrayExpressionAst expressionAst)
         {
             StatementBlockAst statementBlockAst = expressionAst.SubExpression;
@@ -163,12 +167,15 @@ public static class StrictGrammar
                 return null;
             }
 
-            if (statementBlockAst.Statements[0] is not PipelineAst pipelineAst || pipelineAst.PipelineElements.Count != 1)
+            if (statementBlockAst.Statements[0] is not PipelineAst pipelineAst ||
+                pipelineAst.Background ||
+                pipelineAst.PipelineElements.Count != 1)
             {
                 return null;
             }
 
-            if (pipelineAst.PipelineElements[0] is not CommandExpressionAst commandExpressionAst)
+            if (pipelineAst.PipelineElements[0] is not CommandExpressionAst commandExpressionAst ||
+                commandExpressionAst.Redirections.Count != 0)
             {
                 return null;
             }

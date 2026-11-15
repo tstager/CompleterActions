@@ -17,10 +17,12 @@ within it the highest version wins, and the unversioned layout is used only
 when the root has no versioned candidate. The chosen module is never replaced
 by a lower version, even when its set declaration is broken.
 
-Manifests are read with Import-PowerShellDataFile, as data only, so nothing in
-the package runs. PrivateData.CompleterSet must name a .psd1 file in a folder
-directly below ModuleBase, with / or \ as the separator, and the file must
-exist. A failure throws the bare reason; the caller adds its own prefix.
+Manifests are read by Import-CompleterDataFile, as data only, so nothing in
+the package runs, and under the set file limit, so a manifest larger than
+128 KB is refused before it is parsed. PrivateData.CompleterSet must name
+a .psd1 file in a folder directly below ModuleBase, with / or \ as the
+separator, and the file must exist. A failure throws the bare reason; the
+caller adds its own prefix.
 
 .PARAMETER Name
 The module name, taken literally.
@@ -69,6 +71,20 @@ function Resolve-CompleterSetModule
         {
             @(& $sortOrdinal $manifestPaths)[0]
         }
+    }
+
+    $readManifest = {
+        param([string] $ManifestPath)
+
+        $fullPath = [System.IO.Path]::GetFullPath($ManifestPath)
+        $manifestFile = Import-CompleterDataFile -LiteralPath $fullPath
+
+        if ($manifestFile.OverLimit)
+        {
+            throw "The module manifest '$fullPath' is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files and their module manifests."
+        }
+
+        $manifestFile.Data
     }
 
     $chosen = $null
@@ -123,7 +139,7 @@ function Resolve-CompleterSetModule
                 continue
             }
 
-            $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+            $manifest = & $readManifest $manifestPath
             $manifestVersion = $null
 
             if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion) -and $manifestVersion -eq $versionFolder.FolderVersion)
@@ -142,7 +158,7 @@ function Resolve-CompleterSetModule
 
                 if ($null -ne $manifestPath)
                 {
-                    $manifest = Import-PowerShellDataFile -LiteralPath $manifestPath -ErrorAction Stop
+                    $manifest = & $readManifest $manifestPath
                     $chosen = @{ Name = $moduleName; ModuleBase = $moduleFolder; ManifestPath = $manifestPath; Manifest = $manifest }
                     break
                 }

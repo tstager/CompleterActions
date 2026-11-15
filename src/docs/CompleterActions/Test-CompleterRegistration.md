@@ -1,7 +1,7 @@
 ---
 document type: cmdlet
 external help file: CompleterActions-Help.xml
-HelpUri: ''
+HelpUri: https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Test-CompleterRegistration.md
 Locale: en-US
 Module Name: CompleterActions
 ms.date: 09/10/2026
@@ -143,6 +143,13 @@ Supplies an object that describes the completer target, such as a record
 returned by `Get-Completer` or `Import-CompleterScript`. The object
 must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
 `Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 ```yaml
 Type: System.Object[]

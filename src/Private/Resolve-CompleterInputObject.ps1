@@ -11,9 +11,27 @@ together with IsNative/Native. An input object describes one target, so a
 CommandName or ParameterName that holds several values is rejected rather
 than joined into one name. Keys are output-only identifiers, so a key
 without a native indicator is rejected rather than classified by its shape.
-A ScriptBlock, ImportModule,
-ScriptPath or SourcePath, and Trusted property are carried through when present
-so imported and managed records round-trip into Register-Completer.
+CommandName names a target exactly, and so does RuntimeKey, which wins when an
+object exposes several keys. Key and RegistrationKey are folded to lowercase,
+which can merge two names the runtime keeps apart, so an object that names its
+target only through one of them resolves through Resolve-CompleterKeyTarget:
+to the target of its kind whose runtime key is the key apart from case, with
+an error when a registered target of that kind has the key under a name the
+lowercasing merged into it.
+
+A ScriptBlock, ScriptPath or SourcePath, and Trusted property are carried
+through when present so imported and managed records round-trip into
+Register-Completer. An ImportModule property is ignored: the resolved
+ImportModule is the capture module Import-CompleterScript ran the script in,
+as Get-CompleterImportModule finds it for the script block, ScriptPath, and
+tier, and it is null for any script block the import did not emit.
+
+IsNative, Native, and Trusted take a Boolean, a number, where zero is false,
+or the text 'True' or 'False' in any casing, with or without white space
+around it, as Export-Csv writes a Boolean, and a null value, or text that is
+empty or only white space, counts as false. Any other text is rejected: a
+cast to Boolean would turn the text 'False' into true and select the other
+kind of target, or the trusted tier.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -44,9 +62,40 @@ function Resolve-CompleterInputObject
         [switch] $RequireScriptBlock
     )
 
+    begin
+    {
+        function ConvertTo-InputObjectBoolean
+        {
+            param(
+                [string] $PropertyName,
+                [object] $Value
+            )
+
+            if ($Value -isnot [string])
+            {
+                return [bool] $Value
+            }
+
+            if ([string]::IsNullOrWhiteSpace($Value))
+            {
+                return $false
+            }
+
+            $parsedValue = $false
+
+            if (-not [bool]::TryParse($Value.Trim(), [ref] $parsedValue))
+            {
+                throw "InputObject supplies '$Value' for $PropertyName, which is not a Boolean value. Use True or False."
+            }
+
+            $parsedValue
+        }
+    }
+
     process
     {
         $keyValue = $null
+        $keyIsRuntimeKey = $false
         $commandName = $null
         $parameterName = $null
         $hasNativeIndicator = $false
@@ -59,12 +108,13 @@ function Resolve-CompleterInputObject
 
         try
         {
-            foreach ($propertyName in 'Key', 'RegistrationKey', 'RuntimeKey')
+            foreach ($propertyName in 'RuntimeKey', 'Key', 'RegistrationKey')
             {
                 $property = $InputObject.PSObject.Properties[$propertyName]
                 if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                 {
                     $keyValue = [string] $property.Value
+                    $keyIsRuntimeKey = $propertyName -eq 'RuntimeKey'
                     break
                 }
             }
@@ -96,7 +146,7 @@ function Resolve-CompleterInputObject
                 if ($null -ne $property)
                 {
                     $hasNativeIndicator = $true
-                    $isNative = [bool] $property.Value
+                    $isNative = ConvertTo-InputObjectBoolean -PropertyName $propertyName -Value $property.Value
                     break
                 }
             }
@@ -105,12 +155,6 @@ function Resolve-CompleterInputObject
             if ($null -ne $scriptBlockProperty -and $scriptBlockProperty.Value -is [scriptblock])
             {
                 $scriptBlock = [scriptblock] $scriptBlockProperty.Value
-            }
-
-            $importModuleProperty = $InputObject.PSObject.Properties['ImportModule']
-            if ($null -ne $importModuleProperty -and $importModuleProperty.Value -is [System.Management.Automation.PSModuleInfo])
-            {
-                $importModule = [System.Management.Automation.PSModuleInfo] $importModuleProperty.Value
             }
 
             foreach ($propertyName in 'ScriptPath', 'SourcePath')
@@ -126,13 +170,15 @@ function Resolve-CompleterInputObject
             $trustedProperty = $InputObject.PSObject.Properties['Trusted']
             if ($null -ne $trustedProperty)
             {
-                $trusted = [bool] $trustedProperty.Value
+                $trusted = ConvertTo-InputObjectBoolean -PropertyName 'Trusted' -Value $trustedProperty.Value
             }
 
             if ($RequireScriptBlock -and $null -eq $scriptBlock)
             {
                 throw 'InputObject must expose a ScriptBlock property whose value is a script block.'
             }
+
+            $importModule = Get-CompleterImportModule -ScriptBlock $scriptBlock -ScriptPath $scriptPath -Trusted $trusted
 
             if (-not [string]::IsNullOrWhiteSpace($commandName))
             {
@@ -156,7 +202,11 @@ function Resolve-CompleterInputObject
                     throw "InputObject supplies the key '$keyValue' without an IsNative or Native property. Keys are output-only identifiers and are no longer classified by their shape: add IsNative or Native alongside the key, or supply CommandName with Native or ParameterName. See about_CompleterActions_Migration."
                 }
 
-                if ($isNative)
+                if (-not $keyIsRuntimeKey)
+                {
+                    $target = Resolve-CompleterKeyTarget -Key $keyValue -Native:$isNative
+                }
+                elseif ($isNative)
                 {
                     $target = Resolve-CompleterTarget -RuntimeKey $keyValue -Native
                 }
@@ -187,6 +237,7 @@ function Resolve-CompleterInputObject
         finally
         {
             $keyValue = $null
+            $keyIsRuntimeKey = $false
             $commandName = $null
             $parameterName = $null
             $scriptBlock = $null

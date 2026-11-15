@@ -4,25 +4,35 @@ Reconciles managed registration records with the live runtime values for one or 
 
 .DESCRIPTION
 Looks up both the module-managed record and the live runtime registration for
-each normalized key and reports whether the managed record still describes
-what PowerShell is actually using. A managed record is authoritative only
-while the runtime holds the same script block, or a script block with
-identical text; it is reported as 'Pending' when that script block is still a
-lazy stub and 'Active' otherwise. A managed record whose lazy load failed is
-reported as 'Failed' regardless of the runtime, because its runtime entry was
-removed on purpose. When the runtime value was replaced or removed outside
-this module, the managed record is reported as stale so public commands can
+each target and reports whether the managed record still describes what
+PowerShell is actually using. A target is identified by its Key together with
+its kind: a native target is looked up only in the native runtime dictionary
+and a parameter target only in the custom one, and the managed record is
+found by Get-CompleterTargetIdentity, so a native command named
+'Get-Thing:Name' and the parameter target Get-Thing / Name never resolve to
+each other's registrations.
+
+A managed record is authoritative only while the runtime holds the very same
+script block object. Equal text is not ownership: two closures with the same
+text run with different captured values, and text that differs only in case
+can complete differently. The record is reported as 'Pending' when that
+script block is still a lazy stub and 'Active' otherwise. A managed record
+whose lazy load failed is reported as 'Failed' regardless of the runtime,
+because its runtime entry was removed on purpose. When the runtime value was
+replaced, even by a script block with the same text, or removed outside this
+module, the managed record is reported as stale so public commands can
 surface the live value, refuse silent reuse, and apply the unmanaged-removal
 gate.
 
-Every key is resolved against one snapshot of the managed table and the
-runtime dictionaries, the one passed in or one taken here, so a batch of keys
-costs a single runtime read. Discovered runtime values keep the key casing the
-dictionary stores, native entries win over parameter entries with the same
-key, and the states come back in the order of the keys.
+Every target is resolved against one snapshot of the managed table and the
+runtime dictionaries, the one passed in or one taken here, so a batch of
+targets costs a single runtime read. Discovered runtime values keep the key
+casing the dictionary stores, and the states come back in the order of the
+targets.
 
-.PARAMETER Key
-The normalized or runtime keys for the completer targets to reconcile.
+.PARAMETER Target
+The completer targets or registration records to reconcile. Each must expose
+Key, RuntimeKey, and IsNative.
 
 .PARAMETER Snapshot
 A CompleterActions.CompleterRegistrationSnapshot to resolve against. When it is
@@ -30,21 +40,21 @@ omitted the helper takes one for this call.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
-Returns one object per key, in order, with ManagedRegistration,
-RuntimeRegistration, and ManagedState ('None', 'Active', 'Pending', 'Failed',
-or 'Stale') properties. The registration properties hold the exact stored
-objects so callers can restore them unchanged.
+Returns one object per target, in order, with Key (the target's Key),
+ManagedRegistration, RuntimeRegistration, and ManagedState ('None', 'Active',
+'Pending', 'Failed', or 'Stale') properties. The registration properties hold
+the exact stored objects so callers can restore them unchanged.
 
 .EXAMPLE
-PS> $state = Resolve-CompleterRegistrationState -Key 'get-item:path'
+PS> $state = Resolve-CompleterRegistrationState -Target (Resolve-CompleterTarget -CommandName 'Get-Item' -ParameterName 'Path')
 
 Retrieves the managed and runtime records for a target and reports whether the
 managed record still matches the live runtime registration.
 
 .EXAMPLE
-PS> $states = Resolve-CompleterRegistrationState -Key $targets.Key -Snapshot $snapshot
+PS> $states = Resolve-CompleterRegistrationState -Target $registrations -Snapshot $snapshot
 
-Reconciles every target of a batch against one snapshot of the session.
+Reconciles every record of a batch against one snapshot of the session.
 #>
 function Resolve-CompleterRegistrationState
 {
@@ -53,7 +63,7 @@ function Resolve-CompleterRegistrationState
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string[]] $Key,
+        [psobject[]] $Target,
 
         [Parameter()]
         [psobject] $Snapshot
@@ -64,22 +74,23 @@ function Resolve-CompleterRegistrationState
         $Snapshot = Get-CompleterRegistrationSnapshot
     }
 
-    foreach ($keyItem in $Key)
+    foreach ($targetItem in $Target)
     {
-        $normalizedKey = $keyItem.ToLowerInvariant()
-        $managedRegistration = if ($Snapshot.Managed.Contains($normalizedKey)) { $Snapshot.Managed[$normalizedKey] } else { $null }
+        $identity = Get-CompleterTargetIdentity -Target $targetItem
+        $isNative = [bool] $targetItem.IsNative
+        $managedRegistration = if ($Snapshot.Managed.Contains($identity)) { $Snapshot.Managed[$identity] } else { $null }
         $runtimeRegistration = $null
 
         foreach ($view in $Snapshot.Runtime)
         {
-            if (-not $view.Keys.ContainsKey($normalizedKey))
+            if ([bool] $view.IsNative -ne $isNative -or -not $view.Keys.ContainsKey([string] $targetItem.RuntimeKey))
             {
                 continue
             }
 
-            $storedKey = $view.Keys[$normalizedKey]
-            $target = if ($view.IsNative) { Resolve-CompleterTarget -RuntimeKey $storedKey -Native } else { Resolve-CompleterTarget -RuntimeKey $storedKey }
-            $runtimeRegistration = New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $view.Dictionary -Key $storedKey) -Source 'Discovered' -State Discovered
+            $storedKey = $view.Keys[[string] $targetItem.RuntimeKey]
+            $storedTarget = if ($isNative) { Resolve-CompleterTarget -RuntimeKey $storedKey -Native } else { Resolve-CompleterTarget -RuntimeKey $storedKey }
+            $runtimeRegistration = New-CompleterRegistrationRecord -Target $storedTarget -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $view.Dictionary -Key $storedKey) -Source 'Discovered' -State Discovered
             break
         }
 
@@ -91,9 +102,7 @@ function Resolve-CompleterRegistrationState
         {
             'Failed'
         }
-        elseif ($null -ne $runtimeRegistration -and
-            ([object]::ReferenceEquals($managedRegistration.ScriptBlock, $runtimeRegistration.ScriptBlock) -or
-                $managedRegistration.ScriptText -eq $runtimeRegistration.ScriptText))
+        elseif ($null -ne $runtimeRegistration -and [object]::ReferenceEquals($managedRegistration.ScriptBlock, $runtimeRegistration.ScriptBlock))
         {
             if ($managedRegistration.State -eq 'Pending') { 'Pending' } else { 'Active' }
         }
@@ -103,7 +112,7 @@ function Resolve-CompleterRegistrationState
         }
 
         [pscustomobject] [ordered] @{
-            Key                 = $keyItem
+            Key                 = $targetItem.Key
             ManagedRegistration = $managedRegistration
             RuntimeRegistration = $runtimeRegistration
             ManagedState        = $managedState

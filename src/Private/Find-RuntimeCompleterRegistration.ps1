@@ -8,21 +8,25 @@ registration records for discovered entries. Maintainers use this helper to
 inspect the registrations that PowerShell is actually using, rather than only
 the module's cached or intended state.
 
-The lookup can enumerate all discovered registrations, resolve a specific
-command-parameter or native target, or search by the module's normalized key.
-Because the underlying data comes from PowerShell runtime internals, the result
-represents the current session only and depends on internal dictionary shapes
-remaining stable.
+The lookup can enumerate all discovered registrations, or resolve one
+command-parameter or native target, named by its parts or by a target or
+record. A lookup searches only the runtime dictionary of the target's kind, so
+a native command whose name has the same key as a parameter target, such as
+'Get-Thing:Name' and Get-Thing / Name, never resolves to the other's entry.
+The record carries the key casing the dictionary stores. Because the
+underlying data comes from PowerShell runtime internals, the result represents
+the current session only and depends on internal dictionary shapes remaining
+stable.
 
 A completer registered with Register-ArgumentCompleter -ParameterName alone,
 without -CommandName, sits in the custom dictionary under the bare parameter
 name. The module does not manage that target kind, so enumeration skips such
-entries with a verbose message and key lookups never match them; they cannot
-abort discovery of the supported targets.
+entries with a verbose message and parameter lookups never match them; they
+cannot abort discovery of the supported targets.
 
-.PARAMETER Key
-The normalized registration key used by the module when matching a discovered
-runtime registration.
+.PARAMETER Target
+The completer target or registration record to look up. It must expose
+RuntimeKey and IsNative.
 
 .PARAMETER CommandName
 The command or native executable name that identifies the runtime completer
@@ -50,10 +54,10 @@ Find-RuntimeCompleterRegistration -CommandName git -Native
 Looks up the discovered runtime registration for a native completer target.
 
 .EXAMPLE
-Find-RuntimeCompleterRegistration -Key 'get-item:path'
+Find-RuntimeCompleterRegistration -Target $registration
 
-Shows how maintainers can search for a runtime registration by the module's
-normalized key instead of by raw runtime key shape.
+Looks up the live runtime registration for the target of a managed record, in
+the dictionary of that record's kind.
 
 .NOTES
 This helper reads PowerShell's live completer dictionaries through
@@ -67,9 +71,9 @@ function Find-RuntimeCompleterRegistration
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'Native', Justification = 'The switch is used to bind the native-specific parameter set.')]
     [OutputType([pscustomobject], [System.Collections.Generic.List[object]])]
     param(
-        [Parameter(Mandatory, ParameterSetName = 'ByKey')]
-        [ValidateNotNullOrEmpty()]
-        [string] $Key,
+        [Parameter(Mandatory, ParameterSetName = 'Target')]
+        [ValidateNotNull()]
+        [psobject] $Target,
 
         [Parameter(Mandatory, ParameterSetName = 'Native')]
         [Parameter(Mandatory, ParameterSetName = 'CommandParameter')]
@@ -117,42 +121,9 @@ function Find-RuntimeCompleterRegistration
         return $registrations
     }
 
-    $target = switch ($PSCmdlet.ParameterSetName)
+    $lookupTarget = switch ($PSCmdlet.ParameterSetName)
     {
-        'ByKey'
-        {
-            $normalizedKey = Get-CompleterRegistrationKey -RuntimeKey $Key
-
-            if ($null -ne $runtime.NativeArgumentCompleters)
-            {
-                foreach ($entryKey in $runtime.NativeArgumentCompleters.Keys)
-                {
-                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
-                    {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.NativeArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
-                    }
-                }
-            }
-
-            if ($null -ne $runtime.CustomArgumentCompleters)
-            {
-                foreach ($entryKey in $runtime.CustomArgumentCompleters.Keys)
-                {
-                    if ((Test-CompleterParameterOnlyKey -Key ([string] $entryKey)))
-                    {
-                        continue
-                    }
-
-                    if ([string]::Equals([string] $entryKey, $normalizedKey, [System.StringComparison]::OrdinalIgnoreCase))
-                    {
-                        return New-CompleterRegistrationRecord -Target (Resolve-CompleterTarget -RuntimeKey ([string] $entryKey)) -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $runtime.CustomArgumentCompleters -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
-                    }
-                }
-            }
-
-            return
-        }
-
+        'Target' { $Target }
         'Native'
         {
             if (-not $Native)
@@ -161,22 +132,25 @@ function Find-RuntimeCompleterRegistration
             }
 
             Resolve-CompleterTarget -CommandName $CommandName -Native
-            break
         }
-
-        'CommandParameter'
-        {
-            Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName
-            break
-        }
+        'CommandParameter' { Resolve-CompleterTarget -CommandName $CommandName -ParameterName $ParameterName }
     }
 
-    $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+    $isNative = [bool] $lookupTarget.IsNative
+    $dictionary = if ($isNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
 
-    if ($null -eq $dictionary -or -not (Test-CompleterRuntimeDictionaryKey -Dictionary $dictionary -Key $target.RuntimeKey))
+    if ($null -eq $dictionary)
     {
         return
     }
 
-    return New-CompleterRegistrationRecord -Target $target -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $target.RuntimeKey) -Source 'Discovered' -State Discovered
+    foreach ($entryKey in @($dictionary.Keys))
+    {
+        if ([string]::Equals([string] $entryKey, [string] $lookupTarget.RuntimeKey, [System.StringComparison]::OrdinalIgnoreCase))
+        {
+            $storedTarget = if ($isNative) { Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) -Native } else { Resolve-CompleterTarget -RuntimeKey ([string] $entryKey) }
+
+            return New-CompleterRegistrationRecord -Target $storedTarget -ScriptBlock (Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key ([string] $entryKey)) -Source 'Discovered' -State Discovered
+        }
+    }
 }

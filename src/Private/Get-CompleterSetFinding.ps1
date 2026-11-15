@@ -25,7 +25,9 @@ With Package, the set is a package set, and Get-CompleterSetPackageFinding
 adds its PackageLayout findings after every entry's findings and before the
 UnlistedScript findings. Without it the findings are exactly the plain set's.
 
-Nothing here reads or writes the session's registrations or runs a script.
+Every position comes from the parse in SetDefinition, so the set file is not
+read again. Nothing here reads or writes the session's registrations or runs a
+script.
 
 .PARAMETER SetDefinition
 The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
@@ -73,7 +75,7 @@ function Get-CompleterSetFinding
     $hints['DuplicateTarget'] = $hints['TargetMismatch']
 
     $setPath = $SetDefinition.Path
-    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
     $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
     $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
     $claimedTargets = @{}
@@ -115,19 +117,24 @@ function Get-CompleterSetFinding
 
         # $entry.Targets is the list import checks, so an entry with an Error
         # finding, such as a malformed target, can still report a duplicate.
-        foreach ($target in @($entry.Targets))
+        $entryTargets = @($entry.Targets)
+        $targetIdentities = @($entryTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
+        for ($targetIndex = 0; $targetIndex -lt $entryTargets.Count; $targetIndex++)
         {
-            if ($claimedTargets.Contains([string] $target.Key))
+            $targetIdentity = $targetIdentities[$targetIndex]
+
+            if ($claimedTargets.Contains($targetIdentity))
             {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." -Hint $hints['DuplicateTarget']))
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($entryTargets[$targetIndex].RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." -Hint $hints['DuplicateTarget']))
             }
         }
 
         if ($findings.Count -eq 0)
         {
-            foreach ($target in @($entry.Targets))
+            foreach ($targetIdentity in $targetIdentities)
             {
-                $claimedTargets[[string] $target.Key] = $entryIndex
+                $claimedTargets[$targetIdentity] = $entryIndex
             }
         }
 

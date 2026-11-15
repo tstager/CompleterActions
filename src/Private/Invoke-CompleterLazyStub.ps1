@@ -10,14 +10,17 @@ block for its own target, replaces the runtime dictionary entry with it, and
 moves the managed record to Active. Every other Pending record that points at
 the same script and tier, and whose runtime entry is still its own stub, is
 swapped from the same import so a script that registers several targets is
-executed once. When the script registers the same target more than once, the
-last definition wins for that target, as it does when the script is
-dot-sourced and Register-ArgumentCompleter overwrites the earlier entry. The
-call that triggered the load is then delegated to the real script block and
-its results are returned.
+executed once. Script paths compare the way the file system does, ignoring case
+on Windows and macOS and case sensitively elsewhere, so a sibling registered
+from another file whose path differs only in case keeps its own script. When
+the script registers the same target more than once, the last definition wins
+for that target, as it does when the script is dot-sourced and
+Register-ArgumentCompleter overwrites the earlier entry. The call that
+triggered the load is then delegated to the real script block and its results
+are returned.
 
-A load in flight owns its record. The helper tracks the keys it is loading on
-the current call stack, so a nested completion for the same target, such as a
+A load in flight owns its record. The helper tracks the targets it is loading
+on the current call stack, so a nested completion for the same target, such as a
 script that calls TabExpansion2 for its own command while it loads, returns
 nothing instead of starting a second import, and a sibling load never swaps or
 fails a record whose own load is still running.
@@ -30,7 +33,10 @@ host. The helper never hooks key handlers, replaces TabExpansion2, or touches
 PSReadLine options.
 
 .PARAMETER Key
-The normalized registration key of the lazy target being invoked.
+The RuntimeKey of the lazy target being invoked, with its casing kept.
+
+.PARAMETER Native
+Indicates that the lazy target being invoked is a native command completer.
 
 .PARAMETER ArgumentList
 The arguments the completion engine passed to the completer.
@@ -50,6 +56,9 @@ function Invoke-CompleterLazyStub
         [string] $Key,
 
         [Parameter()]
+        [switch] $Native,
+
+        [Parameter()]
         [AllowNull()]
         [AllowEmptyCollection()]
         [object[]] $ArgumentList = @()
@@ -62,7 +71,8 @@ function Invoke-CompleterLazyStub
 
     try
     {
-        $registration = Find-ManagedCompleterRegistration -Key $Key
+        $stubTarget = if ($Native) { Resolve-CompleterTarget -RuntimeKey $Key -Native } else { Resolve-CompleterTarget -RuntimeKey $Key }
+        $registration = Find-ManagedCompleterRegistration -Target $stubTarget
 
         if ($null -eq $registration)
         {
@@ -80,7 +90,9 @@ function Invoke-CompleterLazyStub
                 throw "The managed registration for '$($registration.RuntimeKey)' is in state '$($registration.State)' and cannot be loaded lazily."
             }
 
-            if (-not $script:CompleterLazyLoadsInProgress.Add($registration.Key))
+            $identity = Get-CompleterTargetIdentity -Target $registration
+
+            if (-not $script:CompleterLazyLoadsInProgress.Add($identity))
             {
                 return
             }
@@ -89,37 +101,39 @@ function Invoke-CompleterLazyStub
             {
                 # Register-ArgumentCompleter lets the last registration for a target
                 # win, so a script that registers the same target twice is reduced
-                # to its last definition per key before the initiating target is
+                # to its last definition per target before the initiating target is
                 # selected and the siblings are swapped from the same collection.
-                $importedRegistrationsByKey = [ordered] @{}
+                $importedRegistrationsByIdentity = [ordered] @{}
 
                 foreach ($importedRegistration in @(Import-CompleterScript -LiteralPath $registration.ScriptPath -Trusted:$registration.Trusted))
                 {
-                    $importedRegistrationsByKey[[string] $importedRegistration.Key] = $importedRegistration
+                    $importedRegistrationsByIdentity[(Get-CompleterTargetIdentity -Target $importedRegistration)] = $importedRegistration
                 }
 
-                if (-not $importedRegistrationsByKey.Contains($registration.Key))
+                if (-not $importedRegistrationsByIdentity.Contains($identity))
                 {
-                    $importedKeys = @($importedRegistrationsByKey.Values | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
+                    $importedKeys = @($importedRegistrationsByIdentity.Values | ForEach-Object { "'$($_.RuntimeKey)'" }) -join ', '
                     throw "The script '$($registration.ScriptPath)' did not register a completer for '$($registration.RuntimeKey)'. It registered: $importedKeys."
                 }
 
-                $ownRegistration = $importedRegistrationsByKey[$registration.Key]
+                $ownRegistration = $importedRegistrationsByIdentity[$identity]
+                $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
 
-                foreach ($importedRegistration in $importedRegistrationsByKey.Values)
+                foreach ($importedIdentity in @($importedRegistrationsByIdentity.Keys))
                 {
-                    $pendingRegistration = Find-ManagedCompleterRegistration -Key $importedRegistration.Key
+                    $importedRegistration = $importedRegistrationsByIdentity[$importedIdentity]
+                    $pendingRegistration = Find-ManagedCompleterRegistration -Target $importedRegistration
 
                     if ($null -eq $pendingRegistration -or
                         $pendingRegistration.State -ne 'Pending' -or
-                        $pendingRegistration.ScriptPath -ne $registration.ScriptPath -or
+                        -not [string]::Equals($pendingRegistration.ScriptPath, $registration.ScriptPath, $pathComparison) -or
                         [bool] $pendingRegistration.Trusted -ne [bool] $registration.Trusted -or
-                        ($pendingRegistration.Key -ne $registration.Key -and $script:CompleterLazyLoadsInProgress.Contains($pendingRegistration.Key)))
+                        (-not [string]::Equals($importedIdentity, $identity, [System.StringComparison]::OrdinalIgnoreCase) -and $script:CompleterLazyLoadsInProgress.Contains($importedIdentity)))
                     {
                         continue
                     }
 
-                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $pendingRegistration.Key
+                    $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $pendingRegistration
 
                     if ($null -eq $runtimeRegistration -or -not [object]::ReferenceEquals($runtimeRegistration.ScriptBlock, $pendingRegistration.ScriptBlock))
                     {
@@ -136,7 +150,7 @@ function Invoke-CompleterLazyStub
             }
             finally
             {
-                $null = $script:CompleterLazyLoadsInProgress.Remove($registration.Key)
+                $null = $script:CompleterLazyLoadsInProgress.Remove($identity)
             }
         }
     }
@@ -148,11 +162,11 @@ function Invoke-CompleterLazyStub
         {
             if ($null -ne $registration)
             {
-                $runtimeRegistration = Find-RuntimeCompleterRegistration -Key $registration.Key
+                $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $registration
 
                 if ($null -ne $runtimeRegistration -and [object]::ReferenceEquals($runtimeRegistration.ScriptBlock, $registration.ScriptBlock))
                 {
-                    $null = Remove-RuntimeCompleterRegistration -Key $registration.Key
+                    $null = Remove-RuntimeCompleterRegistration -Target $registration
                 }
 
                 $null = Add-ManagedCompleterRegistration -Registration (

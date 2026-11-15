@@ -30,9 +30,49 @@ LONG DESCRIPTION
       layout. It returns nothing when the set is current.
 
     A set never contains code. It is a PowerShell data file (`.psd1`) that
-    the commands read with `Import-PowerShellDataFile`, which evaluates data
-    only and refuses expressions, so a set file cannot execute a completer
-    script or anything else when it is read.
+    the commands read as data only, with the evaluator
+    `Import-PowerShellDataFile` uses, which refuses expressions, so a set
+    file cannot execute a completer script or anything else when it is read.
+
+    A set file can be at most 128 KB (131072 bytes), roughly 400 entries of
+    one target each as `Export-CompleterSet` writes them, with a `Hash`, more
+    when they are written by hand without one, fewer when their paths are
+    long or they list several targets. `Export-CompleterSet` refuses to write
+    a larger set, naming its size and the limit, and writes nothing, so an
+    existing set file is left unchanged and every set it writes reads back.
+    Split a larger repository into several sets, for example one per folder,
+    and import them together:
+
+        Import-CompleterSet -Path ~\Completers\tools\completers.psd1, ~\Completers\work\completers.psd1
+
+    `Import-CompleterSet` and `Test-CompleterSet` read a set file once,
+    never more than one byte past the limit, and refuse a larger file before
+    parsing it. The read is the measurement, so a symbolic link, a procfs
+    file whose reported size is 0, or a named pipe is held to the limit too.
+    Everything they take from the set, its data and the line and column of
+    each finding, comes from that one read, so a set rewritten while it is
+    imported or tested cannot hand them a larger or a different set. Other
+    files are read by their own paths: the module manifests read to find a
+    set by `-Name` or to check a packaged set's layout, which are held to
+    the same limit, and the scripts the entries name, which are parsed in
+    full, because a completer script can be larger than a set. When a link,
+    such as a hard link, makes one of those paths another name for the set
+    file, that read sees the file as it is at that moment.
+
+    The size limit takes the place of the 500-key and 5000-node limits
+    `Import-PowerShellDataFile` applies by default, which a set of a few
+    hundred entries already exceeds; lifting those limits does not admit
+    expressions.
+
+    The limit also bounds the time a set takes to parse, though a malformed
+    file at the limit can still take minutes to refuse. A valid set at the
+    limit parses in milliseconds. The PowerShell parser compares each syntax
+    error with every one before it, so the time it takes to refuse a
+    malformed file grows with the square of its errors, and a file can hold
+    about one error per byte: at the limit, a file that repeats a short key
+    on every line, about 33,000 errors, took 70 seconds to refuse, and a file
+    of nothing but closing parentheses, one error per byte, about two
+    minutes. A set that `Export-CompleterSet` writes has no syntax errors.
 
 THE SET FILE SCHEMA
 
@@ -93,6 +133,8 @@ THE SET FILE SCHEMA
       The completer targets the script registers. Each target is a hashtable
       with `CommandName` and either `Native = $true` for a native command
       completer or `ParameterName` for a command parameter completer.
+      `Native` is the Boolean `$true` or `$false`: the text 'True' or
+      'False', or a number, is rejected rather than read as either kind.
       `Targets` is required for trusted entries and optional for strict
       entries; see the next section for why.
 
@@ -155,7 +197,7 @@ VALIDATION BEFORE REGISTRATION
     - the file exists and is a `.ps1` script
     - `Trusted`, when present, is `$true` or `$false`
     - each target has a `CommandName` and either `Native = $true` or a
-      `ParameterName`
+      `ParameterName`, and its `Native`, when present, is `$true` or `$false`
     - trusted entries declare `Targets`
     - strict entries expose literal targets that can be derived without
       running the script
@@ -235,7 +277,7 @@ THE HASH AND THE FAST PATH
     - A strict entry with `Targets` and a `Hash` that matches the script
       takes the fast path: the script is neither parsed nor walked by the
       grammar, and its declared `Targets` are registered in the order the
-      entry lists them, each key once.
+      entry lists them, each target once.
 
     A script that cannot be read for its hash falls back to the parse, so
     the problem reported is the one the parse finds. The fast path skips
@@ -256,7 +298,7 @@ THE HASH AND THE FAST PATH
     its casing, and that is how `Export-CompleterSet` writes every strict
     entry. A hand-edited entry whose `Hash` still matches can differ only in
     order and casing: on the fast path its records follow the order it
-    declares rather than the script's, and a key it lists twice keeps the
+    declares rather than the script's, and a target it lists twice keeps the
     first occurrence's casing on the fast path and the last occurrence's
     casing on the parse path. The keys, states, and script paths are the
     same either way.
@@ -411,11 +453,12 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
 
     A set is a package set when its module manifest is known: through
     `-Name`, or, for `-Path` and `-LiteralPath`, when the folder above the
-    set file's folder holds a `.psd1` that reads as data and whose
-    `PrivateData.CompleterSet` names this set file, as in a staged package
-    before it is published. When more than one `.psd1` there declares the
-    set, the first in ordinal order of file name is the manifest. A package
-    set gets `PackageLayout` findings for four things, in this order:
+    set file's folder holds a `.psd1` of at most 128 KB that reads as data
+    and whose `PrivateData.CompleterSet` names this set file, as in a staged
+    package before it is published. When more than one `.psd1` there
+    declares the set, the first in ordinal order of file name is the
+    manifest. A package set gets `PackageLayout` findings for four things,
+    in this order:
 
     - Error, one per entry in set order, at the entry's `Path`: the `Path`
       is fully qualified, or resolves outside the module folder, so an
@@ -596,9 +639,11 @@ COMPLETER SETS AS MODULES
        falls back to a lower version, because that would hide a broken
        install. The unversioned layout is used only when there is no
        versioned candidate.
-    5. The manifest is read as data with `Import-PowerShellDataFile`, so
-       the package's `RootModule`, `ScriptsToProcess`, `NestedModules`, and
-       `RequiredModules` never load or run.
+    5. The manifest is read as data, with the evaluator
+       `Import-PowerShellDataFile` uses, so the package's `RootModule`,
+       `ScriptsToProcess`, `NestedModules`, and `RequiredModules` never load
+       or run. A manifest larger than 128 KB, the set file limit, is refused
+       before it is parsed.
     6. `PrivateData.CompleterSet` must name a `.psd1` in a folder directly
        below the module folder. A value with `..`, a rooted path, and a
        file directly in the module folder are rejected.
@@ -686,7 +731,13 @@ WORKFLOW
             Import-CompleterScript |
             Export-CompleterSet -Path ~\Completers\completers.psd1
 
-    Or write it from the registrations a session already has:
+    `Export-CompleterSet` after a pipe exports only the records the pipe
+    delivers, so a pipeline that delivers none, such as a folder with no
+    matching scripts, selects nothing: the command warns and leaves an
+    existing set file unchanged.
+
+    Or write it from the registrations a session already has, which is what
+    the command exports when it has no pipe before it and no `-InputObject`:
 
         Export-CompleterSet -Path ~\Completers\completers.psd1
 

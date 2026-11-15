@@ -9,13 +9,25 @@ tier and the targets it registers. Import-CompleterSet reads the file back and
 registers everything in it, so a profile that imports a completer repository
 becomes one Import-CompleterSet call.
 
-Records arrive through -InputObject, typically from Get-Completer
-or Import-CompleterScript. Without -InputObject the command exports every
-managed registration that records a ScriptPath. Script paths are written
-relative to the set file when both share a root, so a repository can carry its
-set file alongside its scripts; paths on another drive stay absolute. The
-Trusted flag of each entry is taken from the records, and records for the same
-script must agree on it.
+Records arrive through -InputObject or the pipeline, typically from
+Get-Completer or Import-CompleterScript. When the command comes after a pipe
+or is given -InputObject, it exports only the records that arrive that way,
+even when none do. A Get-Completer filter that matches nothing selects nothing,
+whether it is piped to the command or passed to -InputObject, and so do an
+empty array and $null; the command then warns that no registrations were
+selected, writes nothing, and leaves an existing file unchanged. Only a call
+with no pipe before it and no -InputObject, such as the command on its own or
+as the first command of a pipeline, exports every managed registration that
+records a ScriptPath. The command cannot see a pipe in front of a function or
+script block that calls it, so a wrapper must pass its input on, for example as
+$input | Export-CompleterSet; otherwise the inner call has no pipe before it
+and exports every managed registration.
+
+Script paths are written relative to the set file when both share a root, so a
+repository can carry its set file alongside its scripts; paths on another drive
+stay absolute. The Trusted flag of each entry is taken from the records, and
+records for the same script must agree on it. A record without a Trusted
+property is strict.
 
 A strict entry must list every target its script registers, because
 Import-CompleterSet compares a strict entry's Targets with the targets derived
@@ -37,13 +49,39 @@ both its targets and its hash. When a trusted script cannot be read, its entry
 is written without a Hash, a warning names the script, and the export still
 succeeds.
 
+A set file can be at most 128 KB (131072 bytes), roughly 400 entries of one
+target each as this command writes them, with a Hash, fewer when their paths
+are long or they list several targets, because Import-CompleterSet and
+Test-CompleterSet refuse a larger file. The command measures the set it would
+write, under -WhatIf too, and refuses a larger one with an error that names
+its size and the limit, writing nothing, so an existing file is left
+unchanged; export the registrations as several sets instead. The limit also
+bounds the time a set takes to parse: a valid set at the limit parses in
+milliseconds, and a malformed one, which the command never writes, can take
+minutes to refuse, because the parser's time grows with the square of the
+syntax errors and a file can hold about one per byte.
+
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.
 
 .PARAMETER InputObject
 Registration records to export. Each record must describe a target and expose
 the script it came from through a ScriptPath or SourcePath property. Records
-without a script path cannot be expressed in a set and are rejected.
+without a script path cannot be expressed in a set and are rejected. A null
+carries no record and is skipped, so -InputObject $null, like the output of a
+Get-Completer filter that matches nothing, selects nothing. Trusted, IsNative
+and Native take a Boolean value, a number, where zero is False, or the text
+'True' or 'False' in any letter case, with or without white space around it,
+as Export-Csv writes a Boolean, so rows read back with Import-Csv export with
+the tier and kind they were written with. A null value, or text that is empty
+or only white space, counts as False, and any other text is rejected.
+CommandName, or RuntimeKey, names the target exactly. Key and
+RegistrationKey are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 .PARAMETER PassThru
 Returns the written file.
@@ -74,7 +112,6 @@ function Export-CompleterSet
         [string] $Path,
 
         [Parameter(ValueFromPipeline)]
-        [ValidateNotNull()]
         [object[]] $InputObject,
 
         [Parameter()]
@@ -98,15 +135,24 @@ function Export-CompleterSet
         }
 
         $records = [System.Collections.Generic.List[psobject]]::new()
-        $inputBound = $false
+
+        # A pipeline or -InputObject chooses the records to export even when it
+        # delivers none, and ExpectingInput is already true here for a pipeline
+        # that never sends a record. Only a call with neither falls back to every
+        # managed registration.
+        $inputRequested = $PSCmdlet.MyInvocation.ExpectingInput -or $PSBoundParameters.ContainsKey('InputObject')
     }
 
     process
     {
-        if ($PSBoundParameters.ContainsKey('InputObject'))
+        # A null carries no record, so a Get-Completer filter that matches nothing
+        # selects nothing whether it is piped or passed to -InputObject.
+        foreach ($item in $InputObject)
         {
-            $inputBound = $true
-            $records.AddRange([psobject[]] @($InputObject))
+            if ($null -ne $item)
+            {
+                $records.Add($item)
+            }
         }
     }
 
@@ -114,9 +160,14 @@ function Export-CompleterSet
     {
         try
         {
-            if (-not $inputBound)
+            if (-not $inputRequested)
             {
                 $records.AddRange([psobject[]] @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.PSObject.Properties['ScriptPath'] -and -not [string]::IsNullOrWhiteSpace([string] $_.ScriptPath) }))
+            }
+            elseif ($records.Count -eq 0)
+            {
+                Write-Warning -Message "No registrations were selected for export, so nothing was written to '$outputPath'."
+                return
             }
 
             $entriesByPath = [ordered] @{}
@@ -141,9 +192,9 @@ function Export-CompleterSet
                     throw 'InputObject must expose the script it came from through a ScriptPath or SourcePath property; registrations created from an in-memory script block cannot be exported to a set.'
                 }
 
-                $target = ($record | Resolve-CompleterInputObject).Target
-                $trustedProperty = $record.PSObject.Properties['Trusted']
-                $trusted = $null -ne $trustedProperty -and [bool] $trustedProperty.Value
+                $resolvedInput = $record | Resolve-CompleterInputObject
+                $target = $resolvedInput.Target
+                $trusted = $resolvedInput.Trusted
 
                 if (-not $entriesByPath.Contains($scriptPath))
                 {
@@ -162,7 +213,7 @@ function Export-CompleterSet
                     throw "The records for '$scriptPath' disagree on Trusted, so the entry's trust tier cannot be written."
                 }
 
-                $entry.Targets[[string] $target.Key] = $target
+                $entry.Targets[(Get-CompleterTargetIdentity -Target $target)] = $target
             }
 
             if ($entriesByPath.Count -eq 0)
@@ -186,22 +237,22 @@ function Export-CompleterSet
                 # checked targets.
                 $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
                 $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
-                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
-                $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
-                $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
+                $derivedTargetsByIdentity = [ordered] @{}
+
+                foreach ($derivedTarget in $derivedTargets)
+                {
+                    $derivedTargetsByIdentity[(Get-CompleterTargetIdentity -Target $derivedTarget)] = $derivedTarget
+                }
+
+                $missingTargets = @($derivedTargetsByIdentity.Keys | Where-Object { -not $entry.Targets.Contains($_) } | ForEach-Object { $derivedTargetsByIdentity[$_] })
+                $unknownTargets = @($entry.Targets.Keys | Where-Object { -not $derivedTargetsByIdentity.Contains($_) })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
-                    # The keys match, so only order and casing can differ. Writing the
-                    # derived targets puts them in script order and script casing,
+                    # The targets match, so only order and casing can differ. Writing
+                    # the derived targets puts them in script order and script casing,
                     # which is what the import fast path reproduces.
-                    $entry.Targets = [ordered] @{}
-
-                    foreach ($derivedTarget in $derivedTargets)
-                    {
-                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
-                    }
-
+                    $entry.Targets = $derivedTargetsByIdentity
                     $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
@@ -210,7 +261,7 @@ function Export-CompleterSet
 
                 if ($missingTargets.Count -gt 0)
                 {
-                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$_'" }) -join ', ')."
+                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$($_.Key)'" }) -join ', ')."
                 }
 
                 if ($unknownTargets.Count -gt 0)
@@ -247,7 +298,7 @@ function Export-CompleterSet
                 $writtenPath = if ([System.IO.Path]::IsPathRooted($relativePath)) { $entry.Path } else { $relativePath.Replace('\', '/') }
 
                 $lines.Add('        @{')
-                $lines.Add("            Path    = '$($writtenPath.Replace("'", "''"))'")
+                $lines.Add("            Path    = '$(ConvertTo-CompleterSingleQuotedText -Value $writtenPath)'")
                 $lines.Add("            Trusted = `$$($entry.Trusted.ToString().ToLowerInvariant())")
 
                 if ($null -ne $entry.Hash)
@@ -259,7 +310,7 @@ function Export-CompleterSet
 
                 foreach ($target in $entry.Targets.Values)
                 {
-                    $commandName = ([string] $target.CommandName).Replace("'", "''")
+                    $commandName = ConvertTo-CompleterSingleQuotedText -Value ([string] $target.CommandName)
 
                     if ($target.IsNative)
                     {
@@ -267,7 +318,7 @@ function Export-CompleterSet
                     }
                     else
                     {
-                        $lines.Add("                @{ CommandName = '$commandName'; ParameterName = '$(([string] $target.ParameterName).Replace("'", "''"))' }")
+                        $lines.Add("                @{ CommandName = '$commandName'; ParameterName = '$(ConvertTo-CompleterSingleQuotedText -Value ([string] $target.ParameterName))' }")
                     }
                 }
 
@@ -277,6 +328,16 @@ function Export-CompleterSet
 
             $lines.Add('    )')
             $lines.Add('}')
+
+            # Import-CompleterSetDefinition refuses a file over this size, so a set
+            # that would be larger is refused here, before anything is written.
+            # Set-Content writes every line followed by a newline, in UTF-8.
+            $byteCount = [System.Text.Encoding]::UTF8.GetByteCount(($lines -join [Environment]::NewLine) + [Environment]::NewLine)
+
+            if ($byteCount -gt $script:CompleterSetMaxFileBytes)
+            {
+                throw "The set would be $byteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
+            }
 
             if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
             {
