@@ -7,9 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
-Fixes for four of the eight findings in `docs/code-review-2026-11-10.md`.
-CA-2026-11-02, CA-2026-11-03, CA-2026-11-05, and CA-2026-11-07 are still
-open.
+Fixes for all eight findings in `docs/code-review-2026-11-10.md`. The
+behaviour changes they bring are listed under Changed.
 
 ### Fixed
 
@@ -22,11 +21,41 @@ open.
   `@('tool', 'tool.exe')` arrays now rejects an array whose expression has a
   redirection or whose pipeline ends in `&`, so `Test-CompleterScript`
   reports `The script must use literal string values for -CommandName.`
-  (`ArrayExpressionAst`) and `Import-CompleterScript` and strict
-  `Register-Completer -Lazy` refuse the script before it runs. Forms that
-  wrote nothing but were accepted before, such as `@('tool' 2>&1)`,
-  `@('tool' 2> $null)`, and `@('tool' &)`, are refused too; none of the
-  175 PS_Completers scripts uses one (CA-2026-11-01).
+  (`ArrayExpressionAst`) and `Import-CompleterScript` refuses the script
+  before it runs. Forms that write nothing, such as `@('tool' 2>&1)`,
+  `@('tool' 2> $null)`, and `@('tool' &)`, passed both commands before and
+  are refused too. Strict `Register-Completer -Lazy` already refused an
+  array with a redirection, because the read of its targets did not take it
+  as literal, so `@('tool' &)` is the only form it newly refuses. None of
+  the 175 PS_Completers scripts uses one of these forms (CA-2026-11-01).
+- A managed registration is Active only while the runtime holds its own
+  script block object. Reconciliation accepted any runtime block whose text
+  compared equal, ignoring case, so a different closure with the same text,
+  registered outside the module with `Register-ArgumentCompleter`, was
+  reported as Active and could be removed without `-AllowUnmanaged`, and a
+  second `Register-Completer` with such a closure silently kept the first
+  one. Text now only decides whether a registration reuses the managed
+  record: it must match case-sensitively, and the block must be bound to
+  the same context. For an imported script that means one of the script
+  block objects `Import-CompleterScript` emitted for that script and tier,
+  recorded by the module itself, never the `ImportModule`, `SourcePath`, or
+  `Trusted` of the piped object; otherwise the same module and defining
+  file. Importing and registering a script again stays a no-op, and a
+  closure, which has a module of its own, needs `-Force` (CA-2026-11-02).
+- A registration is identified by its kind and its runtime key. A native
+  command named `Cmd:Name` and the parameter target `Cmd` / `Name` share the
+  normalized `Key`, and lookups passed only that key and searched the
+  native registrations first, so `Get-Completer`, `Unregister-Completer`,
+  `Reset-Completer`, and `Register-Completer -Force` could return or remove
+  the other kind. The managed table, the runtime lookups, lazy stubs, and
+  every deduplication now use the kind plus the `RuntimeKey`, compared as
+  PowerShell compares its completer keys, so names the lowercased `Key`
+  merges, such as one spelled with the Kelvin sign (U+212A) and one with
+  the letter k, stay apart too. Script paths compare ignoring case on
+  Windows and macOS and exactly on Linux. An input object that names its
+  target only by `Key` or `RegistrationKey` is refused while a registered
+  target of its kind holds that key under another spelling. The public
+  `Key` and `RegistrationKey` values are unchanged (CA-2026-11-03).
 - `Export-CompleterSet` after a pipe, or given `-InputObject`, exports only
   the records it receives, even when it receives none. A `Get-Completer`
   filter that matched nothing, piped to the command, fell through to the
@@ -42,6 +71,19 @@ open.
   `$input | Export-CompleterSet`, because the command cannot see a pipe in
   front of its caller. The command help and `about_Completer_Sets` say so
   (CA-2026-11-04).
+- A set that `Export-CompleterSet` writes reads back. `Import-CompleterSet`
+  and `Test-CompleterSet` read a set with `Import-PowerShellDataFile` and
+  its default limits of 500 keys and 5000 syntax nodes, which the exporter
+  does not share, so a set of more than 384 single-target entries failed
+  with `Cannot generate a PowerShell object for a ScriptBlock evaluating
+  dynamic expressions`. The reader now reads the set file once, never more
+  than one byte past 128 KB (131072 bytes), decodes it as
+  `Import-PowerShellDataFile` does, and evaluates it with the cmdlet's own
+  data-only evaluator without those two limits, so a set still runs no
+  code. Every `Test-CompleterSet` finding position comes from that read.
+  `Export-CompleterSet` measures the bytes it would write and refuses a set
+  over the limit, writing nothing. As the command writes entries, with a
+  `Hash`, 128 KB holds about 400 of one target each (CA-2026-11-05).
 - Generated PowerShell literals escape every single-quote delimiter the
   tokenizer accepts: U+0027 and the typographic U+2018, U+2019, U+201A, and
   U+201B. Only the ASCII apostrophe was doubled, so a script in a folder
@@ -54,6 +96,23 @@ open.
   the build's `RequiredAssemblies` line now go through
   `ConvertTo-CompleterSingleQuotedText`, the policy the script skeleton
   already used (CA-2026-11-06).
+- The packaged commands use the generated MAML help. The build put the
+  `.EXTERNALHELP` directive between each function name and its opening
+  brace, where PowerShell does not look for help, so all eleven exported
+  commands had a null `MamlHelpFile` and `Get-Help` showed their source
+  comment help instead of the maintained markdown help. The directive now
+  replaces the command's own comment help in the packaged psm1. Selecting
+  the MAML brought fixes to the help itself: a related link that is not
+  http or https keeps its text and drops its URI, because `Get-Help` stops
+  on a relative first link; each page's online link names its page on
+  main; OUTPUTS lists only the type each command declares; and every
+  PARAMETERS and syntax entry carries the pipeline input, required flag,
+  position, aliases, and type the command declares. The build fails when a
+  source defines or replaces a public command a second time, including
+  under a scope modifier, through a literal `Function:` path or a
+  `${function:}` variable, and when the package, imported in a new pwsh,
+  exports a command other than the definition that carries the directive
+  (CA-2026-11-07).
 - The `Markdown_templates` build task works in a fresh process. It imported
   the root `.psm1` directly, which skips the manifest's `RequiredAssemblies`
   entry, and failed with `Unable to find type
@@ -64,6 +123,44 @@ open.
   twice in one session. A session that has the repository's module imported
   still fails at `compile`, as `compile` and `build` already did on Windows;
   the README describes the task (CA-2026-11-08).
+
+### Changed
+
+- **A new instance of a module replaces its record without `-Force`.**
+  After `Import-Module -Force`, even with the same arguments, or a second
+  `New-Module` with the same name, a script block with the same text,
+  defining file, `ScriptPath`, and tier as a live managed record replaces
+  the record and its runtime block, so completion runs in the module that
+  is loaded now. A module that registers its completer when it is imported
+  therefore keeps working after `Import-Module -Force`. A Stale or Failed
+  record still needs `-Force` (CA-2026-11-02).
+- **The same text in another context is another completer.** A script block
+  whose text equals the managed record's but that is bound to another
+  module or file, or is a closure, now needs `-Force`, where the first
+  block was silently kept before. `Register-Completer -Lazy` over an Active
+  record that the script's own import did not create needs `-Force` too
+  (CA-2026-11-02).
+- **Boolean properties are read, not cast.** `IsNative`, `Native`, and
+  `Trusted` on an input object take a Boolean, a number, or the text `True`
+  or `False` in any letter case; a null or empty text is False, and any
+  other text is refused. The text `False` that `Export-Csv` writes was cast
+  to True before, so a parameter row resolved to the native target and a
+  strict script exported as trusted. In a set file a target's `Native` must
+  be `$true` or `$false`; anything else, `$null` included, is an
+  `InvalidEntry` (CA-2026-11-02, CA-2026-11-03).
+- **Set files, and the module manifests read with them, are limited to
+  128 KB.**
+  `Import-CompleterSet` and `Test-CompleterSet` refuse a set file over
+  131072 bytes before they parse it, and `Export-CompleterSet` refuses to
+  write one, under `-WhatIf` too. A module manifest over the same limit
+  fails `-Name` and declares no set in the package check. Parse time still
+  grows with the square of the syntax errors, so a malformed set near the
+  limit can take minutes to refuse (CA-2026-11-05).
+- **Installed `Get-Help` comes from the MAML.** The exported commands show
+  the maintained markdown help as PlatyPS writes it into the MAML, with its
+  inline code, bold text, and fenced examples, as PowerShell's own cmdlet
+  help shows them after `Update-Help`, instead of their plain source
+  comment help (CA-2026-11-07).
 
 ## [3.0.0] - 2026-10-11
 
