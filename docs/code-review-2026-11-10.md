@@ -4,7 +4,7 @@
 - Version: 3.0.0
 - Scope: repository-wide, report only; no product-code or test changes
 - Review team: GPT-6 Astra at max reasoning, with independent validation by the coordinating agent
-- Status: **all eight findings fixed on branch `fix/review-2026-11-10`, not yet merged to `main` or released.** See Resolution.
+- Status: **all eight findings fixed, merged to `main` through PR #11 (`9a28e93`), and released in 3.0.1-preview1** (`8a56c50`, tag `v3.0.1-preview1`, 2026-11-14). Stable 3.0.1 follows the preview soak. See Resolution.
 
 ## Assessment
 
@@ -27,7 +27,7 @@ P1 means a high-priority correction to a documented execution boundary. P2 means
 
 ## Resolution
 
-All eight findings, including the P1, are fixed on branch `fix/review-2026-11-10`. That branch is **not merged to `main` and not released**. No version is bumped, because the owner picks the release version; the fixes and the behaviour changes they bring are listed under `[Unreleased]` in CHANGELOG.md. Each finding went to a work package with an Opus implementer and adversarial Haiku reviewers, over repeated fix rounds. CA-2026-11-02 and CA-2026-11-03 shared one package.
+All eight findings, including the P1, are fixed. The work was done on branch `fix/review-2026-11-10`, merged to `main` through [PR #11](https://github.com/tstager/CompleterActions/pull/11) as `9a28e93` on 2026-11-14, and released the same day as **3.0.1-preview1** (release commit `8a56c50`, tag `v3.0.1-preview1`, PSGallery prerelease). The owner chose a patch version because the fixes add no command, parameter or export; the behaviour changes they bring are listed under `[3.0.1-preview1]` in CHANGELOG.md. Stable 3.0.1 follows once the preview has soaked. Each finding went to a work package with an Opus implementer and adversarial Haiku reviewers, over repeated fix rounds. CA-2026-11-02 and CA-2026-11-03 shared one package.
 
 The work ran in two integrations. In the first, four packages were accepted and merged, and the packaged module was regenerated (`f2c4e04`). The other three packages, WP02 for CA-2026-11-02 and -03, WP05 for CA-2026-11-05, and WP07 for CA-2026-11-07, went through two more fix rounds. Under the owner's cap of two review rounds, each was merged after its final fix round without a third review, so their last fixes were checked by the implementers' own reproductions and by the integration checks below, not by a reviewer. One integration fix was needed: WP05 rewrapped a help line of `Resolve-CompleterSetModule` so it began with `.psd1`, which comment help reads as an unknown keyword, so PowerShell dropped the function's help and WP07's build test failed; `5d5a446` rewraps it. The packaged module was regenerated after these merges (`284aba4`).
 
