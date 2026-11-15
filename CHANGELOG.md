@@ -142,8 +142,9 @@ behaviour changes they bring are listed under Changed.
   (CA-2026-11-02).
 - **Boolean properties are read, not cast.** `IsNative`, `Native`, and
   `Trusted` on an input object take a Boolean, a number, or the text `True`
-  or `False` in any letter case; a null or empty text is False, and any
-  other text is refused. The text `False` that `Export-Csv` writes was cast
+  or `False` in any letter case, with or without white space around it; a
+  null, or text that is empty or only white space, is False, and any other
+  text is refused. The text `False` that `Export-Csv` writes was cast
   to True before, so a parameter row resolved to the native target and a
   strict script exported as trusted. In a set file a target's `Native` must
   be `$true` or `$false`; anything else, `$null` included, is an
