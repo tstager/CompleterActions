@@ -19,8 +19,8 @@ by a lower version, even when its set declaration is broken.
 
 Manifests are read by Import-CompleterDataFile, as data only, so nothing in
 the package runs, and under the set file limit, so a manifest larger than
-128 KB is refused before it is parsed. PrivateData.CompleterSet must name a
-.psd1 file in a folder directly below ModuleBase, with / or \ as the
+128 KB is refused before it is parsed. PrivateData.CompleterSet must name
+a .psd1 file in a folder directly below ModuleBase, with / or \ as the
 separator, and the file must exist. A failure throws the bare reason; the
 caller adds its own prefix.
 
