@@ -10,12 +10,14 @@ key but are two runtime entries. A key therefore names only the target whose
 runtime key is the key itself, compared ordinally ignoring case as the runtime
 compares it, and only while no other target could be meant. This helper looks
 for the targets of the given kind, in the managed table and in the runtime
-dictionary of that kind, whose RuntimeKey folds to the key. When one of them
-has a name the runtime keeps apart from the key, such as the Kelvin-sign
-spelling for the key 'kelvin', it throws rather than pick a target: that
-target and the one the key spells are both meant. Otherwise the key names the
-registered target with that name, keeping its spelling, or the target the key
-spells when none is registered.
+dictionary of that kind, whose RuntimeKey is the key compared that way or
+folds to the key. When one of them has a name the runtime keeps apart from the
+key, such as the Kelvin-sign spelling for the key 'kelvin', it throws rather
+than pick a target: that target and the one the key spells are both meant.
+Otherwise the key names the registered target with that name, keeping its
+spelling, even one the folding does not reach, such as a name spelled with the
+final sigma (U+03C2) for a key spelled with the sigma (U+03C3) the runtime
+takes for it, or the target the key spells when none is registered.
 
 .PARAMETER Key
 The folded key, such as a record's Key or RegistrationKey.
@@ -71,7 +73,10 @@ function Resolve-CompleterKeyTarget
     {
         $runtimeKey = [string] $candidateKey
 
-        if ([string]::Equals($runtimeKey.ToLowerInvariant(), $foldedKey, [System.StringComparison]::Ordinal) -and $seenKeys.Add($runtimeKey))
+        $isMatch = [string]::Equals($runtimeKey, $Key, [System.StringComparison]::OrdinalIgnoreCase) -or
+            [string]::Equals($runtimeKey.ToLowerInvariant(), $foldedKey, [System.StringComparison]::Ordinal)
+
+        if ($isMatch -and $seenKeys.Add($runtimeKey))
         {
             $matchingKeys.Add($runtimeKey)
         }

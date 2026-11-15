@@ -1757,6 +1757,12 @@ Describe 'Registration identity' {
         $script:KelvinLetterName = 'Test-KelvinTool'
         $script:KelvinSignName = 'Test-{0}elvinTool' -f [char] 0x212A
 
+        # The runtime takes the final sigma (U+03C2) and the sigma (U+03C3) for one
+        # another, but lowercasing keeps them apart, so this key names the final-sigma
+        # name without being its lowercase form.
+        $script:FinalSigmaName = 'Test-Sigma{0}Tool' -f [char] 0x03C2
+        $script:SigmaKey = 'test-sigma{0}tool' -f [char] 0x03C3
+
         $script:IdentityCleanupTargets = @(
             @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
             @{ CommandName = 'Test-IdentityTool:Name'; CompleterType = 'Native' }
@@ -1766,6 +1772,7 @@ Describe 'Registration identity' {
             @{ CommandName = $script:KelvinSignName; CompleterType = 'Native' }
             @{ CommandName = $script:KelvinLetterName; ParameterName = 'Name'; CompleterType = 'Parameter' }
             @{ CommandName = $script:KelvinSignName; ParameterName = 'Name'; CompleterType = 'Parameter' }
+            @{ CommandName = $script:FinalSigmaName; CompleterType = 'Native' }
         )
 
         function Get-TestIdentityCompletion
@@ -2203,6 +2210,38 @@ Describe 'Registration identity' {
 
             $removed.Count | Should -Be 2
             Get-TestKelvinState | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'a key the runtime takes for a registered name that lowercasing does not reach' {
+        It 'names the registered target and keeps its spelling' {
+            [string]::Equals($script:FinalSigmaName.ToLowerInvariant(), $script:SigmaKey, [System.StringComparison]::Ordinal) | Should -BeFalse -Because 'lowercasing keeps the final sigma'
+            [string]::Equals($script:FinalSigmaName, $script:SigmaKey, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue -Because 'the runtime takes the two sigmas for one another'
+
+            $null = Register-Completer -CommandName $script:FinalSigmaName -Native -ScriptBlock { 'final-result' }
+            $keyOnly = [pscustomobject] @{ Key = $script:SigmaKey; IsNative = $true }
+
+            $found = $keyOnly | Get-Completer
+            [string]::Equals($found.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue
+
+            {
+                [pscustomobject] @{ Key = $script:SigmaKey; IsNative = $true; ScriptBlock = { 'from-key' } } | Register-Completer
+            } | Should -Throw '*already exists*Use -Force*'
+
+            $forced = [pscustomobject] @{ Key = $script:SigmaKey; IsNative = $true; ScriptBlock = { 'from-key' } } | Register-Completer -Force -PassThru
+
+            [string]::Equals($forced.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'the key names the registered target, so the record keeps the spelling the runtime entry has'
+            $records = @(Get-Completer | Where-Object { $_.IsNative -and [string]::Equals($_.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::OrdinalIgnoreCase) })
+            $records.Count | Should -Be 1
+            $records[0].State | Should -Be 'Active'
+            [string]::Equals($records[0].RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            $inputScript = "$script:FinalSigmaName "
+            @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('from-key')
+
+            $removed = $keyOnly | Unregister-Completer -Confirm:$false -PassThru
+
+            [string]::Equals($removed.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::Ordinal) | Should -BeTrue
+            @(Get-Completer | Where-Object { $_.IsNative -and [string]::Equals($_.RuntimeKey, $script:FinalSigmaName, [System.StringComparison]::OrdinalIgnoreCase) }) | Should -BeNullOrEmpty
         }
     }
 
