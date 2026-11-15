@@ -116,6 +116,12 @@ function Import-CompleterScript
 
                 foreach ($definition in $importSession.Definitions)
                 {
+                    # The module, not the emitted record, records where each script block it
+                    # emits came from, keyed on that very object: Register-Completer looks a
+                    # block up in this table, so neither a property a caller sets nor a new
+                    # block the caller binds to the capture module can claim an import.
+                    $script:CompleterImportedScriptBlocks.Add($definition.ScriptBlock, [pscustomobject] @{ Module = $importSession.Module; ScriptPath = $resolvedPath; Trusted = [bool] $Trusted })
+
                     $targetParameters = @{
                         CommandName = $definition.CommandName
                     }

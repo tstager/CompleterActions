@@ -3,14 +3,16 @@
 Adds or replaces a managed registration record in module state.
 
 .DESCRIPTION
-Stores a registration object in the module's in-memory registration table using
-its Key property as the dictionary key. Existing entries with the same key are
-replaced, which lets higher-level registration code refresh an internal record
-after re-registering a completer.
+Stores a registration object in the module's in-memory registration table
+under its Get-CompleterTargetIdentity, which combines its RuntimeKey with its
+kind, so records whose Key is the same, such as a native and a parameter record,
+are stored side by side. An existing entry for the same target is replaced,
+which lets higher-level registration code refresh an internal record after
+re-registering a completer.
 
 .PARAMETER Registration
 The registration record to store. The object must expose a non-empty Key
-property.
+property, a RuntimeKey property, and an IsNative property.
 
 .PARAMETER Table
 The managed registration table to write to, as a registration snapshot
@@ -25,7 +27,7 @@ Returns the record that is stored in the managed registration table.
 PS> $record | Add-ManagedCompleterRegistration
 
 Adds a newly created internal registration record to the module state, replacing
-any prior record for the same target key.
+any prior record for the same target.
 #>
 function Add-ManagedCompleterRegistration
 {
@@ -56,9 +58,10 @@ function Add-ManagedCompleterRegistration
                 $registrations = Get-ManagedCompleterRegistrationTable
             }
 
-            $registrations[[string] $Registration.Key] = $Registration
+            $identity = Get-CompleterTargetIdentity -Target $Registration
+            $registrations[$identity] = $Registration
 
-            return $registrations[[string] $Registration.Key]
+            return $registrations[$identity]
         }
         catch
         {

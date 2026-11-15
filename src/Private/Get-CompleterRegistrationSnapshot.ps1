@@ -16,17 +16,17 @@ are meant to be consumed before the same batch writes, and the batch then
 writes through its RuntimeContext and Managed table instead of looking them
 up again for every target. Parameter-only entries of the
 custom dictionary, registered with Register-ArgumentCompleter -ParameterName
-alone, are left out of the index because the module does not manage them and
-a native-shaped key must never resolve against one.
+alone, are left out of the index because the module does not manage them.
 
 .OUTPUTS
 CompleterActions.CompleterRegistrationSnapshot
-Returns an object with Managed, the managed registration table; Runtime, one
-view per runtime dictionary in the order Find-RuntimeCompleterRegistration
-searches them, native first; and RuntimeContext, the
-CompleterActions.CompleterRuntime object the views were read from. Each view
-carries IsNative, the Dictionary, and Keys, a case-insensitive map from a key
-to the casing the dictionary stores.
+Returns an object with Managed, the managed registration table, keyed by
+Get-CompleterTargetIdentity; Runtime, one view per runtime dictionary, native
+first; and RuntimeContext, the CompleterActions.CompleterRuntime object the
+views were read from. Each view carries IsNative, the Dictionary, and Keys, a
+case-insensitive map from a key to the casing the dictionary stores. A target
+resolves only against the view of its own kind, because a native and a
+parameter target can share a key.
 
 .EXAMPLE
 PS> $snapshot = Get-CompleterRegistrationSnapshot

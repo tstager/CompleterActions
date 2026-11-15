@@ -49,8 +49,11 @@ came from. A script-backed registration is any managed record with a
 `Register-Completer -Lazy`, or an eager one from
 `Import-CompleterScript | Register-Completer`. The targets are named by native
 command, command parameter target, or pipeline `InputObject` values, and each
-target is decided once per call; a key seen earlier in the same call is
-skipped.
+target is decided once per call; a target seen earlier in the same call is
+skipped. Only the kind of target named is reset: a native command whose name
+contains a colon, such as an alias named `Get-Thing:Name`, shares its key with
+the parameter target `Get-Thing` / `Name`, and resetting one never touches the
+other.
 
 Each target is decided from the managed record and the live runtime value,
 and the first of these rules that applies decides it:
@@ -186,6 +189,13 @@ records from `Get-Completer`, `Register-Completer -PassThru`, or
 or ParameterName, or a Key, RegistrationKey, or RuntimeKey together with
 IsNative/Native. Each object is resolved on its own, so an object that cannot
 be resolved is reported and the rest are still reset.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 ```yaml
 Type: System.Object[]

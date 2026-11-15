@@ -60,14 +60,14 @@ function Resolve-CompleterSetRegistration
     )
 
     $entryRegistrations = [System.Collections.Generic.List[object]]::new()
-    $keys = [System.Collections.Generic.List[string]]::new()
+    $setRegistrations = [System.Collections.Generic.List[psobject]]::new()
 
     foreach ($entryItem in $Entry)
     {
         $registrations = @(
             foreach ($target in @($entryItem.Targets))
             {
-                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.Key) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
+                New-CompleterRegistrationRecord -Target $target -ScriptBlock (New-CompleterLazyStub -Key $target.RuntimeKey -Native:$target.IsNative) -Source 'Managed' -State 'Pending' -ScriptPath $entryItem.Path -Trusted:$entryItem.Trusted
             }
         )
 
@@ -75,15 +75,15 @@ function Resolve-CompleterSetRegistration
 
         foreach ($registration in $registrations)
         {
-            $keys.Add([string] $registration.Key)
+            $setRegistrations.Add($registration)
         }
     }
 
     $registrationStates = @()
 
-    if ($keys.Count -gt 0)
+    if ($setRegistrations.Count -gt 0)
     {
-        $registrationStates = @(Resolve-CompleterRegistrationState -Key $keys.ToArray() -Snapshot $Snapshot)
+        $registrationStates = @(Resolve-CompleterRegistrationState -Target $setRegistrations.ToArray() -Snapshot $Snapshot)
     }
 
     $claimedTargets = @{}
@@ -110,26 +110,29 @@ function Resolve-CompleterSetRegistration
             $conflicts = @(Resolve-CompleterRegistrationConflict -Registration $registrations -RegistrationState $stateSlice -Force:$Force)
         }
 
+        $targetIdentities = @($targets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
         for ($targetIndex = 0; $targetIndex -lt $targets.Count; $targetIndex++)
         {
             $target = $targets[$targetIndex]
+            $targetIdentity = $targetIdentities[$targetIndex]
 
             if ($null -ne $conflicts[$targetIndex].Problem)
             {
                 $problems.Add(@{ Kind = 'Conflict'; Message = $conflicts[$targetIndex].Problem })
             }
 
-            if ($claimedTargets.Contains([string] $target.Key))
+            if ($claimedTargets.Contains($targetIdentity))
             {
-                $problems.Add(@{ Kind = 'DuplicateTarget'; Message = "Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[[string] $target.Key])." })
+                $problems.Add(@{ Kind = 'DuplicateTarget'; Message = "Target '$($target.RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." })
             }
         }
 
         if ($problems.Count -eq 0)
         {
-            foreach ($target in $targets)
+            foreach ($targetIdentity in $targetIdentities)
             {
-                $claimedTargets[[string] $target.Key] = $entryItem.Index
+                $claimedTargets[$targetIdentity] = $entryItem.Index
             }
         }
 

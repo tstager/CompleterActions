@@ -26,7 +26,8 @@ and exports every managed registration.
 Script paths are written relative to the set file when both share a root, so a
 repository can carry its set file alongside its scripts; paths on another drive
 stay absolute. The Trusted flag of each entry is taken from the records, and
-records for the same script must agree on it.
+records for the same script must agree on it. A record without a Trusted
+property is strict.
 
 A strict entry must list every target its script registers, because
 Import-CompleterSet compares a strict entry's Targets with the targets derived
@@ -68,7 +69,19 @@ Registration records to export. Each record must describe a target and expose
 the script it came from through a ScriptPath or SourcePath property. Records
 without a script path cannot be expressed in a set and are rejected. A null
 carries no record and is skipped, so -InputObject $null, like the output of a
-Get-Completer filter that matches nothing, selects nothing.
+Get-Completer filter that matches nothing, selects nothing. Trusted, IsNative
+and Native take a Boolean value, a number, where zero is False, or the text
+'True' or 'False' in any letter case, as Export-Csv writes a Boolean, so rows
+read back with Import-Csv export with the tier and kind they were written
+with. A null value or empty text counts as False, and any other text is
+rejected.
+CommandName, or RuntimeKey, names the target exactly. Key and
+RegistrationKey are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 .PARAMETER PassThru
 Returns the written file.
@@ -179,9 +192,9 @@ function Export-CompleterSet
                     throw 'InputObject must expose the script it came from through a ScriptPath or SourcePath property; registrations created from an in-memory script block cannot be exported to a set.'
                 }
 
-                $target = ($record | Resolve-CompleterInputObject).Target
-                $trustedProperty = $record.PSObject.Properties['Trusted']
-                $trusted = $null -ne $trustedProperty -and [bool] $trustedProperty.Value
+                $resolvedInput = $record | Resolve-CompleterInputObject
+                $target = $resolvedInput.Target
+                $trusted = $resolvedInput.Trusted
 
                 if (-not $entriesByPath.Contains($scriptPath))
                 {
@@ -200,7 +213,7 @@ function Export-CompleterSet
                     throw "The records for '$scriptPath' disagree on Trusted, so the entry's trust tier cannot be written."
                 }
 
-                $entry.Targets[[string] $target.Key] = $target
+                $entry.Targets[(Get-CompleterTargetIdentity -Target $target)] = $target
             }
 
             if ($entriesByPath.Count -eq 0)
@@ -224,22 +237,22 @@ function Export-CompleterSet
                 # checked targets.
                 $parseResult = Get-CompleterScriptParseResult -LiteralPath $entry.Path
                 $derivedTargets = @(Get-CompleterScriptTarget -LiteralPath $entry.Path -ParseResult $parseResult)
-                $derivedKeys = @($derivedTargets | ForEach-Object { [string] $_.Key })
-                $missingTargets = @($derivedKeys | Where-Object { -not $entry.Targets.Contains($_) })
-                $unknownTargets = @($entry.Targets.Keys | Where-Object { $_ -notin $derivedKeys })
+                $derivedTargetsByIdentity = [ordered] @{}
+
+                foreach ($derivedTarget in $derivedTargets)
+                {
+                    $derivedTargetsByIdentity[(Get-CompleterTargetIdentity -Target $derivedTarget)] = $derivedTarget
+                }
+
+                $missingTargets = @($derivedTargetsByIdentity.Keys | Where-Object { -not $entry.Targets.Contains($_) } | ForEach-Object { $derivedTargetsByIdentity[$_] })
+                $unknownTargets = @($entry.Targets.Keys | Where-Object { -not $derivedTargetsByIdentity.Contains($_) })
 
                 if ($missingTargets.Count -eq 0 -and $unknownTargets.Count -eq 0)
                 {
-                    # The keys match, so only order and casing can differ. Writing the
-                    # derived targets puts them in script order and script casing,
+                    # The targets match, so only order and casing can differ. Writing
+                    # the derived targets puts them in script order and script casing,
                     # which is what the import fast path reproduces.
-                    $entry.Targets = [ordered] @{}
-
-                    foreach ($derivedTarget in $derivedTargets)
-                    {
-                        $entry.Targets[[string] $derivedTarget.Key] = $derivedTarget
-                    }
-
+                    $entry.Targets = $derivedTargetsByIdentity
                     $entry.Hash = Get-CompleterScriptHash -Text $parseResult.Ast.Extent.Text
                     continue
                 }
@@ -248,7 +261,7 @@ function Export-CompleterSet
 
                 if ($missingTargets.Count -gt 0)
                 {
-                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$_'" }) -join ', ')."
+                    $problem += " Missing: $(@($missingTargets | ForEach-Object { "'$($_.Key)'" }) -join ', ')."
                 }
 
                 if ($unknownTargets.Count -gt 0)

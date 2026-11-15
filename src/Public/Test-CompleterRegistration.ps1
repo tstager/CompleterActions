@@ -23,6 +23,13 @@ Supplies an object that describes the completer target, such as a record
 returned by Get-Completer or Import-CompleterScript. The object
 must expose CommandName with IsNative/Native or ParameterName, or a Key,
 RegistrationKey, or RuntimeKey together with IsNative/Native.
+CommandName, or RuntimeKey, names the target exactly. Key and
+RegistrationKey are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 .PARAMETER CommandName
 Specifies the command name of the native or command-parameter completer
@@ -161,7 +168,7 @@ function Test-CompleterRegistration
 
             $target = $resolvedTargets[0]
 
-            if ($null -eq (Find-RuntimeCompleterRegistration -Key $target.Key))
+            if ($null -eq (Find-RuntimeCompleterRegistration -Target $target))
             {
                 throw "No runtime completer registration exists for '$($target.RuntimeKey)'. Register the completer before testing it."
             }

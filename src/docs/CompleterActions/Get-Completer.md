@@ -71,9 +71,14 @@ stable while unrelated targets change; only a target that sorts before the
 current window can shift it.
 The command accepts arrays for command and parameter lookups, and records
 piped back from Get-Completer or Import-CompleterScript resolve
-through their Key and IsNative properties. Keys are output-only identifiers: a
-hand-typed key string is not accepted, so name the target with -CommandName
-plus -Native or -ParameterName instead.
+through their CommandName, ParameterName, and IsNative properties. Keys are
+output-only identifiers: a hand-typed key string is not accepted, so name the
+target with -CommandName plus -Native or -ParameterName instead. A key does
+not identify a target on its own: a native command whose name contains a
+colon, such as an alias named
+`Get-Thing:Name`, has the same key as the parameter target `Get-Thing` /
+`Name`. The two are separate registrations, and a lookup returns only the kind
+it names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -188,6 +193,13 @@ object binds here. An input object describes one target: it exposes
 CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
 or RuntimeKey together with IsNative/Native. To look up several targets at
 once, pass arrays to -CommandName and -ParameterName instead.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the target whose runtime key is that key, apart from letter case,
+whether or not it is registered. Such an object is rejected while a
+registered target of its kind has the key under a name that the lowercasing
+merged into it, such as a name spelled with the Kelvin sign (U+212A) for a
+key spelled with the letter k.
 
 ```yaml
 Type: System.Object[]
