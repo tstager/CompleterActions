@@ -1689,6 +1689,34 @@ finally
         @($help.Syntax.syntaxItem).Count | Should -Be 3
         @($help.Parameters.parameter).name | Should -Contain 'Name'
     }
+
+    It 'takes every package finding from its one read of the set, even when the set file is deleted after it' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $qualifiedPath = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'beta'
+        $expected = @(
+            Get-TestOutsideFinding -SetPath $setPath -Index 2 -DeclaredPath $qualifiedPath
+            Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath ([System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1'))
+        )
+
+        @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding) | Should -Be $expected
+
+        # A second read of the set, for an entry's position or for line 1, would fail on the deleted file.
+        & (Get-Module -Name 'CompleterActions') {
+            $script:TestReadDefinition = ${function:Import-CompleterSetDefinition}
+
+            function script:Import-CompleterSetDefinition
+            {
+                param($LiteralPath)
+
+                & $script:TestReadDefinition -LiteralPath $LiteralPath
+                [System.IO.File]::Delete($LiteralPath)
+            }
+        }
+
+        @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding) | Should -Be $expected
+        Test-Path -LiteralPath $setPath | Should -BeFalse
+    }
 }
 
 Describe 'Completer authoring and packages leave PSReadLine alone' {

@@ -9,9 +9,10 @@ CompleterActions.CompleterScriptFinding record per problem. A set that
 matches its folder produces no output, so a gate can assert that the command
 returns nothing, the same shape Test-CompleterScript uses.
 
-The set is read with Import-PowerShellDataFile, which evaluates data only,
-and the set file is also parsed, never evaluated, to point each finding at a
-line and column of the set. Every strict entry is parsed once, whether or not
+The set file is read once and evaluated as data only, as Import-CompleterSet
+reads it, and each finding points at a line and column of that same read, so
+the file is not read again and a set rewritten during the test cannot change
+the findings. Every strict entry is parsed once, whether or not
 its Hash matches, because the command verifies rather than takes the fast
 path. A trusted entry is never parsed, as at import, so it can report only
 MissingScript, InvalidEntry, DuplicateTarget, and the three Hash kinds. No

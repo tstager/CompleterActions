@@ -1659,7 +1659,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
 
-        It 'reads the set through Import-PowerShellDataFile only and never evaluates set content' {
+        It 'reads the set as data only, without opening it a second time, and never evaluates set content' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
             Set-Content -LiteralPath $script:SetPath -Value "@{ Version = 1; Entries = @( (New-Item -ItemType File -Path '$probePath') ) }" -Encoding utf8
 
@@ -1668,11 +1668,13 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             Test-Path -LiteralPath $probePath | Should -BeFalse
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
 
+            # The data come from the bytes the reader measured, so Import-PowerShellDataFile, which would open
+            # the set a second time, is not used.
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
             Mock -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -MockWith { throw 'reader sentinel' }
 
-            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*reader sentinel*'
-            Should -Invoke -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -Times 1 -Exactly
+            @(Import-CompleterSet -Path $script:SetPath).Key | Should -Be @('test-importedfixturetool:name')
+            Should -Invoke -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -Times 0 -Exactly
         }
 
         It 'supports WhatIf without importing or registering anything' {
@@ -2494,7 +2496,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             }
         }
 
-        It 'refuses a named pipe, which can hand the data reader a larger set than it measured' {
+        It 'reads no more than one byte past the limit from a named pipe that never ends' {
             $mkfifo = Get-Command -Name 'mkfifo' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 
             if ($IsWindows -or $null -eq $mkfifo)
@@ -2503,19 +2505,16 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
                 return
             }
 
-            $smallSetPath = Join-Path -Path $script:SetRoot -ChildPath 'small.txt'
-            Write-TestCompleterSet -Path $smallSetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
-            $largeSetPath = Join-Path -Path $script:SetRoot -ChildPath 'large.txt'
-            Copy-Item -LiteralPath $smallSetPath -Destination $largeSetPath
-            Add-Content -LiteralPath $largeSetPath -Value ('# ' + ('x' * 4096))
-            Limit-TestCompleterSetFileSize -Bytes (Get-Item -LiteralPath $smallSetPath).Length
+            $setTextPath = Join-Path -Path $script:SetRoot -ChildPath 'set.txt'
+            Write-TestCompleterSet -Path $setTextPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
+            Limit-TestCompleterSetFileSize -Bytes 4096
 
             $pipePath = Join-Path -Path $script:SetRoot -ChildPath 'pipe.psd1'
             & $mkfifo.Source $pipePath
 
-            # The first open of the pipe gets the set at the limit, every later open the larger one.
+            # Every open of the pipe gets the set and then lines that never end; yes exits when the reader closes.
             $writerStart = [System.Diagnostics.ProcessStartInfo]::new('sh')
-            foreach ($argument in '-c', 'cat "$1" > "$3"; while :; do cat "$2" > "$3"; done', 'sh', $smallSetPath, $largeSetPath, $pipePath)
+            foreach ($argument in '-c', 'while :; do { cat "$1"; yes; } > "$2"; done', 'sh', $setTextPath, $pipePath)
             {
                 $writerStart.ArgumentList.Add($argument)
             }
@@ -2524,7 +2523,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
             try
             {
-                $readProblem = "Completer set '$((Resolve-Path -LiteralPath $pipePath).ProviderPath)' is not a regular file. Completer sets must be regular files, not named pipes or other streams."
+                $readProblem = "Completer set '$((Resolve-Path -LiteralPath $pipePath).ProviderPath)' is larger than the 4096-byte limit for completer set files. Split its entries across several sets."
 
                 $thrown = { Import-CompleterSet -LiteralPath $pipePath } | Should -Throw -PassThru
                 $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $readProblem"
@@ -2541,47 +2540,35 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             }
         }
 
-        It 'keeps the set file from being rewritten between the size check and the data reader on Windows' {
-            if (-not $IsWindows)
-            {
-                Set-ItResult -Skipped -Because 'only Windows keeps other processes from writing a file that is open for reading'
-                return
-            }
-
+        It 'takes the findings of Test-CompleterSet from its one read of the set, even when the set is rewritten after it' {
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:ParameterFixturePath' }"
-            Limit-TestCompleterSetFileSize -Bytes (Get-Item -LiteralPath $script:SetPath).Length
-            $script:GapSetPath = (Resolve-Path -LiteralPath $script:SetPath).ProviderPath
+            $setBytes = (Get-Item -LiteralPath $script:SetPath).Length
+            Limit-TestCompleterSetFileSize -Bytes $setBytes
+            $expected = @(Test-CompleterSet -LiteralPath $script:SetPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
+            $expected | Should -Not -BeNullOrEmpty
 
-            # The larger set adds an entry, so reading it would register importfixture as well.
-            $largeSetPath = Join-Path -Path $script:SetRoot -ChildPath 'large.txt'
-            Write-TestCompleterSet -Path $largeSetPath -Entry "@{ Path = '$script:ParameterFixturePath' }", "@{ Path = '$script:NativeFixturePath' }"
-            $script:GapLargeSet = [System.IO.File]::ReadAllBytes($largeSetPath)
-            $script:GapRewrites = [System.Collections.Generic.List[object]]::new()
+            # Over the limit, with the entry 40 lines further down, so a second read of the set would show in the findings.
+            $rewrittenSet = ("`n" * 40) + [System.IO.File]::ReadAllText($script:SetPath) + '# ' + ('x' * 4096)
 
-            # Rewrites the set at the moment the data reader is called, then reads it.
-            Mock -CommandName 'Import-PowerShellDataFile' -ModuleName 'CompleterActions' -ParameterFilter { $LiteralPath -eq $script:GapSetPath } -MockWith {
-                try
+            & (Get-Module -Name 'CompleterActions') {
+                param($RewrittenSet)
+
+                $script:TestRewrittenSet = $RewrittenSet
+                $script:TestReadDefinition = ${function:Import-CompleterSetDefinition}
+
+                function script:Import-CompleterSetDefinition
                 {
-                    [System.IO.File]::WriteAllBytes($LiteralPath, $script:GapLargeSet)
-                    $script:GapRewrites.Add('rewritten')
+                    param($LiteralPath)
+
+                    & $script:TestReadDefinition -LiteralPath $LiteralPath
+                    [System.IO.File]::WriteAllText($LiteralPath, $script:TestRewrittenSet)
                 }
-                catch
-                {
-                    $script:GapRewrites.Add($_.Exception.InnerException.HResult)
-                }
+            } $rewrittenSet
 
-                Microsoft.PowerShell.Utility\Import-PowerShellDataFile -LiteralPath $LiteralPath -SkipLimitCheck -ErrorAction Stop
-            }
+            $findings = @(Test-CompleterSet -LiteralPath $script:SetPath | ForEach-Object { '{0}:{1} {2}' -f $_.Line, $_.Column, $_.Construct })
 
-            @(Import-CompleterSet -LiteralPath $script:SetPath).Key | Should -Be @('test-importedfixturetool:name')
-            $findings = @(Test-CompleterSet -LiteralPath $script:SetPath)
-            $findings.Count | Should -Be 1 -Because 'the one-entry set that was measured is the one read'
-            $findings[0].Message | Should -BeLike 'Entry 1 (*): The entry has no Hash*'
-
-            # 0x80070020 is ERROR_SHARING_VIOLATION.
-            $script:GapRewrites | Should -Be @(0x80070020, 0x80070020) -Because 'the open measuring stream refuses both rewrites'
-            [System.IO.File]::WriteAllBytes($script:GapSetPath, $script:GapLargeSet)
-            { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw '*is larger than the*' -Because 'the reader lets go of the file once it has read it'
+            $findings | Should -Be $expected
+            (Get-Item -LiteralPath $script:SetPath).Length | Should -BeGreaterThan $setBytes -Because 'the set was rewritten over the limit after it was read'
         }
 
         It 'returns a script block in a set as a value and never runs it' {

@@ -30,39 +30,37 @@ LONG DESCRIPTION
       layout. It returns nothing when the set is current.
 
     A set never contains code. It is a PowerShell data file (`.psd1`) that
-    the commands read with `Import-PowerShellDataFile`, which evaluates data
-    only and refuses expressions, so a set file cannot execute a completer
-    script or anything else when it is read.
+    the commands read as data only, with the evaluator
+    `Import-PowerShellDataFile` uses, which refuses expressions, so a set
+    file cannot execute a completer script or anything else when it is read.
 
     A set file can be at most 128 KB (131072 bytes), roughly 400 entries of
     one target each, fewer when their paths are long or they list several
-    targets. The limit also bounds the time a set takes to parse. A valid
-    set at the limit parses in milliseconds, but the time the PowerShell
-    parser takes to refuse a malformed file grows with the square of its
-    syntax errors, so a file at the limit that repeats one key on every
-    line, about 12,000 errors, can take several seconds to refuse.
+    targets. `Export-CompleterSet` refuses to write a larger set, naming its
+    size and the limit, and writes nothing, so an existing set file is left
+    unchanged and every set it writes reads back. Split a larger repository
+    into several sets, for example one per folder, and import them together:
 
-    `Import-CompleterSet` and `Test-CompleterSet` measure a file by reading
-    it, never more than one byte past the limit, so a symbolic link or a
-    procfs file whose reported size is 0 is measured too, and refuse a
-    larger file before reading it as data. They refuse a set that is not a
-    regular file, such as a named pipe, because a later read of a pipe can
-    return more than the read that measured it. On Windows the file stays
-    open from the measuring read until it has been read as data, so no other
-    process can change it in between. On Linux and macOS, and through a link
-    that is pointed elsewhere, a set rewritten during an import can still be
-    read as data without being measured; that takes write access to the
-    set's folder, which already decides what the set imports.
+        Import-CompleterSet -Path ~\Completers\tools\completers.psd1, ~\Completers\work\completers.psd1
+
+    `Import-CompleterSet` and `Test-CompleterSet` read a set file once,
+    never more than one byte past the limit, and refuse a larger file before
+    parsing it. The read is the measurement, so a symbolic link, a procfs
+    file whose reported size is 0, or a named pipe is held to the limit too.
+    Everything they take from the set, its data and the line and column of
+    each finding, comes from that one read, so a set rewritten while it is
+    imported or tested cannot hand them a larger or a different set.
 
     The size limit takes the place of the 500-key and 5000-node limits
     `Import-PowerShellDataFile` applies by default, which a set of a few
     hundred entries already exceeds; lifting those limits does not admit
-    expressions. `Export-CompleterSet` refuses to write a set over the same
-    size, writing nothing, so every set it writes reads back. Split a larger
-    repository into several sets, for example one per folder, and import
-    them together:
+    expressions.
 
-        Import-CompleterSet -Path ~\Completers\tools\completers.psd1, ~\Completers\work\completers.psd1
+    The limit also bounds the time a set takes to parse. A valid set at the
+    limit parses in milliseconds, but the time the PowerShell parser takes
+    to refuse a malformed file grows with the square of its syntax errors,
+    so a file at the limit that repeats one key on every line, about 12,000
+    errors, can take several seconds to refuse.
 
 THE SET FILE SCHEMA
 

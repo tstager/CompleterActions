@@ -24,7 +24,9 @@ manifest Get-CompleterSetPackage found, in this order:
   later. The message and hint name the manifest by its full path. The
   finding points at line 1, column 1 of the set.
 
-Path is the set file for every finding. Nothing is imported or run.
+Path is the set file for every finding. Every position comes from the parse
+in SetDefinition, so the set file is not read again. Nothing is imported or
+run.
 
 .PARAMETER SetDefinition
 The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
@@ -63,10 +65,9 @@ function Get-CompleterSetPackageFinding
     $manifestPath = $Package.ManifestPath
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
     $moduleBasePrefix = $moduleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
-    $lineOne = [string] (Get-Content -LiteralPath $setPath -TotalCount 1)
-    $positionOne = [System.Management.Automation.Language.ScriptPosition]::new($setPath, 1, 1, $lineOne)
-    $extentOne = [System.Management.Automation.Language.ScriptExtent]::new($positionOne, $positionOne)
+    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
+    # The parse of the whole set starts at line 1, column 1.
+    $extentOne = $SetDefinition.Ast.Extent
 
     foreach ($setEntry in $Entry)
     {

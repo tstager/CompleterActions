@@ -3,23 +3,34 @@
 Reads a completer set file and checks its top-level shape.
 
 .DESCRIPTION
-Reads the .psd1 through Import-PowerShellDataFile, which evaluates data only
-and refuses anything that would run code, so a set file can never execute a
-completer script or anything else. The file must declare Version 1 and a
-non-empty Entries array; the entries themselves are validated one by one by
-Resolve-CompleterSetEntry.
+Reads the .psd1 once and evaluates it as data only, so a set file can never
+execute a completer script or anything else. The file must declare Version 1
+and a non-empty Entries array; the entries themselves are validated one by one
+by Resolve-CompleterSetEntry.
 
-A set file that holds more than $script:CompleterSetMaxFileBytes (128 KB) is
-refused before it is read as data. Its size is measured by reading it, never
-more than one byte past the limit, because the size the file system reports
-is 0 for a Windows symbolic link, a procfs file, or a device, whatever a read
-of it returns. Within that size the file is read with -SkipLimitCheck,
-because the reader's default limits of 500 keys and 5000 syntax nodes reject
-an exported set of a few hundred entries. The switch lifts only those limits
-and changes nothing else the reader accepts: an expression is still refused,
-and a script block literal still comes back as a ScriptBlock value that
-nothing runs. Export-CompleterSet refuses to write a set over the same size,
-so every set it writes reads back.
+The file is read once, never more than one byte past
+$script:CompleterSetMaxFileBytes (128 KB), and a file that holds more is
+refused before it is parsed. The read is the measurement, because the size the
+file system reports is 0 for a Windows symbolic link, a procfs file, or a
+device, whatever a read of it returns. Opening a named pipe waits until
+something writes to it, and the pipe is then read like a file.
+
+The bytes read are decoded as Import-PowerShellDataFile decodes a file, as
+UTF-8 unless a byte order mark names another encoding, and parsed. The data is
+the first hashtable in the parse, the one Import-PowerShellDataFile takes,
+evaluated by Ast.SafeGetValue, the data-only evaluator that cmdlet uses, so an
+expression is refused and a script block literal comes back as a ScriptBlock
+value that nothing runs. Parse errors and a file without a hashtable get the
+cmdlet's error text. Nothing opens the file again: the definition carries the
+parse, and Test-CompleterSet takes its positions from it, so a set rewritten
+during an import or a test reaches no later step and nothing past the limit is
+ever parsed.
+
+SafeGetValue skips its hashtable size check, as Import-PowerShellDataFile
+-SkipLimitCheck does, because the default limits of 500 keys and 5000 syntax
+nodes reject an exported set of a few hundred entries. Skipping them changes
+nothing else the evaluator accepts. Export-CompleterSet refuses to write a set
+over the same size, so every set it writes reads back.
 
 The limit bounds the bytes parsed and so the parse time. A valid set of 95 KB
 parsed in 11 milliseconds when the limit was set, but the time the PowerShell
@@ -27,23 +38,14 @@ parser takes to refuse a malformed file grows with the square of its syntax
 errors: a file that repeats one key on every line took 0.4 seconds to refuse
 at 32 KB and 5.6 seconds at 128 KB, about 12,000 errors.
 
-Import-PowerShellDataFile opens the path again, so the measured file must
-return the same bytes to both reads. The measuring stream stays open until
-the data reader has read the file, which on Windows keeps other processes
-from writing, replacing, or deleting it in between. Linux and macOS have no
-such lock, and a symbolic link or junction in the path can be pointed
-elsewhere on any platform, so there a set changed during the read can still
-reach the data reader unmeasured. Changing a set that way takes write access
-to its folder, which already decides what the set imports. A file that
-cannot seek, such as a named pipe, can hand each open different bytes, so it
-is refused before anything is read from it. Opening a named pipe still waits
-until something writes to it.
-
 .PARAMETER LiteralPath
 The literal path to the completer set file.
 
 .OUTPUTS
 CompleterActions.CompleterSetDefinition
+Returns one record with Path and Directory, the set file's full path and
+folder, Version, Entries, the set's non-null entries in order, and Ast, the
+parse of the bytes that were read.
 #>
 function Import-CompleterSetDefinition
 {
@@ -67,38 +69,46 @@ function Import-CompleterSetDefinition
         throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
     }
 
-    $stream = $null
-
     try
     {
         $stream = [System.IO.File]::OpenRead($file.FullName)
 
-        if (-not $stream.CanSeek)
+        try
         {
-            throw "Completer set '$($file.FullName)' is not a regular file. Completer sets must be regular files, not named pipes or other streams."
+            $bytes = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1)
         }
-
-        $byteCount = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1).Length
-
-        if ($byteCount -gt $script:CompleterSetMaxFileBytes)
+        finally
         {
-            throw "Completer set '$($file.FullName)' is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files. Split its entries across several sets."
+            $stream.Dispose()
         }
-
-        # The measuring stream is still open, so on Windows no other process
-        # can change the file before the data reader has read it.
-        $data = Import-PowerShellDataFile -LiteralPath $file.FullName -SkipLimitCheck -ErrorAction Stop
     }
     catch [System.Management.Automation.MethodInvocationException]
     {
         throw $_.Exception.InnerException
     }
-    finally
+
+    if ($bytes.Length -gt $script:CompleterSetMaxFileBytes)
     {
-        if ($null -ne $stream)
-        {
-            $stream.Dispose()
-        }
+        throw "Completer set '$($file.FullName)' is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files. Split its entries across several sets."
+    }
+
+    $text = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false)).ReadToEnd()
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $file.FullName, [ref] $null, [ref] $parseErrors)
+    $setHashtable = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false)
+
+    if ($parseErrors.Count -gt 0 -or $null -eq $setHashtable)
+    {
+        throw "The file '$($file.FullName)' could not be parsed as a PowerShell Data File."
+    }
+
+    try
+    {
+        $data = $setHashtable.SafeGetValue($true)
+    }
+    catch [System.Management.Automation.MethodInvocationException]
+    {
+        throw $_.Exception.InnerException
     }
 
     if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
@@ -124,5 +134,6 @@ function Import-CompleterSetDefinition
         Directory  = $file.DirectoryName
         Version    = 1
         Entries    = $entries
+        Ast        = $ast
     }
 }

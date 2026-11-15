@@ -25,7 +25,9 @@ With Package, the set is a package set, and Get-CompleterSetPackageFinding
 adds its PackageLayout findings after every entry's findings and before the
 UnlistedScript findings. Without it the findings are exactly the plain set's.
 
-Nothing here reads or writes the session's registrations or runs a script.
+Every position comes from the parse in SetDefinition, so the set file is not
+read again. Nothing here reads or writes the session's registrations or runs a
+script.
 
 .PARAMETER SetDefinition
 The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
@@ -73,7 +75,7 @@ function Get-CompleterSetFinding
     $hints['DuplicateTarget'] = $hints['TargetMismatch']
 
     $setPath = $SetDefinition.Path
-    $extents = Get-CompleterSetEntryExtent -LiteralPath $setPath
+    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
     $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
     $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
     $claimedTargets = @{}

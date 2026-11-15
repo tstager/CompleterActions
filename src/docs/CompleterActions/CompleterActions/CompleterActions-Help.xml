@@ -926,10 +926,10 @@ grammar, then registers it. The imported records carry `Trusted` set to
     <maml:description>
       <maml:para>Reads a completer set, a `.psd1` data file written by `Export-CompleterSet` or
 by hand, validates every entry up front, and then registers each valid entry's
-targets as managed registrations. The set is read with
-`Import-PowerShellDataFile`, which evaluates data only, and validation never
-executes a completer script. A set file that holds more than 128 KB (131072
-bytes) is refused before it is read as data, as `Export-CompleterSet` refuses
+targets as managed registrations. The set file is read once and evaluated as
+data only, with the evaluator `Import-PowerShellDataFile` uses, and validation
+never executes a completer script. A set file that holds more than 128 KB
+(131072 bytes) is refused before it is parsed, as `Export-CompleterSet` refuses
 to write one, and nothing from it is registered; split a larger set into
 several.
 
@@ -3199,9 +3199,10 @@ full against the scripts on disk, and returns one
 matches its folder produces no output, so a gate can assert that the command
 returns nothing, the same shape `Test-CompleterScript` uses.
 
-The set is read with `Import-PowerShellDataFile`, which evaluates data only,
-and the set file is also parsed, never evaluated, to point each finding at a
-line and column of the set. Every strict entry is parsed once, whether or not
+The set file is read once and evaluated as data only, as `Import-CompleterSet`
+reads it, and each finding points at a line and column of that same read, so
+the file is not read again and a set rewritten during the test cannot change
+the findings. Every strict entry is parsed once, whether or not
 its `Hash` matches, because the command verifies rather than takes the fast
 path. A trusted entry is never parsed, as at import, so it can report only
 `MissingScript`, `InvalidEntry`, `DuplicateTarget`, and the three `Hash` kinds.
