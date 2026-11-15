@@ -3,8 +3,8 @@
 Finds the source positions of a completer set file's entries.
 
 .DESCRIPTION
-Parses the set file with the PowerShell parser, never evaluating it, and
-returns the position of the Entries key and, for each element of the Entries
+Walks the parse of a completer set, never evaluating it, and returns the
+position of the Entries key and, for each element of the Entries
 array, the element's own extent (the entry's @{ for a hashtable) and the
 extents of its Path value, Hash key and value, and Targets key.
 Test-CompleterSet uses them to point a finding at the part of the set that
@@ -16,8 +16,10 @@ one element per line and one written with commas both work, and a $null
 element is skipped because the definition reader drops it before the entries
 are numbered.
 
-.PARAMETER LiteralPath
-The full path of the completer set file.
+.PARAMETER Ast
+The Ast of the CompleterActions.CompleterSetDefinition that
+Import-CompleterSetDefinition returned, the parse of the bytes it read, so the
+set file is not read again.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntryExtent
@@ -32,13 +34,9 @@ function Get-CompleterSetEntryExtent
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
-        [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [ValidateNotNull()]
+        [System.Management.Automation.Language.Ast] $Ast
     )
-
-    $tokens = $null
-    $parseErrors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile($LiteralPath, [ref] $tokens, [ref] $parseErrors)
 
     # Output of a statement enumerates arrays, as the data reader's @() and
     # pipeline do; the elements of a comma array are not enumerated again.

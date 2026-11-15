@@ -43,14 +43,21 @@ full against the scripts on disk, and returns one
 matches its folder produces no output, so a gate can assert that the command
 returns nothing, the same shape `Test-CompleterScript` uses.
 
-The set is read with `Import-PowerShellDataFile`, which evaluates data only,
-and the set file is also parsed, never evaluated, to point each finding at a
-line and column of the set. Every strict entry is parsed once, whether or not
-its `Hash` matches, because the command verifies rather than takes the fast
-path. A trusted entry is never parsed, as at import, so it can report only
-`MissingScript`, `InvalidEntry`, `DuplicateTarget`, and the three `Hash` kinds.
-No script is executed, and the session's registrations are neither read nor
-changed, so a conflict with what the session has registered is not drift.
+The set file is read once and evaluated as data only, as `Import-CompleterSet`
+reads it, and each finding points at a line and column of that same read, so
+the set file is not read by its own path again and a set rewritten during the
+test cannot change the entries checked or the positions reported. The module
+manifests `-Name` reads or the folder above the set's folder holds are read by
+their own paths, held to the same 128 KB limit, and the scripts the entries
+name by theirs, parsed in full, because a completer script can be larger than
+a set. When a link makes one of those paths another name for the set file,
+that read sees the file as it is then. Every strict entry is parsed once,
+whether or not its `Hash` matches, because the command verifies rather than
+takes the fast path. A trusted entry is never parsed, as at import, so it can
+report only `MissingScript`, `InvalidEntry`, `DuplicateTarget`, and the three
+`Hash` kinds. No script is executed, and the session's registrations are
+neither read nor changed, so a conflict with what the session has registered
+is not drift.
 
 `Construct` names the kind of drift, and `Severity` is `Error` when
 `Import-CompleterSet` without `-SkipInvalid` would reject the set because of
@@ -85,13 +92,13 @@ at line 1, column 1 of the set.
 
 A set is a package set when its module manifest is known: through `-Name`, or,
 for `-Path` and `-LiteralPath`, when the folder above the set file's folder
-holds a `.psd1` that reads as data and whose `PrivateData.CompleterSet`
-resolves to the set file, as in a staged package before it is published. When
-more than one `.psd1` there declares the set, the first in ordinal order of
-file name is the manifest. A `.psd1` that is not data declares nothing, and a
-folder that cannot be listed holds no manifest. A set that no manifest
-declares gets no `PackageLayout` finding. A package set is checked for four
-things, reported in this order:
+holds a `.psd1` of at most 128 KB that reads as data and whose
+`PrivateData.CompleterSet` resolves to the set file, as in a staged package
+before it is published. When more than one `.psd1` there declares the set, the
+first in ordinal order of file name is the manifest. A `.psd1` that is not data
+or is larger than 128 KB declares nothing, and a folder that cannot be listed
+holds no manifest. A set that no manifest declares gets no `PackageLayout`
+finding. A package set is checked for four things, reported in this order:
 
 - `Error`, one per entry in set order, at the entry's `Path`: the `Path` is
   fully qualified, or resolves outside the module folder, so an installed copy
@@ -113,16 +120,27 @@ A `RootModule` in the manifest is not a finding.
 With `-Name` the set comes from an installed completer set package, found
 exactly as `Import-CompleterSet -Name` finds it: the first `$env:PSModulePath`
 root that has the module wins, and within it the highest version. The manifest
-is read as data, so nothing in the package runs. Each name is taken literally,
-and a name that does not resolve fails the call.
+is read as data, so nothing in the package runs, and a manifest larger than
+128 KB fails the call before it is parsed. Each name is taken literally, and a
+name that does not resolve fails the call.
 
 Every `-Path`, `-LiteralPath`, or `-Name` value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
 are written before the next set is read. A set that cannot be read, such as
-one without `Version = 1`, stops the call with a terminating error after the
-findings of the earlier sets. A folder under a set's directory that cannot be
-read also stops the call with a terminating error, after that set's entry
-findings, because the scan for unlisted scripts would be incomplete.
+one without `Version = 1` or one larger than the 128 KB (131072-byte) limit
+that `Import-CompleterSet` also applies, stops the call with a terminating
+error after the findings of the earlier sets. A folder under a set's
+directory that cannot be read also stops the call with a terminating error,
+after that set's entry findings, because the scan for unlisted scripts would
+be incomplete.
+
+The size limit also bounds the time a set takes to parse, though a malformed
+file at the limit can still take minutes to refuse. A valid set at the limit
+parses in milliseconds, but the time the PowerShell parser takes to refuse a
+malformed file grows with the square of its syntax errors, and a file can
+hold about one per byte: at the limit, a file that repeats a short key on
+every line took 70 seconds to refuse, and one of nothing but closing
+parentheses about two minutes.
 
 ## EXAMPLES
 
