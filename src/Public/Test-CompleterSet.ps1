@@ -11,13 +11,16 @@ returns nothing, the same shape Test-CompleterScript uses.
 
 The set file is read once and evaluated as data only, as Import-CompleterSet
 reads it, and each finding points at a line and column of that same read, so
-the file is not read again and a set rewritten during the test cannot change
-the findings. Every strict entry is parsed once, whether or not
-its Hash matches, because the command verifies rather than takes the fast
-path. A trusted entry is never parsed, as at import, so it can report only
-MissingScript, InvalidEntry, DuplicateTarget, and the three Hash kinds. No
-script is executed, and the session's registrations are neither read nor
-changed, so a conflict with what the session has registered is not drift.
+the set file is not read again and a set rewritten during the test cannot
+change what the findings take from it. The scripts the entries name, and the
+module manifests -Name reads or the folder above the set's folder holds, are
+other files, each read separately and not held to the set file limit. Every
+strict entry is parsed once, whether or not its Hash matches, because the
+command verifies rather than takes the fast path. A trusted entry is never
+parsed, as at import, so it can report only MissingScript, InvalidEntry,
+DuplicateTarget, and the three Hash kinds. No script is executed, and the
+session's registrations are neither read nor changed, so a conflict with what
+the session has registered is not drift.
 
 Construct names the kind of drift, and Severity is Error when
 Import-CompleterSet without -SkipInvalid would reject the set because of it,
@@ -91,11 +94,13 @@ after the findings of the earlier sets. A folder under a set's directory that
 cannot be read also stops the call with a terminating error, after that set's
 entry findings, because the scan for unlisted scripts would be incomplete.
 
-The size limit also bounds the time a set takes to parse. A valid set at the
-limit parses in milliseconds, but the time the PowerShell parser takes to
-refuse a malformed file grows with the square of its syntax errors, so a file
-at the limit that repeats one key on every line can take several seconds to
-refuse.
+The size limit also bounds the time a set takes to parse, though a malformed
+file at the limit can still take minutes to refuse. A valid set at the limit
+parses in milliseconds, but the time the PowerShell parser takes to refuse a
+malformed file grows with the square of its syntax errors, and a file can
+hold about one per byte: at the limit, a file that repeats a short key on
+every line took 70 seconds to refuse, and one of nothing but closing
+parentheses about two minutes.
 
 .PARAMETER Path
 The path to a completer set file. Wildcards are supported.

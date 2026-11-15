@@ -35,11 +35,13 @@ LONG DESCRIPTION
     file cannot execute a completer script or anything else when it is read.
 
     A set file can be at most 128 KB (131072 bytes), roughly 400 entries of
-    one target each, fewer when their paths are long or they list several
-    targets. `Export-CompleterSet` refuses to write a larger set, naming its
-    size and the limit, and writes nothing, so an existing set file is left
-    unchanged and every set it writes reads back. Split a larger repository
-    into several sets, for example one per folder, and import them together:
+    one target each as `Export-CompleterSet` writes them, with a `Hash`, more
+    when they are written by hand without one, fewer when their paths are
+    long or they list several targets. `Export-CompleterSet` refuses to write
+    a larger set, naming its size and the limit, and writes nothing, so an
+    existing set file is left unchanged and every set it writes reads back.
+    Split a larger repository into several sets, for example one per folder,
+    and import them together:
 
         Import-CompleterSet -Path ~\Completers\tools\completers.psd1, ~\Completers\work\completers.psd1
 
@@ -49,18 +51,26 @@ LONG DESCRIPTION
     file whose reported size is 0, or a named pipe is held to the limit too.
     Everything they take from the set, its data and the line and column of
     each finding, comes from that one read, so a set rewritten while it is
-    imported or tested cannot hand them a larger or a different set.
+    imported or tested cannot hand them a larger or a different set. The
+    scripts the entries name, and the module manifests read to find a set
+    by `-Name` or to check a packaged set's layout, are other files: the
+    commands read each of them separately, without this limit, even when one
+    of them is another name for the set file, such as a hard link.
 
     The size limit takes the place of the 500-key and 5000-node limits
     `Import-PowerShellDataFile` applies by default, which a set of a few
     hundred entries already exceeds; lifting those limits does not admit
     expressions.
 
-    The limit also bounds the time a set takes to parse. A valid set at the
-    limit parses in milliseconds, but the time the PowerShell parser takes
-    to refuse a malformed file grows with the square of its syntax errors,
-    so a file at the limit that repeats one key on every line, about 12,000
-    errors, can take several seconds to refuse.
+    The limit also bounds the time a set takes to parse, though a malformed
+    file at the limit can still take minutes to refuse. A valid set at the
+    limit parses in milliseconds. The PowerShell parser compares each syntax
+    error with every one before it, so the time it takes to refuse a
+    malformed file grows with the square of its errors, and a file can hold
+    about one error per byte: at the limit, a file that repeats a short key
+    on every line, about 33,000 errors, took 70 seconds to refuse, and a file
+    of nothing but closing parentheses, one error per byte, about two
+    minutes. A set that `Export-CompleterSet` writes has no syntax errors.
 
 THE SET FILE SCHEMA
 

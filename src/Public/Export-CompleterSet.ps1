@@ -51,12 +51,14 @@ succeeds.
 A set file can be at most 128 KB (131072 bytes), roughly 400 entries of one
 target each, fewer when their paths are long or they list several targets,
 because Import-CompleterSet and Test-CompleterSet refuse a larger file. The
-command measures the set it would write and refuses a larger one with an
-error that names its size and the limit, writing nothing, so an existing file
-is left unchanged; export the registrations as several sets instead. The
-limit also bounds the time a set takes to parse: a valid set at the limit
-parses in milliseconds, and a malformed one, which the command never writes,
-can take several seconds to refuse.
+command measures the set it would write, under -WhatIf too, and refuses a
+larger one with an error that names its size and the limit, writing nothing,
+so an existing file is left unchanged; export the registrations as several
+sets instead. The limit also bounds the time a set takes to parse: a valid
+set at the limit parses in milliseconds, and a malformed one, which the
+command never writes, can take minutes to refuse, because the parser's time
+grows with the square of the syntax errors and a file can hold about one per
+byte.
 
 .PARAMETER Path
 The path of the .psd1 file to write. The parent directory must exist.

@@ -22,10 +22,13 @@ evaluated by Ast.SafeGetValue, the data-only evaluator that cmdlet uses, so an
 expression is refused and a script block literal comes back as a ScriptBlock
 value that nothing runs. Parse errors, among them input nested too deeply for
 the parser, which then returns no parse at all, and a file without a hashtable
-get the cmdlet's error text. Nothing opens the file again: the definition carries the
-parse, and Test-CompleterSet takes its positions from it, so a set rewritten
-during an import or a test reaches no later step and nothing past the limit is
-ever parsed.
+get the cmdlet's error text. No later step reads the set file: the definition
+carries the parse, and Test-CompleterSet takes its positions from it, so a set
+rewritten during an import or a test reaches no later step and none of it past
+the limit is parsed. The scripts the entries name, and the module manifests
+read to find a set by -Name or to check a packaged set's layout, are other
+files, read separately and not held to this limit, even when a hard link makes
+one of them the set file.
 
 SafeGetValue skips its hashtable size check, as Import-PowerShellDataFile
 -SkipLimitCheck does, because the default limits of 500 keys and 5000 syntax
@@ -33,11 +36,16 @@ nodes reject an exported set of a few hundred entries. Skipping them changes
 nothing else the evaluator accepts. Export-CompleterSet refuses to write a set
 over the same size, so every set it writes reads back.
 
-The limit bounds the bytes parsed and so the parse time. A valid set of 95 KB
-parsed in 11 milliseconds when the limit was set, but the time the PowerShell
-parser takes to refuse a malformed file grows with the square of its syntax
-errors: a file that repeats one key on every line took 0.4 seconds to refuse
-at 32 KB and 5.6 seconds at 128 KB, about 12,000 errors.
+The limit bounds the bytes parsed and so the parse time, though a malformed
+file can still take minutes to refuse. A valid set of 95 KB parsed in 11
+milliseconds when the limit was set. The parser's SaveError compares each new
+error with every error saved before it, so the time to refuse a malformed file
+grows with the square of its syntax errors, and a file can hold about one
+error per byte. Measured at the limit: a file that repeats one key on every
+line in about 11 bytes took 5.6 seconds (about 12,000 errors), one that
+repeats it in 4 bytes 70 seconds (about 33,000), and a file of nothing but
+closing parentheses or closing braces, one error per byte, 129 and 171
+seconds. A set that Export-CompleterSet writes has no syntax errors.
 
 .PARAMETER LiteralPath
 The literal path to the completer set file.
