@@ -29,6 +29,7 @@ else {
 $coreProjectPath = Join-Path -Path $sourceRoot -ChildPath 'Core/CompleterActions.Core.csproj'
 $coreAssemblyName = 'CompleterActions.Core.dll'
 $libPath = Join-Path -Path $PSScriptRoot -ChildPath 'lib'
+. (Join-Path -Path $sourceRoot -ChildPath 'Private/ConvertTo-CompleterSingleQuotedText.ps1')
 # Synopsis:
 
 task clean {
@@ -287,12 +288,13 @@ task build clean, compile, external_help, {
 
     # Update-ModuleManifest rewrites a RequiredAssemblies entry whose file exists with the platform's
     # path separator; restore the source manifest's portable entry so every platform builds the same text.
-    $requiredAssembliesLine = 'RequiredAssemblies = @({0})' -f (@($sourceManifestData.RequiredAssemblies | ForEach-Object { "'$_'" }) -join ', ')
+    $requiredAssembliesLine = 'RequiredAssemblies = @({0})' -f (@($sourceManifestData.RequiredAssemblies | ForEach-Object { "'$(ConvertTo-CompleterSingleQuotedText -Value $_)'" }) -join ', ')
     (Get-Content -Path $Data.Path) -replace '^RequiredAssemblies = .*$', $requiredAssembliesLine |
         Set-Content -Path $Data.Path -Encoding utf8
 }
 
-task Markdown_templates {
+# Synopsis: Regenerates every markdown help page under src/docs from the source module, overwriting hand edits
+task Markdown_templates compile, {
 
     $templatePath = Join-Path -Path $sourceRoot -ChildPath 'docs'
 
@@ -301,20 +303,20 @@ task Markdown_templates {
         New-Item -Path $templatePath -ItemType Directory -Force | Out-Null
     }
 
-    # Import Microsoft.PowerShell.Platyps module (new version)
-    if (-not (Get-Module -Name Microsoft.PowerShell.Platyps -ErrorAction SilentlyContinue)) {
-        Import-Module -Name Microsoft.PowerShell.Platyps -Force
+    # An assembly cannot be unloaded, so the source manifest is imported in a new pwsh: its RequiredAssemblies
+    # entry then loads the core compile just built rather than one this process already holds, and lib/ stays
+    # unlocked here for the next compile.
+    $pwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+    exec {
+        & $pwshPath -NoProfile -NonInteractive -Command {
+            param($ManifestPath, $OutputFolder)
+
+            $ErrorActionPreference = 'Stop'
+            Import-Module -Name Microsoft.PowerShell.PlatyPS
+            $moduleInfo = Import-Module -Name $ManifestPath -PassThru
+            New-MarkdownCommandHelp -ModuleInfo $moduleInfo -OutputFolder $OutputFolder -WithModulePage -Force
+        } -args $sourceManifestPath, $templatePath
     }
-
-    # Import the module if not already loaded
-    if (-not (Get-Module -Name $modulename -ErrorAction SilentlyContinue)) {
-        Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath "$modulename.psm1") -Force
-    }
-
-    # Create markdown templates for all commands in the module using the new PlatyPS 1.0 API
-
-    $moduleInfo = Get-Module -Name $modulename
-    New-MarkdownCommandHelp -ModuleInfo $moduleInfo -OutputFolder $templatePath -WithModulePage -Force
 }
 
 # Synopsis: Updates external help documentation

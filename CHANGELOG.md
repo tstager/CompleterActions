@@ -7,6 +7,64 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+Fixes for four of the eight findings in `docs/code-review-2026-11-10.md`.
+CA-2026-11-02, CA-2026-11-03, CA-2026-11-05, and CA-2026-11-07 are still
+open.
+
+### Fixed
+
+- The strict import grammar refuses a literal `-CommandName` or
+  `-ParameterName` target array that carries a redirection or a background
+  operator. `@('tool' 2> file)` passed `Test-CompleterScript` with no
+  finding, and default `Import-CompleterScript` then ran the redirection
+  while it dot-sourced the script and truncated the file, although the strict
+  tier promises that import cannot write a file. The recognizer of
+  `@('tool', 'tool.exe')` arrays now rejects an array whose expression has a
+  redirection or whose pipeline ends in `&`, so `Test-CompleterScript`
+  reports `The script must use literal string values for -CommandName.`
+  (`ArrayExpressionAst`) and `Import-CompleterScript` and strict
+  `Register-Completer -Lazy` refuse the script before it runs. Forms that
+  wrote nothing but were accepted before, such as `@('tool' 2>&1)`,
+  `@('tool' 2> $null)`, and `@('tool' &)`, are refused too; none of the
+  175 PS_Completers scripts uses one (CA-2026-11-01).
+- `Export-CompleterSet` after a pipe, or given `-InputObject`, exports only
+  the records it receives, even when it receives none. A `Get-Completer`
+  filter that matched nothing, piped to the command, fell through to the
+  no-input default and replaced an existing set file with every managed
+  script registration in the session. An empty pipe, an empty array,
+  `$null`, and a filter that matches nothing, piped or passed to
+  `-InputObject`, now warn that no registrations were selected, write
+  nothing, and leave an existing file unchanged. `-InputObject` no longer
+  carries `[ValidateNotNull()]`: a null is skipped, so `@($null, $record)`
+  exports the record instead of failing parameter binding. Only a call with
+  no pipe before it and no `-InputObject` exports every managed
+  registration, and a wrapper function must pass its input on, as in
+  `$input | Export-CompleterSet`, because the command cannot see a pipe in
+  front of its caller. The command help and `about_Completer_Sets` say so
+  (CA-2026-11-04).
+- Generated PowerShell literals escape every single-quote delimiter the
+  tokenizer accepts: U+0027 and the typographic U+2018, U+2019, U+201A, and
+  U+201B. Only the ASCII apostrophe was doubled, so a script in a folder
+  such as `author’s scripts` exported a set that `Import-CompleterSet`
+  could not parse, and a target named with a typographic apostrophe made
+  `Register-Completer -Lazy` fail with `The string is missing the
+  terminator`. The set exporter's `Path`, `CommandName`, and `ParameterName`
+  lines, the lazy stub that `Register-Completer -Lazy`, `Import-CompleterSet`,
+  and `Reset-Completer` install, the startup benchmark's child scripts, and
+  the build's `RequiredAssemblies` line now go through
+  `ConvertTo-CompleterSingleQuotedText`, the policy the script skeleton
+  already used (CA-2026-11-06).
+- The `Markdown_templates` build task works in a fresh process. It imported
+  the root `.psm1` directly, which skips the manifest's `RequiredAssemblies`
+  entry, and failed with `Unable to find type
+  [CompleterActions.Internal.EngineAccess]` before writing a page. It now
+  depends on `compile` and imports the source manifest in a child
+  `pwsh -NoProfile`, so it loads the core `compile` just built, the build
+  process never holds `lib/CompleterActions.Core.dll`, and the task can run
+  twice in one session. A session that has the repository's module imported
+  still fails at `compile`, as `compile` and `build` already did on Windows;
+  the README describes the task (CA-2026-11-08).
+
 ## [3.0.0] - 2026-10-11
 
 The stable 3.0.0 release. Same code as 3.0.0-rc1, promoted after the

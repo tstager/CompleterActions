@@ -886,3 +886,99 @@ namespace CompleterActionsTests
         $hits | Should -BeNullOrEmpty
     }
 }
+
+Describe 'Markdown_templates build task' {
+    It 'compiles the core and generates a page for every exported command, twice in one process that never loads the module' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to run the build task'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to generate the markdown help'
+        }
+
+        if ($null -eq (Get-Command -Name 'dotnet' -CommandType Application -ErrorAction SilentlyContinue))
+        {
+            Set-ItResult -Skipped -Because 'the dotnet SDK is not available to compile the core'
+        }
+
+        # The task overwrites every page under src/docs, so it runs in a staged copy under a folder
+        # with the module name. The copy has no lib/ or compiler output, so the task must compile the core itself.
+        $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'markdown/CompleterActions'
+        New-Item -Path $stagingRoot -ItemType Directory | Out-Null
+
+        foreach ($buildInput in 'CompleterActions.build.ps1', 'CompleterActions.psd1', 'CompleterActions.psm1', 'CompleterActions.Format.ps1xml', 'src')
+        {
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath $buildInput) -Destination $stagingRoot -Recurse
+        }
+
+        foreach ($compilerOutput in 'src/Core/bin', 'src/Core/obj')
+        {
+            Remove-Item -LiteralPath (Join-Path -Path $stagingRoot -ChildPath $compilerOutput) -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        # Remove the tracked pages so the assertion below sees only what the task generated.
+        $stagedPagesRoot = Join-Path -Path $stagingRoot -ChildPath 'src/docs/CompleterActions'
+        Get-ChildItem -LiteralPath $stagedPagesRoot -Filter '*.md' -File | Remove-Item -Force
+
+        # Both runs share one process. If the task loaded the core there, the second compile could not replace
+        # lib/, and a core that process already held would silently stand in for the one compile just built.
+        $pwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $runOutput = @(& $pwshPath -NoProfile -NonInteractive -Command {
+                param($BuildScriptPath)
+
+                $ErrorActionPreference = 'Stop'
+                foreach ($run in 1, 2)
+                {
+                    Invoke-Build -File $BuildScriptPath -Task Markdown_templates | Out-Null
+                }
+
+                [pscustomobject]@{
+                    LoadedModules = @(Get-Module -Name 'CompleterActions').Count
+                    LoadedCores = @([AppDomain]::CurrentDomain.GetAssemblies() | Where-Object { $_.GetName().Name -eq 'CompleterActions.Core' }).Count
+                }
+            } -args $buildScriptPath *>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($runOutput -join [Environment]::NewLine)
+
+        $callerState = $runOutput | Where-Object { $null -ne $_.PSObject.Properties['LoadedCores'] }
+        $callerState.LoadedModules | Should -Be 0 -Because 'the task imports the source module in its own child pwsh'
+        $callerState.LoadedCores | Should -Be 0 -Because 'the task must not load the core into the process that runs it'
+
+        $exportedFunctions = (Import-PowerShellDataFile -Path (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1')).FunctionsToExport
+        $expectedPages = @(@($exportedFunctions) + 'CompleterActions' | ForEach-Object { "$_.md" } | Sort-Object)
+
+        @(Get-ChildItem -LiteralPath $stagedPagesRoot -Filter '*.md' -File | Select-Object -ExpandProperty Name | Sort-Object) | Should -Be $expectedPages
+    }
+}
+
+Describe 'Build script' {
+    It 'writes a RequiredAssemblies line that reads back entries holding every single-quote character the tokenizer accepts' {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $buildScriptPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'
+
+        # The build script dot-sources the module's quoting helper; load it the same way, then
+        # evaluate the build's RequiredAssemblies line expression from its source.
+        . (Join-Path -Path $repoRoot -ChildPath 'src' -AdditionalChildPath 'Private', 'ConvertTo-CompleterSingleQuotedText.ps1')
+        $buildAst = [System.Management.Automation.Language.Parser]::ParseFile($buildScriptPath, [ref] $null, [ref] $null)
+        $lineAssignments = @($buildAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $node.Left.VariablePath.UserPath -eq 'requiredAssembliesLine' }, $true))
+        $lineAssignments.Count | Should -Be 1
+
+        # U+0027, U+2018, U+2019, U+201A, and U+201B, written as code points so this file stays ASCII.
+        $quotes = -join @([char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B)
+        $sourceManifestData = @{ RequiredAssemblies = @("lib/Core$quotes.dll", "lib/Author$([char] 0x2019)s.dll") }
+        $requiredAssembliesLine = & ([scriptblock]::Create($lineAssignments[0].Right.Extent.Text))
+
+        $parseErrors = $null
+        $null = [System.Management.Automation.Language.Parser]::ParseInput($requiredAssembliesLine, [ref] $null, [ref] $parseErrors)
+        $parseErrors | Should -BeNullOrEmpty -Because 'every single-quote character in an entry must be doubled'
+
+        $manifestPath = Join-Path -Path $TestDrive -ChildPath 'RequiredAssemblies.psd1'
+        Set-Content -LiteralPath $manifestPath -Encoding utf8 -Value '@{', $requiredAssembliesLine, '}'
+        @((Import-PowerShellDataFile -LiteralPath $manifestPath).RequiredAssemblies) | Should -BeExactly $sourceManifestData.RequiredAssemblies
+    }
+}
