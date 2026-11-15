@@ -156,9 +156,9 @@ public static class StrictGrammar
         }
 
         // Recognizes @('name') and @('name', 'name.exe'). The array expression runs when the script
-        // executes, so every node it unwraps must be free of anything that executes beyond yielding
-        // its strings: a redirection would write a file and a background pipeline would start a job
-        // during import.
+        // executes, so every node it unwraps must do nothing beyond yielding its strings: a
+        // redirection would write a file during import, and a background operator is refused as
+        // well, because it is not part of a literal array even where it starts no job.
         private static IReadOnlyList<Ast>? GetLiteralArrayExpressionElement(ArrayExpressionAst expressionAst)
         {
             StatementBlockAst statementBlockAst = expressionAst.SubExpression;
