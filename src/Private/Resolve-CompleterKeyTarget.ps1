@@ -1,17 +1,21 @@
 <#
 .SYNOPSIS
-Resolves a Key or RegistrationKey of a given kind to the registered target it belongs to.
+Resolves a Key or RegistrationKey of a given kind to the one target it can name.
 
 .DESCRIPTION
 A record's Key and RegistrationKey are its RuntimeKey folded to lowercase, and
 the folding merges names the runtime keeps apart: the Kelvin sign (U+212A)
 lowercases to the letter k, so 'Kelvin' spelled with it and 'kelvin' have one
-key but are two runtime entries. A key therefore cannot be used as a runtime
-key. This helper looks for the targets of the given kind, in the managed table
-and in the runtime dictionary of that kind, whose RuntimeKey folds to the key,
-and returns the target of the one it finds. When the key belongs to more than
-one of them it throws rather than pick one, and when it belongs to none the
-key itself is taken as the runtime key, since no registered name can be meant.
+key but are two runtime entries. A key therefore names only the target whose
+runtime key is the key itself, compared ordinally ignoring case as the runtime
+compares it, and only while no other target could be meant. This helper looks
+for the targets of the given kind, in the managed table and in the runtime
+dictionary of that kind, whose RuntimeKey folds to the key. When one of them
+has a name the runtime keeps apart from the key, such as the Kelvin-sign
+spelling for the key 'kelvin', it throws rather than pick a target: that
+target and the one the key spells are both meant. Otherwise the key names the
+registered target with that name, keeping its spelling, or the target the key
+spells when none is registered.
 
 .PARAMETER Key
 The folded key, such as a record's Key or RegistrationKey.
@@ -25,8 +29,8 @@ CompleterActions.CompleterTarget
 .EXAMPLE
 PS> Resolve-CompleterKeyTarget -Key 'kelvin' -Native
 
-Returns the native target 'kelvin' or 'Kelvin', whichever one is registered,
-and throws when both are.
+Returns the native target 'kelvin', and throws while a native target spelled
+with the Kelvin sign (U+212A) is registered, whether or not 'kelvin' is.
 #>
 function Resolve-CompleterKeyTarget
 {
@@ -75,9 +79,16 @@ function Resolve-CompleterKeyTarget
 
     $kind = if ($Native) { 'native' } else { 'parameter' }
 
+    $exactNaming = 'Supply RuntimeKey, or CommandName with IsNative or ParameterName, to name the target exactly.'
+
     if ($matchingKeys.Count -gt 1)
     {
-        throw "The key '$Key' belongs to $($matchingKeys.Count) registered $kind targets, $(@($matchingKeys | ForEach-Object { "'$_'" }) -join ', '), which differ in characters that lowercasing merges, so it cannot name one of them. Supply RuntimeKey, or CommandName with IsNative or ParameterName, to name the target exactly."
+        throw "The key '$Key' belongs to $($matchingKeys.Count) registered $kind targets, $(@($matchingKeys | ForEach-Object { "'$_'" }) -join ', '), which differ in characters that lowercasing merges, so it cannot name one of them. $exactNaming"
+    }
+
+    if ($matchingKeys.Count -eq 1 -and -not [string]::Equals($matchingKeys[0], $Key, [System.StringComparison]::OrdinalIgnoreCase))
+    {
+        throw "The key '$Key' belongs to the registered $kind target '$($matchingKeys[0])', whose name differs from the key in characters that lowercasing merges, so the key could also name the $kind target '$Key'. $exactNaming"
     }
 
     $runtimeKey = if ($matchingKeys.Count -eq 1) { $matchingKeys[0] } else { $Key }

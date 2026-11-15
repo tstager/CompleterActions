@@ -2147,6 +2147,44 @@ Describe 'Registration identity' {
             [string]::Equals($remaining[0].CommandName, $script:KelvinLetterName, [System.StringComparison]::Ordinal) | Should -BeTrue
         }
 
+        It 'refuses an object that names only a key a registered target holds under another spelling, on every -InputObject command' {
+            $null = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' }
+            $keyOnly = [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true }
+            $refusal = "*The key 'test-kelvintool' belongs to the registered native target '$script:KelvinSignName'*could also name the native target 'test-kelvintool'*Supply RuntimeKey, or CommandName*"
+            $setPath = Join-Path -Path $TestDrive -ChildPath 'kelvin-sign.psd1'
+
+            { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'letter-from-key' } } | Register-Completer -Force } | Should -Throw $refusal
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw $refusal
+            { $keyOnly | Get-Completer } | Should -Throw $refusal
+            { $keyOnly | Reset-Completer -Confirm:$false -ErrorAction Stop } | Should -Throw $refusal
+            { $keyOnly | Test-CompleterRegistration -InputText 'x ' } | Should -Throw $refusal
+            { [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; SourcePath = (Join-Path -Path $TestDrive -ChildPath 'kelvin.ps1') } | Export-CompleterSet -Path $setPath } | Should -Throw $refusal
+            Test-Path -LiteralPath $setPath | Should -BeFalse -Because 'a refused export writes no set file'
+
+            Get-TestKelvinState | Should -Be @("sign/Active/'sign-result'") -Because 'the forced registration neither replaced the Kelvin-sign target nor created the letter one'
+            Get-TestKelvinCompletion -CommandName $script:KelvinSignName | Should -Be @('sign-result')
+
+            $spelled = [pscustomobject] @{ Key = $script:KelvinSignName; IsNative = $true } | Get-Completer
+            [string]::Equals($spelled.RuntimeKey, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'a key spelled as the registered name names that target'
+
+            $null = Unregister-Completer -CommandName $script:KelvinSignName -Native -Confirm:$false
+            $letter = [pscustomobject] @{ Key = 'test-kelvintool'; IsNative = $true; ScriptBlock = { 'letter-from-key' } } | Register-Completer -PassThru
+
+            [string]::Equals($letter.RuntimeKey, 'test-kelvintool', [System.StringComparison]::Ordinal) | Should -BeTrue -Because 'with no other spelling registered the key names the target it spells'
+            Get-TestKelvinState | Should -Be @("letter/Active/'letter-from-key'")
+        }
+
+        It 'refuses an object that names only a key a registered parameter target holds under another spelling' {
+            $null = Register-Completer -CommandName $script:KelvinSignName -ParameterName 'Name' -ScriptBlock { 'sign-result' }
+            $keyOnly = [pscustomobject] @{ Key = 'test-kelvintool:name'; IsNative = $false }
+
+            { $keyOnly | Unregister-Completer -Confirm:$false } | Should -Throw "*The key 'test-kelvintool:name' belongs to the registered parameter target*could also name the parameter target 'test-kelvintool:name'*"
+
+            $remaining = @(Get-Completer | Where-Object { -not $_.IsNative -and $_.Key -eq 'test-kelvintool:name' })
+            $remaining.Count | Should -Be 1
+            [string]::Equals($remaining[0].CommandName, $script:KelvinSignName, [System.StringComparison]::Ordinal) | Should -BeTrue
+        }
+
         It 'lists and removes both unmanaged runtime entries' {
             Register-ArgumentCompleter -Native -CommandName $script:KelvinLetterName -ScriptBlock { 'letter-result' }
             Register-ArgumentCompleter -Native -CommandName $script:KelvinSignName -ScriptBlock { 'sign-result' }
