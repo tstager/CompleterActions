@@ -183,7 +183,10 @@ OUTPUT OBJECTS
       lowercase. It does not identify a target: a native command whose name
       contains a colon shares its key with a parameter target, and the
       folding merges names PowerShell keeps apart, such as one spelled with
-      the Kelvin sign (U+212A) and one with the letter K.
+      the Kelvin sign (U+212A) and one with the letter K. An object piped to
+      a CompleterActions command that names its target only by `Key` or
+      `RegistrationKey` resolves to the registered target of its kind whose
+      key it is, and is refused when the key belongs to more than one.
 
     - `RuntimeKey`
       The target key as PowerShell runtime registration logic expects it.
@@ -219,6 +222,17 @@ OUTPUT OBJECTS
 
     - `ScriptText`
       The script block text, which is useful for inspection and debugging.
+
+    - `ImportModule`
+      The capture module the script ran in. The module also records that
+      capture module, with the script's path and tier, when it creates it,
+      and `Register-Completer` recognises an imported script block by that
+      record alone, never by the `ImportModule`, `SourcePath`, or `Trusted`
+      property of the object you pipe to it. Importing and registering the
+      same script again under the same tier is therefore a no-op, while a
+      script block that is not the import's own, such as a closure made from
+      it with `GetNewClosure()`, is a different completer and replaces the
+      registration only with `-Force`.
 
 SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 

@@ -143,6 +143,11 @@ Supplies an object that describes the completer target, such as a record
 returned by `Get-Completer` or `Import-CompleterScript`. The object
 must expose `CommandName` with `IsNative`/`Native` or `ParameterName`, or a
 `Key`, `RegistrationKey`, or `RuntimeKey` together with `IsNative`/`Native`.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the registered target of its kind whose key it is, and it is
+rejected when the key belongs to more than one registered target, such as two
+names that differ only in a Kelvin sign (U+212A) and a letter K.
 
 ```yaml
 Type: System.Object[]

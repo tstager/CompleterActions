@@ -63,7 +63,9 @@ This cmdlet has the following aliases,
 Registers native or command-parameter argument completers with
 `Register-ArgumentCompleter` and records the registrations in the module's
 managed state. Existing managed or runtime registrations are preserved unless
-you use `-Force` to replace them.
+you use `-Force` to replace them. The one exception is a script block from a
+new instance of the module that registered the managed record, which replaces
+that record without `-Force`, as described below.
 
 Registering the same completer again for a target that is already managed is a
 no-op that returns the managed record, but only while that record is live,
@@ -76,22 +78,34 @@ The script block you register is the same completer as the managed record's
 when it is that very script block, or when its text is exactly the same,
 compared case sensitively, and it is bound to the same context. For the
 records `Import-CompleterScript` emits, the context is the script file and its
-tier, so importing and registering the same script again stays a no-op. A
-`ScriptPath` on an input object does not vouch for its script block: a script
-block that is not bound to the module `Import-CompleterScript` created for the
-script is compared by its own context. Only the completer's own text is
+tier, so importing and registering the same script again stays a no-op. The
+module recognises an imported script block by the capture module it recorded
+when `Import-CompleterScript` ran that script under that tier. A `ScriptPath`,
+`SourcePath`, or `ImportModule` property on an input object does not vouch for
+its script block, so any other script block, a closure of an imported one
+included, is compared by its own context. Only the completer's own text is
 compared, so after you edit other code in the script, such as a value it sets
 at the top, register it again with `-Force` to pick up the change. Script paths
 compare the way the file system does: ignoring case on Windows and macOS, and
 case sensitively elsewhere, where two paths that differ only in case are two
 scripts. For any other script block, the context is the file that defines it
-and the module instance the block is bound to. A module that is imported again
-and registers the same text from the same file binds it to its new instance,
-which holds its own state, so that registration replaces the record from the
-earlier instance without `-Force` and completion runs in the module that is
-loaded now. A closure created with `GetNewClosure()` is bound to a module of its
-own, so a second closure is a different completer even when its text is
-identical, and replacing the first one needs `-Force`.
+and the module instance the block is bound to. A closure created with
+`GetNewClosure()` is bound to a module of its own, so a second closure is a
+different completer even when its text is identical, and replacing the first
+one needs `-Force`.
+
+A script block bound to a different instance of a module with the same name,
+as after `Import-Module -Force` or from a second `New-Module` with that name, is
+not the same completer, because the new instance holds its own state, but it
+comes from the module that owns the managed record. When its text, compared
+case sensitively, the file that defines it, its `ScriptPath`, and its tier all
+equal the managed record's, it replaces the managed record and the runtime
+script block without `-Force`, so completion runs in the module that is loaded
+now. That holds even when the module is imported again with the same
+arguments: the registration replaces the record instead of being a no-op, and
+`-PassThru` returns the new record. A script block from a module with another
+name, or one that differs in text, file, `ScriptPath`, or tier, still needs
+`-Force`.
 
 A target is its kind and its runtime key, the name PowerShell stores the
 completer under, compared ordinally ignoring case as PowerShell compares it. A
@@ -244,6 +258,8 @@ Replaces an existing managed or runtime registration for the same target with
 the new completer, including a stale managed record whose live runtime value
 was changed outside this module and a `Failed` lazy record whose load should be
 retried; `Reset-Completer` retries that load without registering it again.
+A script block from a new instance of the module that registered the managed
+record replaces it without `-Force`; see the description.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter
@@ -275,6 +291,14 @@ records, are carried onto the managed record. `IsNative`, `Native`, and
 `Trusted` take a Boolean value or the text `True` or `False` in any letter
 case, as `Export-Csv` writes a Boolean. Empty text counts as `False`, and any
 other text is rejected.
+An `ImportModule` property is ignored: the managed record's `ImportModule` is
+the capture module `Import-CompleterScript` ran the script in, and only for a
+script block the import bound to it. `CommandName`, or `RuntimeKey`, names the
+target exactly. `Key` and `RegistrationKey` are folded to lowercase, so an
+object that has only one of them names the registered target of its kind whose
+key it is, and it is rejected when the key belongs to more than one registered
+target, such as two names that differ only in a Kelvin sign (U+212A) and a
+letter K.
 
 ```yaml
 Type: System.Object[]

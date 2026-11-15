@@ -21,13 +21,14 @@ CommandName, then ParameterName before -Skip and -First are applied, so paging
 across several calls stays stable while unrelated targets change; only a
 target that sorts before the current window can shift it. The command accepts
 arrays for command and parameter lookups, and records piped back from
-Get-Completer or Import-CompleterScript resolve through their Key and IsNative
-properties. Keys are output-only identifiers: a hand-typed key string is not
-accepted, so name the target with -CommandName plus -Native or -ParameterName
-instead. A key does not identify a target on its own: a native command whose
-name contains a colon, such as an alias named 'Get-Thing:Name', has the same
-key as the parameter target Get-Thing / Name. The two are separate
-registrations, and a lookup returns only the kind it names.
+Get-Completer or Import-CompleterScript resolve through their CommandName,
+ParameterName, and IsNative properties. Keys are output-only identifiers: a
+hand-typed key string is not accepted, so name the target with -CommandName
+plus -Native or -ParameterName instead. A key does not identify a target on
+its own: a native command whose name contains a colon, such as an alias named
+'Get-Thing:Name', has the same key as the parameter target Get-Thing / Name.
+The two are separate registrations, and a lookup returns only the kind it
+names.
 
 Discovery covers the two target kinds this module manages: command-parameter
 completers and native command completers. A completer registered with
@@ -44,6 +45,11 @@ object binds here. An input object describes one target: it exposes
 CommandName with IsNative/Native or ParameterName, or a Key, RegistrationKey,
 or RuntimeKey together with IsNative/Native. To look up several targets at
 once, pass arrays to -CommandName and -ParameterName instead.
+CommandName, or RuntimeKey, names the target exactly. Key and
+RegistrationKey are folded to lowercase, so an object that has only one of
+them names the registered target of its kind whose key it is, and it is
+rejected when the key belongs to more than one registered target, such as two
+names that differ only in a Kelvin sign (U+212A) and a letter K.
 
 .PARAMETER CommandName
 Limits results to one or more command names for native or command-parameter

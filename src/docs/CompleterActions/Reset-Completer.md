@@ -189,6 +189,11 @@ records from `Get-Completer`, `Register-Completer -PassThru`, or
 or ParameterName, or a Key, RegistrationKey, or RuntimeKey together with
 IsNative/Native. Each object is resolved on its own, so an object that cannot
 be resolved is reported and the rest are still reset.
+`CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
+`RegistrationKey` are folded to lowercase, so an object that has only one of
+them names the registered target of its kind whose key it is, and it is
+rejected when the key belongs to more than one registered target, such as two
+names that differ only in a Kelvin sign (U+212A) and a letter K.
 
 ```yaml
 Type: System.Object[]

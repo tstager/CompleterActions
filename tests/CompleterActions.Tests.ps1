@@ -2393,6 +2393,43 @@ function Register-TestIdentityProbeClosure
             Get-TestIdentityCompletion | Should -Be @('beta')
         }
 
+        It 'replaces the managed record without -Force when the module is imported again with the same arguments' {
+            $modulePath = Join-Path -Path $TestDrive -ChildPath 'TestIdentitySameArgument.psm1'
+            Set-Content -LiteralPath $modulePath -Encoding utf8 -Value @'
+param(
+    [string] $Value
+)
+
+$script:value = $Value
+
+function Register-TestIdentitySameArgument
+{
+    Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { $script:value } -PassThru
+}
+'@
+
+            try
+            {
+                $probe = Import-Module -Name $modulePath -ArgumentList 'alpha' -Force -PassThru
+                $first = Register-TestIdentitySameArgument
+
+                $reimportedProbe = Import-Module -Name $modulePath -ArgumentList 'alpha' -Force -PassThru
+                [object]::ReferenceEquals($reimportedProbe, $probe) | Should -BeFalse
+                $second = Register-TestIdentitySameArgument
+
+                [object]::ReferenceEquals($second, $first) | Should -BeFalse -Because 'the owner ruling has a new instance replace the record, not reuse it, even with the same arguments'
+                [object]::ReferenceEquals($second.ScriptBlock.Module, $reimportedProbe) | Should -BeTrue
+                [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $second.ScriptBlock) | Should -BeTrue -Because 'the runtime block is the new instance''s'
+                Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
+                Get-TestIdentityCompletion | Should -Be @('alpha')
+                [object]::ReferenceEquals((Register-TestIdentitySameArgument), $second) | Should -BeTrue -Because 'the instance that owns the record registering again is a no-op'
+            }
+            finally
+            {
+                Remove-Module -Name 'TestIdentitySameArgument' -Force -ErrorAction SilentlyContinue
+            }
+        }
+
         It 'replaces the record of an earlier instance of a module with the same name, and refuses equal text from a module with another name' {
             $makerBody = {
                 param(

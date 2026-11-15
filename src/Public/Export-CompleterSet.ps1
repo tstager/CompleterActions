@@ -62,6 +62,11 @@ and Native take a Boolean value or the text 'True' or 'False' in any letter
 case, as Export-Csv writes a Boolean, so rows read back with Import-Csv export
 with the tier and kind they were written with. Empty text counts as False, and
 any other text is rejected.
+CommandName, or RuntimeKey, names the target exactly. Key and
+RegistrationKey are folded to lowercase, so an object that has only one of
+them names the registered target of its kind whose key it is, and it is
+rejected when the key belongs to more than one registered target, such as two
+names that differ only in a Kelvin sign (U+212A) and a letter K.
 
 .PARAMETER PassThru
 Returns the written file.
