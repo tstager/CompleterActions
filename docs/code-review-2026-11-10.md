@@ -4,7 +4,7 @@
 - Version: 3.0.0
 - Scope: repository-wide, report only; no product-code or test changes
 - Review team: GPT-6 Astra at max reasoning, with independent validation by the coordinating agent
-- Status: eight confirmed, unresolved findings — one P1 and seven P2
+- Status: **four findings fixed on branch `fix/review-2026-11-10`, not yet merged to `main` or released; four still open** (CA-2026-11-02, -03, -05, -07). See Resolution.
 
 ## Assessment
 
@@ -24,6 +24,40 @@ Compilation, isolated packaging, and configured static analysis passed. The full
 | CA-2026-11-08 | P2 | The documented Markdown_templates task fails in a fresh process |
 
 P1 means a high-priority correction to a documented execution boundary. P2 means an actionable correctness or supported-workflow defect. Recommendations below describe remediation scope; none has been implemented by this review.
+
+## Resolution
+
+Four findings, including the P1, are fixed on branch `fix/review-2026-11-10`. That branch is **not merged to `main` and not released**. No version is bumped, because the owner picks the release version; the fixes are listed under `[Unreleased]` in CHANGELOG.md. Each finding went to a work package with an Opus implementer and adversarial Haiku reviewers, over repeated fix rounds. CA-2026-11-02 and CA-2026-11-03 shared one package. Four packages were accepted and merged into the branch. The other three were not accepted after three fix rounds, and their branches are not merged. The packaged module was regenerated once, after the merges (`f2c4e04`).
+
+| ID | Status | Fix | Commits |
+| --- | --- | --- | --- |
+| CA-2026-11-01 | Fixed, merge `4374f6f` | The literal target-array recognizer in `StrictGrammar` returns no array when the array's pipeline runs in the background or its command expression has a redirection. The argument then gets the existing literal-string-values finding, and default `Import-CompleterScript` refuses the script before it runs. Tests assert that a marker file stays byte-identical for the `2>`, `>`, `*>`, `>>`, colon-bound, and `-ParameterName` forms. The fix commit says that `@('x' &)` started a job at import. That did not reproduce on 7.7.0, where the array yields its string and starts no job, so `cd248b7` corrects the source comment. | `83a87d2`, `cd248b7` |
+| CA-2026-11-02 | Open | The fix attempt on `r11/WP02` (`49111d0`), shared with CA-2026-11-03, was not accepted and is not merged. | — |
+| CA-2026-11-03 | Open | Shares the `r11/WP02` attempt above. | — |
+| CA-2026-11-04 | Fixed, merge `d02a7c3` | `Export-CompleterSet` decides in `begin`, from `MyInvocation.ExpectingInput` or a bound `-InputObject`, whether input was requested. When input was requested and no record arrives, it warns and writes nothing. `-InputObject` drops `[ValidateNotNull()]`, so a null is skipped. The command help and `about_Completer_Sets` say which calls export everything. | `9698e88`, `bfd4dc5`, `8d31ca5` |
+| CA-2026-11-05 | Open | The fix attempt on `r11/WP05` (`9af3ea6`), a 1 MB size bound with `-SkipLimitCheck`, was not accepted and is not merged. | — |
+| CA-2026-11-06 | Fixed, merge `2cac06f` | These generators now call `ConvertTo-CompleterSingleQuotedText`, which escapes U+0027, U+2018, U+2019, U+201A, and U+201B: the set exporter's `Path`, `CommandName`, and `ParameterName` lines, `New-CompleterLazyStub`, the benchmark's `ConvertTo-SingleQuoted`, and the build's `RequiredAssemblies` line. | `b389016`, `8bf7941`, `4e5d6f3`, `a94278e` |
+| CA-2026-11-07 | Open | The fix attempt on `r11/WP07` (`8e77e78`) was not accepted and is not merged. On this branch the packaged commands still show their source comment help. | — |
+| CA-2026-11-08 | Fixed, merge `e9869a8` | `Markdown_templates` depends on `compile` and runs `New-MarkdownCommandHelp` in a child `pwsh -NoProfile` that imports the source manifest. The build process therefore never loads or locks the core. README describes the task. | `f4c760e`, `bcd960c` |
+
+Documented behaviour changes:
+
+- A strict script whose literal target array carries any redirection or a trailing `&` is now refused even when the array writes nothing, as with `@('tool' 2>&1)` or `@('tool' 2> $null)`. This applies under `Register-Completer -Lazy` too. None of the 175 PS_Completers scripts uses such an array.
+- `Export-CompleterSet` called after a pipe or with `-InputObject` no longer falls back to every managed registration. A forwarding wrapper called with no input now warns and writes nothing.
+- `-InputObject @($null, $record)` now exports the record instead of failing parameter binding.
+
+Integration checks were run on the branch head, on Windows with PowerShell 7.7.0 and Pester 6.1.0, each in a fresh profile-free process:
+
+- `Invoke-Build -Task build`: 4 tasks, 0 errors, 0 warnings. The MAML under `src/docs` needed no change.
+- Full suite, with the PowerShell directory first on `PATH`: 689 passed, 3 failed, 8 skipped (700). The three failures are the known CompleterScaffold WhatIf cases, which also fail on `bf653d8`.
+- PSScriptAnalyzer: 0 findings in each of `src`, `tests`, and `tools`.
+- The built package imports with 11 functions, loads the core from its own `lib/`, and keeps 11 functions on a repeated import.
+- PS_Completers conformance gate (`357587c`) against the built package: 322 passed, 0 failed.
+- Each fixed finding's reproduction was run against the built package, or for CA-2026-11-08 against an archive copy of the head. Each is fixed there, and each still reproduces on the `bf653d8` package.
+
+How the gate was run matters. It re-imports CompleterActions by name with `-MinimumVersion`, which resolves through `PSModulePath` instead of reusing a copy imported by path. The run therefore put the package's parent folder first on `PSModulePath`. Without that, the installed 3.0.0 loads beside the package. With this branch's changed core, that load fails with `A different copy of assembly 'CompleterActions.Core' is already loaded`, and every `Completers.Tests.ps1` case fails. With an identical core, the gate silently tests the installed copy instead.
+
+Not run here: PowerShell 7.4, 7.5, 7.6, preview, and Linux. CI on the pull request is the first run on those legs.
 
 ## Method and coverage
 
