@@ -11,7 +11,9 @@ entry and the file system, never the session's registrations, so its result
 does not depend on what is registered. A Path that is not fully qualified, a
 drive-relative form such as C:scripts\x.ps1 included, resolves against the
 set file's directory rather than the current location. Trusted defaults to
-false. Trusted entries must declare Targets because the script is not parsed.
+false. Trusted, and a target's Native, must be $true or $false: text or a
+number is an InvalidEntry problem rather than read as one kind or the other.
+Trusted entries must declare Targets because the script is not parsed.
 Strict entries must register their targets with literal arguments so the
 targets can be derived from the parsed script and, when the entry also
 declares Targets, the two lists must match. Without -Verify the strict import
@@ -201,9 +203,18 @@ function Resolve-CompleterSetEntry
                         continue
                     }
 
+                    # Native decides the target's kind, so it is held to a Boolean as
+                    # Trusted is: comparing it with $true would read the text 'True' and
+                    # the number 1 as native, and 'False' or 'nope' as a parameter target.
+                    if ($targetEntry.Contains('Native') -and $targetEntry['Native'] -isnot [bool])
+                    {
+                        $problems.Add(@{ Kind = 'InvalidEntry'; Message = "Target '$commandName' must set Native to `$true or `$false." })
+                        continue
+                    }
+
                     try
                     {
-                        if ($targetEntry.Contains('Native') -and $targetEntry['Native'] -eq $true)
+                        if ($targetEntry.Contains('Native') -and $targetEntry['Native'])
                         {
                             Resolve-CompleterTarget -CommandName $commandName -Native
                         }

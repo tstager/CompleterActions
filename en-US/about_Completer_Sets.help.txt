@@ -93,6 +93,8 @@ THE SET FILE SCHEMA
       The completer targets the script registers. Each target is a hashtable
       with `CommandName` and either `Native = $true` for a native command
       completer or `ParameterName` for a command parameter completer.
+      `Native` is the Boolean `$true` or `$false`: the text 'True' or
+      'False', or a number, is rejected rather than read as either kind.
       `Targets` is required for trusted entries and optional for strict
       entries; see the next section for why.
 
@@ -155,7 +157,7 @@ VALIDATION BEFORE REGISTRATION
     - the file exists and is a `.ps1` script
     - `Trusted`, when present, is `$true` or `$false`
     - each target has a `CommandName` and either `Native = $true` or a
-      `ParameterName`
+      `ParameterName`, and its `Native`, when present, is `$true` or `$false`
     - trusted entries declare `Targets`
     - strict entries expose literal targets that can be derived without
       running the script

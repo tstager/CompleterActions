@@ -2410,6 +2410,7 @@ Describe 'Completer sets with a native command that shares a parameter target ke
         $script:SetIdentityCleanupTargets = @(
             @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; CompleterType = 'Parameter' }
             @{ CommandName = 'Test-SetIdentityTool:Name'; CompleterType = 'Native' }
+            @{ CommandName = 'Test-SetIdentityTool'; CompleterType = 'Native' }
         )
 
         $script:SetIdentityNativeText = @'
@@ -2487,5 +2488,26 @@ Register-ArgumentCompleter -CommandName 'Test-SetIdentityTool' -ParameterName 'N
         $imported = @(Import-CompleterSet -LiteralPath $setPath)
 
         @($imported | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Native/Pending', 'Parameter/Pending')
+    }
+
+    It 'rejects a target whose Native is <Case> instead of reading it as either kind' -TestCases @(
+        @{ Case = 'the text nope'; NativeText = "'nope'" }
+        @{ Case = 'the text False'; NativeText = "'False'" }
+        @{ Case = 'the text True'; NativeText = "'True'" }
+        @{ Case = 'the number 1'; NativeText = '1' }
+    ) {
+        $parameterPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity_parameter_completer.ps1'
+        $setPath = Join-Path -Path $script:SetIdentityRoot -ChildPath 'identity.psd1'
+        Set-Content -LiteralPath $parameterPath -Value $script:SetIdentityParameterText -Encoding utf8
+        Write-TestCompleterSet -Path $setPath -Entry "@{ Path = 'identity_parameter_completer.ps1'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; Native = $NativeText } ) }"
+
+        { Import-CompleterSet -LiteralPath $setPath } | Should -Throw "*Entry 1 ('identity_parameter_completer.ps1'): Target 'Test-SetIdentityTool' must set Native to `$true or `$false.*"
+        @(Get-Completer -CommandName 'Test-SetIdentityTool' -ParameterName 'Name') | Should -BeNullOrEmpty
+        @(Get-Completer -CommandName 'Test-SetIdentityTool' -Native) | Should -BeNullOrEmpty
+
+        Write-TestCompleterSet -Path $setPath -Entry "@{ Path = 'identity_parameter_completer.ps1'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-SetIdentityTool'; ParameterName = 'Name'; Native = `$false } ) }"
+        $imported = @(Import-CompleterSet -LiteralPath $setPath)
+
+        @($imported | ForEach-Object { '{0}/{1}/{2}' -f $_.CompleterType, $_.RuntimeKey, $_.State }) | Should -Be @('Parameter/Test-SetIdentityTool:Name/Pending') -Because 'the Boolean $false with a ParameterName is a parameter target'
     }
 }
