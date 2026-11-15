@@ -72,11 +72,15 @@ for both its targets and its hash. When a trusted script cannot be read, its
 entry is written without a `Hash`, a warning names the script, and the export
 still succeeds.
 
-A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of one
-target each depending on the length of their paths, because
-`Import-CompleterSet` and `Test-CompleterSet` refuse a larger file. The command
-refuses, writing nothing, when the set it would write is larger; export the
-registrations as several sets instead.
+A set file can be at most 128 KB (131072 bytes), roughly 400 entries of one
+target each, fewer when their paths are long or they list several targets,
+because `Import-CompleterSet` and `Test-CompleterSet` refuse a larger file. The
+command measures the set it would write and refuses a larger one with an error
+that names its size and the limit, writing nothing, so an existing file is left
+unchanged; export the registrations as several sets instead. The limit also
+bounds the time a set takes to parse: a valid set at the limit parses in
+milliseconds, and a malformed one, which the command never writes, can take
+several seconds to refuse.
 
 ## EXAMPLES
 

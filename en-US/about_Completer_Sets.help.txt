@@ -34,14 +34,13 @@ LONG DESCRIPTION
     only and refuses expressions, so a set file cannot execute a completer
     script or anything else when it is read.
 
-    A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of
-    one target each depending on the length of their paths. Every entry is
-    checked before any is registered, so a set that large takes a few
-    seconds to import. The limit bounds the size of a set, not the time the
-    PowerShell parser takes to refuse a malformed one: the parser compares
-    each syntax error with every earlier one, so a file with tens of
-    thousands of errors, such as one key repeated on every line, can take
-    minutes to refuse.
+    A set file can be at most 128 KB (131072 bytes), roughly 400 entries of
+    one target each, fewer when their paths are long or they list several
+    targets. The limit also bounds the time a set takes to parse. A valid
+    set at the limit parses in milliseconds, but the time the PowerShell
+    parser takes to refuse a malformed file grows with the square of its
+    syntax errors, so a file at the limit that repeats one key on every
+    line, about 12,000 errors, can take several seconds to refuse.
 
     `Import-CompleterSet` and `Test-CompleterSet` measure a file by reading
     it, never more than one byte past the limit, so a symbolic link or a

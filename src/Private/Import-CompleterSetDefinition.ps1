@@ -9,7 +9,7 @@ completer script or anything else. The file must declare Version 1 and a
 non-empty Entries array; the entries themselves are validated one by one by
 Resolve-CompleterSetEntry.
 
-A set file that holds more than $script:CompleterSetMaxFileBytes (1 MB) is
+A set file that holds more than $script:CompleterSetMaxFileBytes (128 KB) is
 refused before it is read as data. Its size is measured by reading it, never
 more than one byte past the limit, because the size the file system reports
 is 0 for a Windows symbolic link, a procfs file, or a device, whatever a read
@@ -19,10 +19,13 @@ an exported set of a few hundred entries. The switch lifts only those limits
 and changes nothing else the reader accepts: an expression is still refused,
 and a script block literal still comes back as a ScriptBlock value that
 nothing runs. Export-CompleterSet refuses to write a set over the same size,
-so every set it writes reads back. The limit bounds the bytes read, not the
-parse time: the PowerShell parser compares each syntax error with every
-earlier one, so 20,000 repeated keys (200 KB) take about 20 seconds to refuse
-and a malformed file near the limit takes minutes.
+so every set it writes reads back.
+
+The limit bounds the bytes parsed and so the parse time. A valid set of 95 KB
+parsed in 11 milliseconds when the limit was set, but the time the PowerShell
+parser takes to refuse a malformed file grows with the square of its syntax
+errors: a file that repeats one key on every line took 0.4 seconds to refuse
+at 32 KB and 5.6 seconds at 128 KB, about 12,000 errors.
 
 Import-PowerShellDataFile opens the path again, so the measured file must
 return the same bytes to both reads. The measuring stream stays open until

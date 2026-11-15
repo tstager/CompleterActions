@@ -56,11 +56,15 @@ for both its targets and its hash. When a trusted script cannot be read, its
 entry is written without a `Hash`, a warning names the script, and the export
 still succeeds.
 
-A set file can be at most 1 MB (1048576 bytes), roughly 3,000 entries of one
-target each depending on the length of their paths, because
-`Import-CompleterSet` and `Test-CompleterSet` refuse a larger file. The command
-refuses, writing nothing, when the set it would write is larger; export the
-registrations as several sets instead.</maml:para>
+A set file can be at most 128 KB (131072 bytes), roughly 400 entries of one
+target each, fewer when their paths are long or they list several targets,
+because `Import-CompleterSet` and `Test-CompleterSet` refuse a larger file. The
+command measures the set it would write and refuses a larger one with an error
+that names its size and the limit, writing nothing, so an existing file is left
+unchanged; export the registrations as several sets instead. The limit also
+bounds the time a set takes to parse: a valid set at the limit parses in
+milliseconds, and a malformed one, which the command never writes, can take
+several seconds to refuse.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -924,7 +928,7 @@ grammar, then registers it. The imported records carry `Trusted` set to
 by hand, validates every entry up front, and then registers each valid entry's
 targets as managed registrations. The set is read with
 `Import-PowerShellDataFile`, which evaluates data only, and validation never
-executes a completer script. A set file that holds more than 1 MB (1048576
+executes a completer script. A set file that holds more than 128 KB (131072
 bytes) is refused before it is read as data, as `Export-CompleterSet` refuses
 to write one, and nothing from it is registered; split a larger set into
 several.
@@ -3271,12 +3275,18 @@ and a name that does not resolve fails the call.
 Every `-Path`, `-LiteralPath`, or `-Name` value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
 are written before the next set is read. A set that cannot be read, such as
-one without `Version = 1` or one larger than the 1 MB (1048576-byte) limit
+one without `Version = 1` or one larger than the 128 KB (131072-byte) limit
 that `Import-CompleterSet` also applies, stops the call with a terminating
 error after the findings of the earlier sets. A folder under a set's
 directory that cannot be read also stops the call with a terminating error,
 after that set's entry findings, because the scan for unlisted scripts would
-be incomplete.</maml:para>
+be incomplete.
+
+The size limit also bounds the time a set takes to parse. A valid set at the
+limit parses in milliseconds, but the time the PowerShell parser takes to
+refuse a malformed file grows with the square of its syntax errors, so a file
+at the limit that repeats one key on every line can take several seconds to
+refuse.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>

@@ -2315,12 +2315,16 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
     Context 'Reading completer set files' {
         BeforeAll {
-            $script:LargeSetScriptCount = 450
-            $script:LargeSetTargetNames = @(
-                foreach ($index in 1..$script:LargeSetScriptCount)
+            # The review's fixture: 385 strict scripts of one native target each, the first count whose exported
+            # set the data reader's default limits refused.
+            $script:LargeSetScriptCount = 385
+            $script:LargeSetTargetNames = @(foreach ($index in 1..$script:LargeSetScriptCount) { 'calargeset{0:d4}' -f $index })
+
+            # Hand-written entries past the default limits; their scripts do not exist.
+            $script:LargeSetFillerEntries = @(
+                foreach ($index in 1..1000)
                 {
-                    'calargeset{0:d4}' -f $index
-                    'calargeset{0:d4}.exe' -f $index
+                    "@{ Path = 'calargeset$($index)_completer.ps1'; Targets = @( @{ CommandName = 'calargeset$index'; Native = `$true } ) }"
                 }
             )
 
@@ -2354,10 +2358,9 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
                 {
                     $commandName = 'calargeset{0:d4}' -f $index
                     $scriptPath = Join-Path -Path $script:SetRoot -ChildPath "$($commandName)_completer.ps1"
-                    Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName '$commandName', '$commandName.exe' -ScriptBlock { 'ok' }" -Encoding utf8
+                    Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName '$commandName' -ScriptBlock { 'ok' }" -Encoding utf8
 
                     [pscustomobject] @{ CommandName = $commandName; IsNative = $true; ScriptPath = $scriptPath; Trusted = $false }
-                    [pscustomobject] @{ CommandName = "$commandName.exe"; IsNative = $true; ScriptPath = $scriptPath; Trusted = $false }
                 }
             )
 
@@ -2365,7 +2368,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
             { Import-PowerShellDataFile -LiteralPath $script:SetPath } | Should -Throw '*dynamic expressions*' -Because 'the set must exceed the default key and node limits for this test to cover them'
             @((Import-PowerShellDataFile -LiteralPath $script:SetPath -SkipLimitCheck).Entries).Count | Should -Be $script:LargeSetScriptCount
-            (Get-Item -LiteralPath $script:SetPath).Length | Should -BeLessThan 1MB
+            (Get-Item -LiteralPath $script:SetPath).Length | Should -BeLessOrEqual 128KB
 
             $registered = @(Import-CompleterSet -LiteralPath $script:SetPath)
 
@@ -2376,12 +2379,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
         It 'reads a large set as data and refuses the same set with an expression, without evaluating it' {
             $probePath = Join-Path -Path $script:SetRoot -ChildPath 'probe.txt'
-            $entries = @(
-                foreach ($index in 1..1000)
-                {
-                    "@{ Path = 'calargeset$($index)_completer.ps1'; Targets = @( @{ CommandName = 'calargeset$index'; Native = `$true } ) }"
-                }
-            )
+            $entries = $script:LargeSetFillerEntries
             Write-TestCompleterSet -Path $script:SetPath -Entry $entries
 
             $entryCount = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) @((Import-CompleterSetDefinition -LiteralPath $LiteralPath).Entries).Count } $script:SetPath
@@ -2427,6 +2425,22 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             (Get-Item -LiteralPath $atLimitPath).Length | Should -Be $setBytes -Because 'the export measures exactly the bytes it writes'
             Test-CompleterSet -LiteralPath $atLimitPath | Should -BeNullOrEmpty
             @(Import-CompleterSet -LiteralPath $atLimitPath).Key | Should -Be @('importfixture', 'importfixture.exe')
+        }
+
+        It 'refuses to export a set over 128 KB, naming its size, and leaves the destination unchanged' {
+            & (Get-Module -Name 'CompleterActions') { $script:CompleterSetMaxFileBytes } | Should -Be 131072
+
+            # A trusted entry takes its targets as given, so one script with 2,000 targets makes a set over the limit.
+            $scriptPath = Join-Path -Path $script:SetRoot -ChildPath 'caoverlimit_completer.ps1'
+            Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName 'caoverlimit' -ScriptBlock { 'ok' }" -Encoding utf8
+            $records = @(foreach ($index in 1..2000) { [pscustomobject] @{ CommandName = 'caoverlimit{0:d4}' -f $index; IsNative = $true; ScriptPath = $scriptPath; Trusted = $true } })
+            Set-Content -LiteralPath $script:SetPath -Value 'placeholder' -Encoding utf8
+
+            $thrown = { $records | Export-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message -match '^Failed to export completer set\. The set would be (\d+) bytes, larger than the 131072-byte limit for completer set files, so Import-CompleterSet could not read it\. Export the registrations as several sets\. Nothing was written\.$' | Should -BeTrue -Because $thrown.Exception.Message
+            [long] $Matches[1] | Should -BeGreaterThan 131072
+            Get-Content -LiteralPath $script:SetPath | Should -BeExactly 'placeholder'
         }
 
         It 'limits what it reads through a symbolic link to a set file' {

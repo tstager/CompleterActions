@@ -3,4 +3,4 @@ Assert-CompleterRuntimeCapability
 $null = Get-CompleterActionState
 $script:CompleterLazyLoadsInProgress = [System.Collections.Generic.HashSet[string]]::new()
 $script:CompleterHelpProbeTimeoutSeconds = 5
-$script:CompleterSetMaxFileBytes = 1MB
+$script:CompleterSetMaxFileBytes = 128KB
