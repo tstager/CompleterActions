@@ -27,9 +27,11 @@ as Get-CompleterImportModule finds it for the script block, ScriptPath, and
 tier, and it is null for any script block the import did not emit.
 
 IsNative, Native, and Trusted take a Boolean, a number, where zero is false,
-or the text 'True' or 'False' in any casing, as Export-Csv writes a Boolean,
-and a null value or empty text counts as false. Any other text is rejected: a cast to Boolean would turn the text
-'False' into true and select the other kind of target, or the trusted tier.
+or the text 'True' or 'False' in any casing, with or without white space
+around it, as Export-Csv writes a Boolean, and a null value, or text that is
+empty or only white space, counts as false. Any other text is rejected: a
+cast to Boolean would turn the text 'False' into true and select the other
+kind of target, or the trusted tier.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.

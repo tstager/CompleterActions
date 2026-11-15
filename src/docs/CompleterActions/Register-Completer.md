@@ -292,8 +292,9 @@ are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
 records, are carried onto the managed record. `IsNative`, `Native`, and
 `Trusted` take a Boolean value, a number, where zero is `False`, or the text
-`True` or `False` in any letter case, as `Export-Csv` writes a Boolean. A null
-value or empty text counts as `False`, and any other text is rejected.
+`True` or `False` in any letter case, with or without white space around it,
+as `Export-Csv` writes a Boolean. A null value, or text that is empty or only
+white space, counts as `False`, and any other text is rejected.
 An `ImportModule` property is ignored: the managed record's `ImportModule` is
 the capture module `Import-CompleterScript` ran the script in, and only for a
 script block the import emitted. `CommandName`, or `RuntimeKey`, names the
