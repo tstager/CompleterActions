@@ -1748,3 +1748,43 @@ Describe 'Removed surface' {
         }
     }
 }
+
+Describe 'Startup benchmark tool' {
+    # Code points keep this file ASCII. Each typographic quote alone, and all five together, must
+    # come back unchanged from the child script's literals.
+    It 'writes child scripts that parse back to paths holding <Name>' -ForEach @(
+        @{ Name = 'U+2018'; Codes = @(0x2018) }
+        @{ Name = 'U+2019'; Codes = @(0x2019) }
+        @{ Name = 'U+201A'; Codes = @(0x201A) }
+        @{ Name = 'U+201B'; Codes = @(0x201B) }
+        @{ Name = 'every single-quote character the tokenizer accepts'; Codes = @(0x0027, 0x2018, 0x2019, 0x201A, 0x201B) }
+    ) {
+        $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+        $toolPath = Join-Path -Path $repoRoot -ChildPath 'tools' -AdditionalChildPath 'Measure-CompleterStartup.ps1'
+
+        # The tool dot-sources the module's quoting helper; load it the same way, then
+        # define the tool's own quoting and child-script helpers from its source.
+        . (Join-Path -Path $repoRoot -ChildPath 'src' -AdditionalChildPath 'Private', 'ConvertTo-CompleterSingleQuotedText.ps1')
+        $toolAst = [System.Management.Automation.Language.Parser]::ParseFile($toolPath, [ref] $null, [ref] $null)
+        $helpers = @($toolAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in 'ConvertTo-SingleQuoted', 'ConvertTo-TimedScript' }, $false))
+        $helpers.Count | Should -Be 2
+
+        foreach ($helper in $helpers)
+        {
+            . ([scriptblock]::Create($helper.Extent.Text))
+        }
+
+        $quotes = -join @($Codes | ForEach-Object { [char] $_ })
+        $modulePath = Join-Path -Path $TestDrive -ChildPath "module $quotes" -AdditionalChildPath 'CompleterActions.psd1'
+        $setPath = Join-Path -Path $TestDrive -ChildPath "set $quotes" -AdditionalChildPath 'startup.psd1'
+
+        $childScript = ConvertTo-TimedScript -Module $modulePath -Body "Import-CompleterSet -LiteralPath $(ConvertTo-SingleQuoted -Value $setPath) -Force | Out-Null"
+
+        $parseErrors = $null
+        $childAst = [System.Management.Automation.Language.Parser]::ParseInput($childScript, [ref] $null, [ref] $parseErrors)
+
+        $parseErrors | Should -BeNullOrEmpty
+        $commands = @($childAst.FindAll({ param($node) $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -in 'Import-Module', 'Import-CompleterSet' }, $true))
+        @($commands | ForEach-Object { $_.CommandElements[2].Value }) | Should -BeExactly @($modulePath, $setPath)
+    }
+}
