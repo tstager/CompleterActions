@@ -450,18 +450,26 @@ task external_help {
     [System.IO.File]::WriteAllText($mamlFile.FullName, $mamlText, $settings.Encoding)
 }
 
-# Synopsis: Asserts that the tag on HEAD (if any) matches the source manifest ModuleVersion plus any Prerelease label
+# Synopsis: Asserts that the tag a GitHub Actions tag push publishes, or else the tag on HEAD (if any), matches the source manifest ModuleVersion plus any Prerelease label
 task release_check {
 
-    if (-not (Get-Command -Name git -ErrorAction SilentlyContinue)) {
-        throw "release_check: git is not available, so the HEAD tag cannot be compared with ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+    # A tag push publishes the tag that triggered it, which git describe need not select when HEAD carries several tags.
+    if ($env:GITHUB_REF_TYPE -eq 'tag') {
+        $tag = $env:GITHUB_REF_NAME
+        $tagSource = 'release event tag'
     }
+    else {
+        if (-not (Get-Command -Name git -ErrorAction SilentlyContinue)) {
+            throw "release_check: git is not available, so the HEAD tag cannot be compared with ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+        }
 
-    $headTag = git -C $PSScriptRoot describe --tags --exact-match 2>$null
+        $tag = git -C $PSScriptRoot describe --tags --exact-match 2>$null
+        $tagSource = 'HEAD tag'
 
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headTag)) {
-        Write-Build Yellow "release_check: HEAD is not tagged; ModuleVersion '$($sourceManifestData.ModuleVersion)' was not compared with a tag."
-        return
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tag)) {
+            Write-Build Yellow "release_check: HEAD is not tagged; ModuleVersion '$($sourceManifestData.ModuleVersion)' was not compared with a tag."
+            return
+        }
     }
 
     $expectedVersion = $sourceManifestData.ModuleVersion
@@ -473,11 +481,11 @@ task release_check {
 
     $expectedTag = "v$expectedVersion"
 
-    if ($headTag -ne $expectedTag) {
-        throw "release_check: HEAD tag '$headTag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
+    if ($tag -ne $expectedTag) {
+        throw "release_check: the $tagSource '$tag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
     }
 
-    Write-Build Green "release_check: HEAD tag '$headTag' matches the source manifest version '$expectedVersion'."
+    Write-Build Green "release_check: the $tagSource '$tag' matches the source manifest version '$expectedVersion'."
 }
 
 task Publish_build {
