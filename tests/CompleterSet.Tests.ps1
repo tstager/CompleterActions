@@ -342,6 +342,72 @@ Describe 'Completer sets' {
             $data.Entries[0].Targets[0].Native | Should -BeTrue
         }
 
+        It 'resolves a relative script path against the PowerShell location, not the process working directory' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $expectedHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $scriptPath
+
+            Push-Location -LiteralPath $scriptFolder
+
+            try
+            {
+                [System.Environment]::CurrentDirectory | Should -Not -Be $scriptFolder -Because 'Push-Location moves only the PowerShell location'
+
+                [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = 'Native.ps1'; Trusted = $true } |
+                    Export-CompleterSet -Path $script:SetPath -WarningVariable trustedWarnings -WarningAction SilentlyContinue
+
+                @($trustedWarnings).Count | Should -Be 0 -Because 'the trusted script exists at the PowerShell location and can be hashed'
+                $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+                $data.Entries[0].Path | Should -Be 'scripts/Native.ps1'
+                $data.Entries[0].Hash | Should -BeExactly $expectedHash
+
+                @(
+                    [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = 'Native.ps1' }
+                    [pscustomobject] @{ CommandName = 'importfixture.exe'; IsNative = $true; ScriptPath = (Join-Path -Path '..' -ChildPath 'scripts' -AdditionalChildPath 'Native.ps1') }
+                ) | Export-CompleterSet -Path $script:SetPath
+
+                $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+                @($data.Entries).Count | Should -Be 1 -Because 'both spellings name the same script once resolved'
+                $data.Entries[0].Path | Should -Be 'scripts/Native.ps1'
+                $data.Entries[0].Trusted | Should -BeFalse
+                $data.Entries[0].Hash | Should -BeExactly $expectedHash
+                @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            }
+            finally
+            {
+                Pop-Location
+            }
+        }
+
+        It 'refuses a relative script path that resolves outside the file system and writes nothing, and keeps a fully qualified one' {
+            # A rooted path such as /tmp/x is relative to the current drive, so the
+            # set path names the FileSystem provider while the location is Variable:.
+            $setPath = 'Microsoft.PowerShell.Core\FileSystem::{0}' -f $script:SetPath
+
+            Push-Location -LiteralPath 'Variable:\'
+
+            try
+            {
+                {
+                    [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = 'Native.ps1'; Trusted = $true } | Export-CompleterSet -Path $setPath
+                } | Should -Throw "*The script path 'Native.ps1' resolves to * on the Variable provider, not to a file system path.*"
+
+                Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+                [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; ScriptPath = $script:NativeFixturePath; Trusted = $true } | Export-CompleterSet -Path $setPath
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
+            $data.Entries[0].Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
+        }
+
         It 'refuses a strict subset registration that Import-CompleterSet could not read back and writes nothing' {
             $subset = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru
             $subset.State | Should -Be 'Pending'

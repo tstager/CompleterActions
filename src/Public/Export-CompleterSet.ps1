@@ -67,9 +67,12 @@ The path of the .psd1 file to write. The parent directory must exist.
 .PARAMETER InputObject
 Registration records to export. Each record must describe a target and expose
 the script it came from through a ScriptPath or SourcePath property. Records
-without a script path cannot be expressed in a set and are rejected. A null
-carries no record and is skipped, so -InputObject $null, like the output of a
-Get-Completer filter that matches nothing, selects nothing. Trusted, IsNative
+without a script path cannot be expressed in a set and are rejected. A script
+path that is not fully qualified is resolved against the current PowerShell
+location, as Push-Location sets it, and a path that resolves outside the file
+system is rejected. A null carries no record and is skipped, so
+-InputObject $null, like the output of a Get-Completer filter that matches
+nothing, selects nothing. Trusted, IsNative
 and Native take a Boolean value, a number, where zero is False, or the text
 'True' or 'False' in any letter case, with or without white space around it,
 as Export-Csv writes a Boolean, so rows read back with Import-Csv export with
@@ -182,7 +185,25 @@ function Export-CompleterSet
 
                     if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                     {
-                        $scriptPath = [System.IO.Path]::GetFullPath([string] $property.Value)
+                        $declaredPath = [string] $property.Value
+
+                        if ([System.IO.Path]::IsPathFullyQualified($declaredPath))
+                        {
+                            $scriptPath = [System.IO.Path]::GetFullPath($declaredPath)
+                            break
+                        }
+
+                        # Any other path is relative to the caller's PowerShell
+                        # location, which Push-Location moves without changing the
+                        # process working directory that GetFullPath would use.
+                        $provider = $null
+                        $scriptPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($declaredPath, [ref] $provider, [ref] $null)
+
+                        if ($provider.ImplementingType -ne [Microsoft.PowerShell.Commands.FileSystemProvider])
+                        {
+                            throw "The script path '$declaredPath' resolves to '$scriptPath' on the $($provider.Name) provider, not to a file system path."
+                        }
+
                         break
                     }
                 }
