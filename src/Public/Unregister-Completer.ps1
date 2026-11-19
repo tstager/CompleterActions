@@ -203,11 +203,11 @@ function Unregister-Completer
                     {
                         if ($registrationToRemove.IsManaged -and $null -ne $removedManagedRegistration)
                         {
-                            $PSCmdlet.WriteObject($removedManagedRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $removedManagedRegistration))
                         }
                         elseif ($null -ne $removedRuntimeRegistration)
                         {
-                            $PSCmdlet.WriteObject($removedRuntimeRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $removedRuntimeRegistration))
                         }
                     }
                 }

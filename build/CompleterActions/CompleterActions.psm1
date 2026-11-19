@@ -70,7 +70,10 @@ function Export-CompleterSet
                 return
             }
 
-            $entriesByPath = [ordered] @{}
+            # Group by script path the way the file system compares paths, so two
+            # scripts whose names differ only by case stay two entries on Linux.
+            $pathComparer = if ($IsWindows -or $IsMacOS) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+            $entriesByPath = [System.Collections.Specialized.OrderedDictionary]::new($pathComparer)
 
             foreach ($record in $records)
             {
@@ -82,7 +85,34 @@ function Export-CompleterSet
 
                     if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string] $property.Value))
                     {
-                        $scriptPath = [System.IO.Path]::GetFullPath([string] $property.Value)
+                        $declaredPath = [string] $property.Value
+
+                        if ([System.IO.Path]::IsPathFullyQualified($declaredPath))
+                        {
+                            $scriptPath = [System.IO.Path]::GetFullPath($declaredPath)
+                            break
+                        }
+
+                        # Any other path is relative to the caller's PowerShell
+                        # location, which Push-Location moves without changing the
+                        # process working directory that GetFullPath would use.
+                        $provider = $null
+                        $scriptPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($declaredPath, [ref] $provider, [ref] $null)
+
+                        if ($provider.ImplementingType -ne [Microsoft.PowerShell.Commands.FileSystemProvider])
+                        {
+                            throw "The script path '$declaredPath' resolves to '$scriptPath' on the $($provider.Name) provider, not to a file system path."
+                        }
+
+                        # The engine hands the part after a provider qualifier to the
+                        # provider unchanged, so a relative one resolves against the
+                        # process working directory instead of the PowerShell location.
+                        if ($PSCmdlet.SessionState.Path.IsProviderQualified($declaredPath) -and
+                            -not [System.IO.Path]::IsPathFullyQualified($declaredPath.Substring($declaredPath.IndexOf('::') + 2)))
+                        {
+                            throw "The script path '$declaredPath' is provider-qualified but not fully qualified, so PowerShell would resolve it against the process working directory rather than the PowerShell location. Drop the provider qualifier or give a fully qualified path."
+                        }
+
                         break
                     }
                 }
@@ -445,7 +475,9 @@ function Get-Completer
         }
 
         $endIndex = $startIndex + $itemsToEmit - 1
-        $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
+        # Active, Pending, and Failed records are the managed table's own objects,
+        # so the page is copied before it is written.
+        $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $registrations[$startIndex..$endIndex]), $true)
     }
 }
 
@@ -479,12 +511,48 @@ function Import-CompleterScript
 
             foreach ($resolvedPath in @(Resolve-CompleterScriptPath @pathParameters))
             {
-                if (-not $Trusted)
+                # The script is read once. The grammar validates the contents this
+                # command information holds and the capture module executes the same
+                # object, so a save between the two cannot run unvalidated code.
+                # GetCommand looks a path with wildcard characters up as a pattern and
+                # has no literal mode. Passing each '[', '*' and '?' as a class that
+                # matches only itself finds most paths exactly, but a backtick in the
+                # path defeats that form while the plain path then finds the file. So
+                # both forms are tried in turn, and only command information for the
+                # resolved file itself is accepted, never a sibling a pattern matched.
+                $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+                $scriptInfo = $null
+                $otherPath = $null
+                foreach ($lookupPath in @(($resolvedPath -replace '[\[*?]', '[$0]'), $resolvedPath))
                 {
-                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath
+                    $candidate = try { $ExecutionContext.InvokeCommand.GetCommand($lookupPath, [System.Management.Automation.CommandTypes]::ExternalScript) } catch { $null }
+                    if ($null -eq $candidate) { continue }
+                    if ([string]::Equals($candidate.Path, $resolvedPath, $pathComparison))
+                    {
+                        $scriptInfo = $candidate
+                        break
+                    }
+
+                    $otherPath = $candidate.Path
                 }
 
-                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath
+                if ($null -eq $scriptInfo)
+                {
+                    if ($null -ne $otherPath)
+                    {
+                        throw "The completer script path '$resolvedPath' resolves to the different file '$otherPath', so it was not loaded. Remove the backticks or wildcard characters from the path."
+                    }
+
+                    throw "The completer script '$resolvedPath' could not be loaded as a script file. Check that it still exists."
+                }
+
+                if (-not $Trusted)
+                {
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptInfo
+                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath -ParseResult $parseResult
+                }
+
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptInfo
 
                 foreach ($definition in $importSession.Definitions)
                 {
@@ -687,7 +755,7 @@ function Import-CompleterSet
                 $registrations = @(foreach ($entry in $confirmedEntries) { $entry.Registrations })
                 $conflicts = @(foreach ($entry in $confirmedEntries) { $entry.Conflicts })
 
-                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts -Snapshot $snapshot
+                Add-CompleterRegistration -Registration $registrations -Conflict $conflicts -Snapshot $snapshot | Copy-CompleterRegistration
             }
         }
         catch
@@ -1108,7 +1176,7 @@ function Register-Completer
 
                 if ($PassThru)
                 {
-                    $PSCmdlet.WriteObject($storedRegistration)
+                    $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $storedRegistration))
                 }
             }
         }
@@ -1274,7 +1342,7 @@ function Reset-Completer
 
                         if ($PassThru -and -not $WhatIfPreference)
                         {
-                            $PSCmdlet.WriteObject($managedRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $managedRegistration))
                         }
                     }
                     elseif ($PSCmdlet.ShouldProcess($runtimeKey, 'Reset completer registration'))
@@ -1292,7 +1360,7 @@ function Reset-Completer
 
                         if ($PassThru)
                         {
-                            $PSCmdlet.WriteObject($storedRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $storedRegistration))
                         }
                     }
                 }
@@ -1406,16 +1474,61 @@ function Test-CompleterRegistration
 
             $target = $resolvedTargets[0]
 
-            if ($null -eq (Find-RuntimeCompleterRegistration -Target $target))
+            $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $target
+
+            if ($null -eq $runtimeRegistration)
             {
                 throw "No runtime completer registration exists for '$($target.RuntimeKey)'. Register the completer before testing it."
             }
 
-            $completion = TabExpansion2 -InputScript $InputText -CursorColumn $resolvedCursorPosition
+            # TabExpansion2 reports what the engine completed, not which completer
+            # produced it, so the target's entry is fronted by an observer that
+            # records the target's own output. The observer puts the original
+            # entry back before it delegates, so the completer, including a lazy
+            # stub that checks it still owns its entry, runs as it would at the
+            # prompt. The engine keeps each CompletionResult in the completer's
+            # output collection and turns every other non-null item into one
+            # whose CompletionText is PSObject.ToString() of that item, so the
+            # observer records the same text and hands the collection back as
+            # is; re-emitting item by item would unroll an item that is itself
+            # a collection and change what the engine completes.
+            $runtime = Get-CompleterRuntime
+            $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+            $runtimeKey = $runtimeRegistration.RuntimeKey
+            $completerScriptBlock = $runtimeRegistration.ScriptBlock
+            $targetCompletionTexts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+            $observer = {
+                $dictionary[$runtimeKey] = $completerScriptBlock
+                $output = $completerScriptBlock.Invoke($args)
+
+                foreach ($item in $output)
+                {
+                    if ($null -ne $item)
+                    {
+                        $null = $targetCompletionTexts.Add($(if ($item -is [System.Management.Automation.CompletionResult]) { $item.CompletionText } else { $item.PSObject.ToString() }))
+                    }
+                }
+
+                $output
+            }.GetNewClosure()
+
+            $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey -Value $observer
+
+            try
+            {
+                $completion = TabExpansion2 -InputScript $InputText -CursorColumn $resolvedCursorPosition
+            }
+            finally
+            {
+                if ([object]::ReferenceEquals((Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey), $observer))
+                {
+                    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey -Value $completerScriptBlock
+                }
+            }
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition))
+                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition -FromTarget:$targetCompletionTexts.Contains($completionMatch.CompletionText)))
             }
         }
         catch
@@ -1698,11 +1811,11 @@ function Unregister-Completer
                     {
                         if ($registrationToRemove.IsManaged -and $null -ne $removedManagedRegistration)
                         {
-                            $PSCmdlet.WriteObject($removedManagedRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $removedManagedRegistration))
                         }
                         elseif ($null -ne $removedRuntimeRegistration)
                         {
-                            $PSCmdlet.WriteObject($removedRuntimeRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $removedRuntimeRegistration))
                         }
                     }
                 }
@@ -2459,9 +2572,17 @@ Drops one trailing .exe, .cmd, .bat, .ps1, or .com (compared
 case-insensitively) from the primary command name, splits the rest on every
 character that is not an ASCII letter or digit, upper-cases the first
 character of each part with the invariant culture, and joins the parts. 'rg'
-and 'rg.exe' give 'Rg', 'oh-my-posh' gives 'OhMyPosh', 'DSC' stays 'DSC', and
-'7z' gives '7z'. The script names $script:<Stem>CompletionCatalog and
-Complete-<Stem> after it.
+and 'rg.exe' give 'Rg', 'DSC' stays 'DSC', and '7z' gives '7z'. When the join
+dropped any character other than a trailing .exe, it is followed by '_' and
+the first eight lower-case hex digits of the SHA-256 of the UTF-8 name without
+a trailing .exe, so names that differ only in punctuation or suffix, such as
+'ca-tool' and 'ca_tool', or 'tool', 'tool.cmd', and 'tool.bat', do not share
+a stem: 'oh-my-posh' gives 'OhMyPosh_' and eight hex digits, and 'npm.cmd'
+gives 'Npm_' and eight hex digits. Only .exe is dropped without a hash,
+because a bare name registers its .exe form too. An empty
+join is returned as is, for ConvertTo-CompleterTargetName to reject. The
+script names $script:<Stem>CompletionCatalog and Complete-<Stem> after it, and
+dot-sourced scripts share one scope, so the stem must be distinct per command.
 
 .PARAMETER Name
 The primary command name, already checked by ConvertTo-CompleterTargetName.
@@ -2479,20 +2600,21 @@ function ConvertTo-CompleterScriptStem
         [string] $Name
     )
 
-    $baseName = $Name
-
-    foreach ($suffix in '.exe', '.cmd', '.bat', '.ps1', '.com')
-    {
-        if ($baseName.EndsWith($suffix, [System.StringComparison]::OrdinalIgnoreCase))
-        {
-            $baseName = $baseName.Substring(0, $baseName.Length - $suffix.Length)
-            break
-        }
-    }
+    # 'rg' registers rg.exe too, so only .exe names the same command as the bare name.
+    $identity = $Name -replace '(?i)\.exe\z', ''
+    $baseName = $Name -replace '(?i)\.(?:exe|cmd|bat|ps1|com)\z', ''
 
     $parts = [System.Text.RegularExpressions.Regex]::Split($baseName, '[^A-Za-z0-9]+') | Where-Object { $_.Length -gt 0 }
+    $stem = -join @($parts | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) })
 
-    -join @($parts | ForEach-Object { $_.Substring(0, 1).ToUpperInvariant() + $_.Substring(1) })
+    if ($stem.Length -eq 0 -or $stem.Length -eq $identity.Length)
+    {
+        return $stem
+    }
+
+    # Joining the parts drops the separators and the suffix, so 'ca-tool' and 'ca_tool', or 'tool' and 'tool.cmd', would share one stem.
+    $hash = [System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($identity))
+    '{0}_{1}' -f $stem, [System.Convert]::ToHexString($hash, 0, 4).ToLowerInvariant()
 }
 <#
 .SYNOPSIS
@@ -2604,6 +2726,68 @@ function ConvertTo-CompleterTargetName
     }
 
     $targetNames.ToArray()
+}
+<#
+.SYNOPSIS
+Copies a completer registration record so the copy can leave the module.
+
+.DESCRIPTION
+Returns a new CompleterRegistration instance with every property of the input
+record. The public commands emit these copies instead of the records stored in
+the managed registration table, so a caller that edits an emitted record never
+changes module state. The copy is shallow: ScriptBlock and ImportModule still
+reference the live script block and its module.
+
+.PARAMETER Registration
+The CompleterRegistration record to copy.
+
+.OUTPUTS
+CompleterActions.CompleterRegistration
+Returns a detached copy of each input record.
+
+.EXAMPLE
+PS> Find-ManagedCompleterRegistration -Target $target | Copy-CompleterRegistration
+
+Returns a copy of the managed record for a target that a caller may edit
+without changing the managed table.
+#>
+function Copy-CompleterRegistration
+{
+    [CmdletBinding()]
+    [OutputType('CompleterActions.CompleterRegistration')]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [ValidateNotNull()]
+        [CompleterActions.CompleterRegistration[]] $Registration
+    )
+
+    process
+    {
+        foreach ($record in $Registration)
+        {
+            $copy = [CompleterActions.CompleterRegistration]::new()
+            $copy.Key = $record.Key
+            $copy.RegistrationKey = $record.RegistrationKey
+            $copy.RuntimeKey = $record.RuntimeKey
+            $copy.CommandName = $record.CommandName
+            $copy.ParameterName = $record.ParameterName
+            $copy.IsNative = $record.IsNative
+            $copy.CompleterType = $record.CompleterType
+            $copy.TargetType = $record.TargetType
+            $copy.Source = $record.Source
+            $copy.State = $record.State
+            $copy.IsManaged = $record.IsManaged
+            $copy.IsRuntimeRegistered = $record.IsRuntimeRegistered
+            $copy.ScriptPath = $record.ScriptPath
+            $copy.Trusted = $record.Trusted
+            $copy.LoadError = $record.LoadError
+            $copy.ImportModule = $record.ImportModule
+            $copy.ScriptBlock = $record.ScriptBlock
+            $copy.ScriptText = $record.ScriptText
+
+            $copy
+        }
+    }
 }
 <#
 .SYNOPSIS
@@ -3510,10 +3694,17 @@ Uses PowerShell's parser to read a completer script from disk and returns the
 root AST, token stream, and parse errors so higher-level import helpers can
 validate the script shape before executing it in a controlled scope. Parse
 errors are returned on the result rather than thrown, so callers can report
-them as findings.
+them as findings. A file that cannot be read yields a single FileReadError.
 
 .PARAMETER LiteralPath
-The literal path to the completer script file.
+The literal path to the completer script file. Every extent in the result names
+it as its file, whether the text is read from disk or from Script.
+
+.PARAMETER Script
+The script's command information, already resolved from LiteralPath. When it is
+supplied, the text it reads and keeps is parsed instead of the file, so
+dot-sourcing the same object afterwards runs exactly the text that was parsed.
+Import-CompleterScript passes it so the grammar validates what executes.
 
 .OUTPUTS
 CompleterActions.CompleterScriptParseResult
@@ -3525,16 +3716,41 @@ function Get-CompleterScriptParseResult
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [ValidateNotNull()]
+        [System.Management.Automation.ExternalScriptInfo] $Script
     )
 
     $tokens = $null
     $parseErrors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseFile(
-        $LiteralPath,
-        [ref] $tokens,
-        [ref] $parseErrors
-    )
+    $ast = if (-not $PSBoundParameters.ContainsKey('Script'))
+    {
+        [System.Management.Automation.Language.Parser]::ParseFile($LiteralPath, [ref] $tokens, [ref] $parseErrors)
+    }
+    else
+    {
+        try
+        {
+            # Reading the ScriptContents property returns $null when the file cannot be read;
+            # calling its getter raises the read failure instead.
+            [System.Management.Automation.Language.Parser]::ParseInput($Script.get_ScriptContents(), $LiteralPath, [ref] $tokens, [ref] $parseErrors)
+        }
+        catch
+        {
+            # Report the failure exactly as ParseFile does: one FileReadError with no position.
+            $noPosition = [System.Management.Automation.Language.ScriptPosition]::new($null, 0, 0, $null)
+            $readError = [System.Management.Automation.Language.ParseError]::new(
+                [System.Management.Automation.Language.ScriptExtent]::new($noPosition, $noPosition),
+                'FileReadError',
+                ('The file could not be read: {0}.' -f $_.Exception.GetBaseException().Message)
+            )
+
+            [System.Management.Automation.Language.Parser]::ParseInput('', $LiteralPath, [ref] $tokens, [ref] $parseErrors)
+            $parseErrors = @($readError)
+        }
+    }
 
     [pscustomobject] [ordered] @{
         PSTypeName  = 'CompleterActions.CompleterScriptParseResult'
@@ -4286,7 +4502,9 @@ manifest Get-CompleterSetPackage found, in this order:
 - Error, per entry in set order: the entry's Path is fully qualified, or it
   resolves outside the module folder. The folder is compared with a trailing
   separator, case-insensitively on Windows and macOS and case-sensitively on
-  Linux. The finding points at the entry's Path value.
+  Linux. A relative Path that cannot be resolved has no location to compare,
+  and its InvalidEntry finding already reports it. The finding points at the
+  entry's Path value.
 - Error, per other .psd1 in the module folder in ordinal order of file name:
   Publish-PSResource can take that file as the manifest. The message names
   the module folder by its full path and the two files by name. The finding
@@ -4353,7 +4571,9 @@ function Get-CompleterSetPackageFinding
             continue
         }
 
-        if ([System.IO.Path]::IsPathFullyQualified($setEntry.DeclaredPath) -or -not $setEntry.Path.StartsWith($moduleBasePrefix, $pathComparison))
+        # Path is null when the entry's Path cannot be resolved, which its
+        # InvalidEntry finding already reports.
+        if ([System.IO.Path]::IsPathFullyQualified($setEntry.DeclaredPath) -or ($null -ne $setEntry.Path -and -not $setEntry.Path.StartsWith($moduleBasePrefix, $pathComparison)))
         {
             $entryExtent = $extents.Entries[$setEntry.Index - 1]
             $pathExtent = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryExtent.Extent }
@@ -4630,10 +4850,18 @@ captured script block is the script's own block rebound to the capture module,
 so helper functions and script state remain available later and the block
 keeps its source file: $PSScriptRoot and $PSCommandPath inside the completer
 name the script's directory and path, as they do when the script is
-dot-sourced.
+dot-sourced. Nothing the script defines is imported out of the capture module:
+New-Module would otherwise import its functions and exported aliases into this
+module, where a helper could replace a private command or the
+Register-ArgumentCompleter cmdlet.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
+
+.PARAMETER Script
+The script's command information. It is dot-sourced as it is, so the contents it
+has already read are what runs, under the same execution policy and #requires
+checks as dot-sourcing LiteralPath; the file is not read again.
 
 .OUTPUTS
 CompleterActions.CompleterScriptImportSession
@@ -4645,7 +4873,11 @@ function Import-CompleterScriptDefinition
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Management.Automation.ExternalScriptInfo] $Script
     )
 
     $importModule = $null
@@ -4653,10 +4885,10 @@ function Import-CompleterScriptDefinition
 
     try
     {
-        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -ArgumentList $LiteralPath -ScriptBlock {
+        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -Function @() -ArgumentList $Script -ScriptBlock {
             param(
                 [Parameter(Mandatory)]
-                [string] $ScriptPath
+                [System.Management.Automation.ExternalScriptInfo] $ScriptInfo
             )
 
             $script:CapturedCompleterDefinitions = [System.Collections.Generic.List[object]]::new()
@@ -4701,7 +4933,7 @@ function Import-CompleterScriptDefinition
                 }
             }
 
-            $null = @(. $ScriptPath)
+            $null = @(. $ScriptInfo)
         }
 
         $capturedDefinitions = @(& $importModule {
@@ -4800,8 +5032,25 @@ function Import-CompleterSetDefinition
     }
 
     $data = $dataFile.Data
+    $version = $data['Version']
 
-    if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
+    # -eq converts 1 to the type on its left, so $true or [char]1 would equal
+    # it and an array would be filtered rather than compared: only a number of
+    # one of these exact types is compared with 1. Text is compared ordinally,
+    # because string -eq is culture-aware and takes '1' followed by a
+    # zero-width space, or an Arabic-Indic one, as equal to '1'.
+    $numberTypes = [sbyte], [byte], [int16], [uint16], [int], [uint32], [long], [uint64], [single], [double], [decimal], [bigint]
+
+    $isVersionOne = if ($version -is [string])
+    {
+        [string]::Equals($version, '1', [System.StringComparison]::Ordinal)
+    }
+    else
+    {
+        $null -ne $version -and $version.GetType() -in $numberTypes -and $version -eq 1
+    }
+
+    if (-not $isVersionOne)
     {
         throw "Completer set '$($file.FullName)' must declare Version = 1."
     }
@@ -5111,7 +5360,10 @@ fails a record whose own load is still running.
 When anything in the load fails, the helper returns nothing, stores the error
 message on the managed record as LoadError with State Failed, and removes the
 runtime entry for the target, so the completion engine's default completion
-applies exactly as it would with no completer registered. No error reaches the
+applies exactly as it would with no completer registered. When the script
+replaced or removed the managed record for its own target before it failed,
+for example through Register-Completer -Force or Unregister-Completer, that
+newer state is left as it is and no failure is recorded. No error reaches the
 host. The helper never hooks key handlers, replaces TabExpansion2, or touches
 PSReadLine options.
 
@@ -5243,7 +5495,10 @@ function Invoke-CompleterLazyStub
 
         try
         {
-            if ($null -ne $registration)
+            # A trusted script can replace or remove its own target before it
+            # fails, so the failure is recorded only while the record this call
+            # loaded still owns the managed slot.
+            if ($null -ne $registration -and [object]::ReferenceEquals((Find-ManagedCompleterRegistration -Target $registration), $registration))
             {
                 $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $registration
 
@@ -5532,15 +5787,18 @@ The input text that was completed.
 .PARAMETER CursorPosition
 The cursor position within InputText at which completion ran.
 
+.PARAMETER FromTarget
+Indicates that the target's own completer produced the completion result.
+
 .OUTPUTS
 CompleterActions.CompletionMatch
 Returns a CompletionMatch instance for one completion result.
 
 .EXAMPLE
-PS> New-CompletionMatch -Target $target -CompletionResult $result -InputText 'git che' -CursorPosition 7
+PS> New-CompletionMatch -Target $target -CompletionResult $result -InputText 'git che' -CursorPosition 7 -FromTarget
 
-Creates the completion match record for one TabExpansion2 result against the
-resolved git native completer target.
+Creates the completion match record for one TabExpansion2 result that the
+resolved git native completer target produced.
 #>
 function New-CompletionMatch
 {
@@ -5562,7 +5820,10 @@ function New-CompletionMatch
 
         [Parameter(Mandatory)]
         [ValidateRange(0, [int]::MaxValue)]
-        [int] $CursorPosition
+        [int] $CursorPosition,
+
+        [Parameter()]
+        [switch] $FromTarget
     )
 
     [CompleterActions.CompletionMatch] @{
@@ -5578,6 +5839,7 @@ function New-CompletionMatch
         ListItemText   = $CompletionResult.ListItemText
         ResultType     = $CompletionResult.ResultType
         ToolTip        = $CompletionResult.ToolTip
+        FromTarget     = [bool] $FromTarget
     }
 }
 <#
@@ -6021,12 +6283,13 @@ ImportModule is the capture module Import-CompleterScript ran the script in,
 as Get-CompleterImportModule finds it for the script block, ScriptPath, and
 tier, and it is null for any script block the import did not emit.
 
-IsNative, Native, and Trusted take a Boolean, a number, where zero is false,
-or the text 'True' or 'False' in any casing, with or without white space
-around it, as Export-Csv writes a Boolean, and a null value, or text that is
-empty or only white space, counts as false. Any other text is rejected: a
-cast to Boolean would turn the text 'False' into true and select the other
-kind of target, or the trusted tier.
+IsNative, Native, and Trusted take a Boolean or switch value, a number, where
+zero is false, or the text 'True' or 'False' in any casing, with or without
+white space around it, as Export-Csv writes a Boolean, and a null value, or
+text that is empty or only white space, counts as false. Any other text, a
+collection, or any other kind of object is rejected: a cast to Boolean would
+turn the text 'False', or an array of False values, into true and select the
+other kind of target, or the trusted tier.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -6066,9 +6329,32 @@ function Resolve-CompleterInputObject
                 [object] $Value
             )
 
-            if ($Value -isnot [string])
+            if ($null -eq $Value)
+            {
+                return $false
+            }
+
+            if ($Value -is [bool] -or $Value -is [switch] -or $Value -is [System.Numerics.BigInteger])
             {
                 return [bool] $Value
+            }
+
+            $valueType = $Value.GetType()
+            $typeCode = [type]::GetTypeCode($valueType)
+
+            if (-not $valueType.IsEnum -and $typeCode -ge [System.TypeCode]::SByte -and $typeCode -le [System.TypeCode]::Decimal)
+            {
+                return [bool] $Value
+            }
+
+            if ($Value -isnot [string])
+            {
+                if ($Value -is [System.Collections.IEnumerable])
+                {
+                    throw "InputObject supplies a collection for $PropertyName, which takes a single Boolean value. Use True or False."
+                }
+
+                throw "InputObject supplies a value of type $($valueType.FullName) for $PropertyName, which is not a Boolean value. Use True or False."
             }
 
             if ([string]::IsNullOrWhiteSpace($Value))
@@ -6820,10 +7106,14 @@ of them at once. This is the static phase of a set import: it reads only the
 entry and the file system, never the session's registrations, so its result
 does not depend on what is registered. A Path that is not fully qualified, a
 drive-relative form such as C:scripts\x.ps1 included, resolves against the
-set file's directory rather than the current location. Trusted defaults to
-false. Trusted, and a target's Native, must be $true or $false: text or a
-number is an InvalidEntry problem rather than read as one kind or the other.
-Trusted entries must declare Targets because the script is not parsed.
+set file's directory rather than the current location. A Path the platform
+cannot resolve, one with a null character or one past the Windows length
+limit, is an InvalidEntry problem, the record's Path stays null, and no file
+check follows, so the set's other entries are still resolved. Trusted
+defaults to false. Trusted, and a target's Native, must be $true or $false:
+text or a number is an InvalidEntry problem rather than read as one kind or
+the other. Trusted entries must declare Targets because the script is not
+parsed.
 Strict entries must register their targets with literal arguments so the
 targets can be derived from the parsed script and, when the entry also
 declares Targets, the two lists must match. Without -Verify the strict import
@@ -6880,7 +7170,8 @@ The full path of the module folder the entry's script must stay inside.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
-Returns a record with Index, DeclaredPath, Path, Trusted, Targets,
+Returns a record with Index, DeclaredPath, Path (null when the entry has no
+Path or its Path cannot be resolved), Trusted, Targets,
 DeclaredHash (the entry's raw Hash value, or null), TargetSource (Trusted for
 a trusted entry, Hash for a strict entry that took the fast path, Parsed for
 a strict entry whose script was parsed, or null when neither applies),
@@ -6962,23 +7253,39 @@ function Resolve-CompleterSetEntry
         else
         {
             $declaredPath = [string] $Entry['Path']
-            $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+            try
             {
-                $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+                $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
             }
-            elseif (-not [System.IO.File]::Exists($resolvedPath))
+            catch [System.IO.PathTooLongException]
             {
-                $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
+                # Its message repeats the whole path, which the entry label already shows.
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'The Path is not a valid file path: it is longer than the platform allows.' })
             }
-            elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
+            catch [System.ArgumentException]
             {
-                $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The file '$resolvedPath' is not a .ps1 script." })
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The Path is not a valid file path: $($_.Exception.GetBaseException().Message)" })
             }
-            else
+
+            if ($null -ne $resolvedPath)
             {
-                $scriptIsUsable = $true
+                if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+                {
+                    $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+                }
+                elseif (-not [System.IO.File]::Exists($resolvedPath))
+                {
+                    $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
+                }
+                elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
+                {
+                    $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The file '$resolvedPath' is not a .ps1 script." })
+                }
+                else
+                {
+                    $scriptIsUsable = $true
+                }
             }
         }
 

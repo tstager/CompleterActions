@@ -60,13 +60,19 @@ Import-Module CompleterActions
 
 ### Import from the repository during development
 
+The source manifest loads `lib\CompleterActions.Core.dll`, which git does not track, so a fresh clone compiles it first. `compile` needs `Invoke-Build` and the dotnet SDK 8.0 or later; see [Build](#build).
+
 ```powershell
+Invoke-Build -Task compile
 Import-Module .\CompleterActions.psd1
 ```
 
 ### Import the built module output
 
+The packaged module loads `build\CompleterActions\lib\CompleterActions.Core.dll`, which git does not track either. The same `compile` step copies the assembly there too, so run it once per clone; skip it if you already ran it above, because it cannot overwrite an assembly that the current session has loaded. `build` is not needed here: it regenerates the tracked package and also needs the `Microsoft.PowerShell.PlatyPS` module.
+
 ```powershell
+Invoke-Build -Task compile
 Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```
 
@@ -277,7 +283,7 @@ Registration records use the `CompleterActions.CompleterRegistration` type and h
 
 `State` is a `CompleterActions.CompleterState` enum. It is `Active` for managed records whose stored script is the live runtime value and `Discovered` for live values that no managed record describes. If another caller replaces or removes a managed target with the built-in `Register-ArgumentCompleter`, the managed record becomes `Stale`: `Get-Completer` returns it alongside the live value as `Conflicted`, `Register-Completer` requires `-Force` to reconcile, and `Unregister-Completer` requires `-AllowUnmanaged` before it removes the live value together with the stale record. A lazy registration is `Pending` until its script loads on the first tab press; a strict script is checked against the grammar when it is registered, unless its set entry's `Hash` matches, and again at that load. If that load fails, the press returns no completions and default completion applies exactly as with no completer registered; the record becomes `Failed` with the message in `LoadError`, its runtime entry is removed, and `Register-Completer -Force` or `Reset-Completer` retries. `ScriptPath` names the completer script behind a lazy or imported registration. Lazy loading runs inside the ordinary completer call and never touches PSReadLine key handlers, `TabExpansion2`, or PSReadLine options.
 
-`Test-CompleterScript` returns `CompleterActions.CompleterScriptFinding` records shown as a list grouped by script path, with `Line`, `Column`, `Severity`, `Construct`, `Message`, and `Hint`. A conforming script returns nothing. `Test-CompleterRegistration` returns `CompleterActions.CompletionMatch` records shown as a table grouped by target key, with `CompletionText`, `ListItemText`, `ResultType`, and `ToolTip`.
+`Test-CompleterScript` returns `CompleterActions.CompleterScriptFinding` records shown as a list grouped by script path, with `Line`, `Column`, `Severity`, `Construct`, `Message`, and `Hint`. A conforming script returns nothing. `Test-CompleterRegistration` returns `CompleterActions.CompletionMatch` records shown as a table grouped by target key, with `CompletionText`, `ListItemText`, `ResultType`, `FromTarget`, and `ToolTip`. `FromTarget` is `$true` only for a match the target's own completer produced, not for one the engine returned without it, such as a fallback file name.
 
 Types: the four record types and the two enums are public .NET types in the `CompleterActions` namespace, compiled into `CompleterActions.Core.dll`, which the manifest loads through `RequiredAssemblies`: `CompleterActions.CompleterRegistration`, `CompleterActions.ImportedCompleterRegistration`, `CompleterActions.CompleterScriptFinding`, `CompleterActions.CompletionMatch`, `CompleterActions.CompleterState`, and `CompleterActions.CompleterType`. Once the module is imported their type literals resolve in any script, string properties without a value are `''`, and `PSTypeNames[0]` is the full type name the format file selects on:
 
@@ -370,6 +376,8 @@ git push origin main vX.Y.Z
 ```
 
 The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, and finally creates the GitHub release. The tag must equal `v` plus `ModuleVersion` or `release_check` throws before anything is published.
+
+A failed release can be rerun. `Publish_build` publishes nothing when the PowerShell Gallery already holds that exact version, prerelease label included, with the same files as `build\CompleterActions` (the manifest's `Generated on` date line aside), so the rerun continues to the GitHub release. When the published copy differs, `Publish_build` throws and names the differing files, because a published version cannot be replaced. `Invoke-Build -Task Publish_build -Repository <name>` targets another registered repository.
 
 ## Architecture notes
 

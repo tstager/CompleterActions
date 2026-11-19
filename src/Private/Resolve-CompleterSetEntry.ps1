@@ -10,10 +10,14 @@ of them at once. This is the static phase of a set import: it reads only the
 entry and the file system, never the session's registrations, so its result
 does not depend on what is registered. A Path that is not fully qualified, a
 drive-relative form such as C:scripts\x.ps1 included, resolves against the
-set file's directory rather than the current location. Trusted defaults to
-false. Trusted, and a target's Native, must be $true or $false: text or a
-number is an InvalidEntry problem rather than read as one kind or the other.
-Trusted entries must declare Targets because the script is not parsed.
+set file's directory rather than the current location. A Path the platform
+cannot resolve, one with a null character or one past the Windows length
+limit, is an InvalidEntry problem, the record's Path stays null, and no file
+check follows, so the set's other entries are still resolved. Trusted
+defaults to false. Trusted, and a target's Native, must be $true or $false:
+text or a number is an InvalidEntry problem rather than read as one kind or
+the other. Trusted entries must declare Targets because the script is not
+parsed.
 Strict entries must register their targets with literal arguments so the
 targets can be derived from the parsed script and, when the entry also
 declares Targets, the two lists must match. Without -Verify the strict import
@@ -70,7 +74,8 @@ The full path of the module folder the entry's script must stay inside.
 
 .OUTPUTS
 CompleterActions.CompleterSetEntry
-Returns a record with Index, DeclaredPath, Path, Trusted, Targets,
+Returns a record with Index, DeclaredPath, Path (null when the entry has no
+Path or its Path cannot be resolved), Trusted, Targets,
 DeclaredHash (the entry's raw Hash value, or null), TargetSource (Trusted for
 a trusted entry, Hash for a strict entry that took the fast path, Parsed for
 a strict entry whose script was parsed, or null when neither applies),
@@ -152,23 +157,39 @@ function Resolve-CompleterSetEntry
         else
         {
             $declaredPath = [string] $Entry['Path']
-            $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
 
-            if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+            try
             {
-                $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+                $resolvedPath = [System.IO.Path]::GetFullPath($declaredPath.Replace('\', '/'), $SetDirectory)
             }
-            elseif (-not [System.IO.File]::Exists($resolvedPath))
+            catch [System.IO.PathTooLongException]
             {
-                $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
+                # Its message repeats the whole path, which the entry label already shows.
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = 'The Path is not a valid file path: it is longer than the platform allows.' })
             }
-            elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
+            catch [System.ArgumentException]
             {
-                $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The file '$resolvedPath' is not a .ps1 script." })
+                $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The Path is not a valid file path: $($_.Exception.GetBaseException().Message)" })
             }
-            else
+
+            if ($null -ne $resolvedPath)
             {
-                $scriptIsUsable = $true
+                if ($null -ne $moduleBasePrefix -and -not $resolvedPath.StartsWith($moduleBasePrefix, $pathComparison))
+                {
+                    $problems.Add(@{ Kind = 'OutsideModule'; Message = "the script '$resolvedPath' is outside the module '$ModuleName' at '$ModuleBase'" })
+                }
+                elseif (-not [System.IO.File]::Exists($resolvedPath))
+                {
+                    $problems.Add(@{ Kind = 'MissingScript'; Message = "The file '$resolvedPath' does not exist." })
+                }
+                elseif ([System.IO.Path]::GetExtension($resolvedPath) -ne '.ps1')
+                {
+                    $problems.Add(@{ Kind = 'InvalidEntry'; Message = "The file '$resolvedPath' is not a .ps1 script." })
+                }
+                else
+                {
+                    $scriptIsUsable = $true
+                }
             }
         }
 

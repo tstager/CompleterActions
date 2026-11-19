@@ -130,14 +130,19 @@ Describe 'Completer script skeleton' {
     It 'derives the stem <Stem> from <Name>' -TestCases @(
         @{ Name = 'rg'; Stem = 'Rg' }
         @{ Name = 'rg.exe'; Stem = 'Rg' }
-        @{ Name = 'cargo-binstall'; Stem = 'CargoBinstall' }
-        @{ Name = 'oh-my-posh'; Stem = 'OhMyPosh' }
+        @{ Name = 'cargo-binstall'; Stem = 'CargoBinstall_f8016b04' }
+        @{ Name = 'oh-my-posh'; Stem = 'OhMyPosh_f9e5f36d' }
+        @{ Name = 'ca-tool'; Stem = 'CaTool_8f74ce7e' }
+        @{ Name = 'ca-tool.exe'; Stem = 'CaTool_8f74ce7e' }
+        @{ Name = 'ca_tool'; Stem = 'CaTool_014e186e' }
+        @{ Name = '_a'; Stem = 'A_34fb7160' }
         @{ Name = 'DSC'; Stem = 'DSC' }
         @{ Name = '7z'; Stem = '7z' }
-        @{ Name = 'npm.cmd'; Stem = 'Npm' }
-        @{ Name = 'TOOL.BAT'; Stem = 'TOOL' }
-        @{ Name = 'x.ps1'; Stem = 'X' }
-        @{ Name = 'y.com'; Stem = 'Y' }
+        @{ Name = 'npm.cmd'; Stem = 'Npm_a04d41f6' }
+        @{ Name = 'TOOL.BAT'; Stem = 'TOOL_5bf9d4ff' }
+        @{ Name = 'x.ps1'; Stem = 'X_8cc8bc96' }
+        @{ Name = 'y.com'; Stem = 'Y_8746a35c' }
+        @{ Name = 'tool.cmd.exe'; Stem = 'ToolCmd_1e235eff' }
     ) {
         $actual = InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Name = $Name } -ScriptBlock {
             param($Name)
@@ -146,6 +151,19 @@ Describe 'Completer script skeleton' {
         }
 
         $actual | Should -BeExactly $Stem
+    }
+
+    It 'derives a distinct stem, ignoring case, for each name that differs only in punctuation or suffix' {
+        $names = 'catool', 'ca-tool', 'ca_tool', 'ca.tool', 'ca+tool', 'c-atool', 'cat-ool', 'g', 'g+', 'g++', 'a', '_a', 'tool', 'tool.cmd', 'tool.bat', 'tool.ps1', 'tool.com', 'tool.cmd.exe'
+
+        $stems = @(InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Names = $names } -ScriptBlock {
+                param($Names)
+
+                $Names | ForEach-Object { ConvertTo-CompleterScriptStem -Name $_ }
+            })
+
+        $stems.Count | Should -Be $names.Count
+        @($stems | Sort-Object -Unique).Count | Should -Be $names.Count
     }
 
     It 'doubles every single-quote character the tokenizer accepts' {
@@ -743,6 +761,48 @@ switch ($Case)
         }
     }
 
+    It 'completes each command from its own table when the scripts for <Names> are all dot-sourced' -TestCases @(
+        @{ Names = @('ca-tool', 'ca_tool'); Words = @('dashonly', 'underonly') }
+        @{ Names = @('tool', 'tool.cmd', 'tool.bat'); Words = @('exeonly', 'cmdonly', 'batonly') }
+    ) {
+        $paths = for ($index = 0; $index -lt $Names.Count; $index++)
+        {
+            $path = Join-Path -Path $script:CaseFolder -ChildPath ('{0}_completer.ps1' -f ($Names[$index] -replace '\.', '_'))
+            'Commands:', ('  {0}    Only {1} has this' -f $Words[$index], $Names[$index]) | New-CompleterScript -CommandName $Names[$index] -Path $path
+            $path
+        }
+
+        Test-CompleterScript -LiteralPath $paths | Should -BeNullOrEmpty
+
+        # A profile dot-sources each script into one scope; a runspace of its own keeps these registrations out of the test session.
+        $powershell = [powershell]::Create()
+        try
+        {
+            $null = $powershell.AddScript({
+                    param($Paths, $Names)
+
+                    foreach ($path in $Paths)
+                    {
+                        . $path
+                    }
+
+                    foreach ($name in $Names)
+                    {
+                        $inputText = '{0} ' -f $name
+                        (TabExpansion2 -inputScript $inputText -cursorColumn $inputText.Length).CompletionMatches.CompletionText -join '|'
+                    }
+                }).AddArgument([string[]] $paths).AddArgument([string[]] $Names)
+            $completions = @($powershell.Invoke())
+
+            $powershell.Streams.Error | Should -BeNullOrEmpty
+            $completions | Should -Be $Words
+        }
+        finally
+        {
+            $powershell.Dispose()
+        }
+    }
+
     It 'round-trips quotes and cleans control, format, separator, and escape characters in every tooltip' {
         $escape = [string] [char] 0x1B
         $quotes = 'Don{0}t {1}quote{2} {3}this{4} here' -f [char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B
@@ -1133,13 +1193,13 @@ switch ($Case)
         @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 0
     }
 
-    It 'writes Complete-A for the name _a, whose letter is outside any suffix' {
+    It 'writes Complete-A_34fb7160 for the name _a, whose letter is outside any suffix' {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'a_completer.ps1'
 
         New-CompleterScript -CommandName '_a' -Path $scriptPath -NoProbe
 
         $text = Get-Content -LiteralPath $scriptPath -Raw
-        $text | Should -BeLikeExactly '*function Complete-A {*'
+        $text | Should -BeLikeExactly '*function Complete-A_34fb7160 {*'
         $text | Should -BeLikeExactly "*-CommandName '_a', '_a.exe' -ScriptBlock*"
         Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
     }

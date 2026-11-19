@@ -9,7 +9,9 @@ manifest Get-CompleterSetPackage found, in this order:
 - Error, per entry in set order: the entry's Path is fully qualified, or it
   resolves outside the module folder. The folder is compared with a trailing
   separator, case-insensitively on Windows and macOS and case-sensitively on
-  Linux. The finding points at the entry's Path value.
+  Linux. A relative Path that cannot be resolved has no location to compare,
+  and its InvalidEntry finding already reports it. The finding points at the
+  entry's Path value.
 - Error, per other .psd1 in the module folder in ordinal order of file name:
   Publish-PSResource can take that file as the manifest. The message names
   the module folder by its full path and the two files by name. The finding
@@ -76,7 +78,9 @@ function Get-CompleterSetPackageFinding
             continue
         }
 
-        if ([System.IO.Path]::IsPathFullyQualified($setEntry.DeclaredPath) -or -not $setEntry.Path.StartsWith($moduleBasePrefix, $pathComparison))
+        # Path is null when the entry's Path cannot be resolved, which its
+        # InvalidEntry finding already reports.
+        if ([System.IO.Path]::IsPathFullyQualified($setEntry.DeclaredPath) -or ($null -ne $setEntry.Path -and -not $setEntry.Path.StartsWith($moduleBasePrefix, $pathComparison)))
         {
             $entryExtent = $extents.Entries[$setEntry.Index - 1]
             $pathExtent = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryExtent.Extent }

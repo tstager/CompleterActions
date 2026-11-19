@@ -72,6 +72,114 @@ Describe 'Module Manifest Tests' {
         $sourceVersion | Should -BeGreaterOrEqual $highestTagVersion
     }
 
+    Context 'release_check on a commit that carries two tags' {
+        BeforeAll {
+            # An annotated tag for the manifest version and a lightweight tag on the same commit: git describe selects
+            # the annotated one whichever tag the release event is for.
+            $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+            $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'release-check/CompleterActions'
+            New-Item -Path (Join-Path -Path $stagingRoot -ChildPath 'src') -ItemType Directory | Out-Null
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'), (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1') -Destination $stagingRoot
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath 'src/Private') -Destination (Join-Path -Path $stagingRoot -ChildPath 'src') -Recurse
+
+            $manifest = Import-PowerShellDataFile -Path (Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.psd1')
+            $manifestTag = "v$($manifest.ModuleVersion)"
+            if (-not [string]::IsNullOrWhiteSpace($manifest.PrivateData.PSData.Prerelease))
+            {
+                $manifestTag = "$manifestTag-$($manifest.PrivateData.PSData.Prerelease)"
+            }
+
+            $otherTag = 'v9999.0.0'
+            $gitAvailable = $null -ne (Get-Command -Name 'git' -ErrorAction SilentlyContinue)
+            if ($gitAvailable)
+            {
+                $identity = @('-c', 'user.name=release-check', '-c', 'user.email=release-check@example.invalid')
+                $null = git -C $stagingRoot init --quiet 2>&1
+                $null = git -C $stagingRoot @identity commit --quiet --allow-empty --message 'release check probe' 2>&1
+                $null = git -C $stagingRoot @identity tag --annotate $manifestTag --message 'release check probe' 2>&1
+                $null = git -C $stagingRoot tag $otherTag 2>&1
+            }
+
+            function Invoke-TestReleaseCheck
+            {
+                [CmdletBinding()]
+                param(
+                    [string] $EventTag
+                )
+
+                $savedType = $env:GITHUB_REF_TYPE
+                $savedName = $env:GITHUB_REF_NAME
+                try
+                {
+                    $env:GITHUB_REF_TYPE = $PSBoundParameters.ContainsKey('EventTag') ? 'tag' : 'branch'
+                    $env:GITHUB_REF_NAME = $PSBoundParameters.ContainsKey('EventTag') ? $EventTag : 'main'
+                    $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+                    $output = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' release_check" 2>&1) -join [Environment]::NewLine
+
+                    [pscustomobject] @{
+                        ExitCode = $LASTEXITCODE
+                        Output   = $output
+                    }
+                }
+                finally
+                {
+                    $env:GITHUB_REF_TYPE = $savedType
+                    $env:GITHUB_REF_NAME = $savedName
+                }
+            }
+        }
+
+        BeforeEach {
+            if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+            {
+                Set-ItResult -Skipped -Because 'InvokeBuild is not available to run release_check'
+            }
+
+            if (-not $gitAvailable)
+            {
+                Set-ItResult -Skipped -Because 'git is not available to tag the probe repository'
+            }
+        }
+
+        It 'fails for a release event tag that differs from the manifest version' {
+            $result = Invoke-TestReleaseCheck -EventTag $otherTag
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '$([regex]::Escape($otherTag))' does not match the source manifest version"
+        }
+
+        It 'fails for a release event tag that differs from the manifest version only in case' {
+            $caseVariantTag = $manifestTag.ToUpperInvariant()
+            $result = Invoke-TestReleaseCheck -EventTag $caseVariantTag
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -MatchExactly "release event tag '$([regex]::Escape($caseVariantTag))' does not match the source manifest version"
+        }
+
+        It 'fails for a release event tag that differs from the manifest version only by a zero-width space' {
+            # A culture-aware comparison ignores U+200B; the child's console encoding may not carry it, so the message is
+            # matched without the tag text.
+            $result = Invoke-TestReleaseCheck -EventTag "$manifestTag$([char] 0x200B)"
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '.+' does not match the source manifest version"
+        }
+
+        It 'passes for a release event tag that equals the manifest version' {
+            $result = Invoke-TestReleaseCheck -EventTag $manifestTag
+
+            $result.ExitCode | Should -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '$([regex]::Escape($manifestTag))' matches the source manifest version"
+        }
+
+        It 'compares the HEAD tag outside a tag push' {
+            $result = Invoke-TestReleaseCheck
+
+            $result.ExitCode | Should -Be 0 -Because $result.Output
+            $result.Output | Should -Match "HEAD tag '$([regex]::Escape($manifestTag))' matches the source manifest version"
+        }
+    }
+
     It 'keeps publish metadata populated in the built manifest' {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
@@ -959,6 +1067,127 @@ Describe 'Markdown_templates build task' {
         $expectedPages = @(@($exportedFunctions) + 'CompleterActions' | ForEach-Object { "$_.md" } | Sort-Object)
 
         @(Get-ChildItem -LiteralPath $stagedPagesRoot -Filter '*.md' -File | Select-Object -ExpandProperty Name | Sort-Object) | Should -Be $expectedPages
+    }
+}
+
+Describe 'Release workflow' {
+    BeforeAll {
+        # The release notes come from the literal block of the release step that reads CHANGELOG.md, so the
+        # test runs that block itself rather than a copy of its selection logic.
+        $workflowPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath '.github/workflows/release.yml'
+        $workflowLines = Get-Content -LiteralPath $workflowPath
+        $runBlocks = for ($index = 0; $index -lt $workflowLines.Count; $index++)
+        {
+            if ($workflowLines[$index] -notmatch '^\s*run: \|\s*$')
+            {
+                continue
+            }
+
+            $blockIndent = $null
+            $blockLines = for ($next = $index + 1; $next -lt $workflowLines.Count; $next++)
+            {
+                $line = $workflowLines[$next]
+                if ($line -match '^\s*$')
+                {
+                    ''
+                    continue
+                }
+
+                $lineIndent = $line.Length - $line.TrimStart().Length
+                $blockIndent ??= $lineIndent
+                if ($lineIndent -lt $blockIndent)
+                {
+                    break
+                }
+
+                $line.Substring($blockIndent)
+            }
+
+            $blockLines -join [Environment]::NewLine
+        }
+
+        $script:ReleaseNotesScript = @($runBlocks | Where-Object { $_ -match 'CHANGELOG\.md' })
+        $script:ReleaseNotesPwsh = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+        $script:ReleaseNotesChangelog = @(
+            '# Changelog'
+            ''
+            '## [Unreleased]'
+            ''
+            '## [3.0.10] - 2026-12-20'
+            ''
+            'Notes for 3.0.10.'
+            ''
+            '## [3.0.2-preview1] - 2026-12-01'
+            ''
+            'Notes for 3.0.2-preview1.'
+            ''
+            '## [3.0.1] - 2026-11-20'
+            ''
+            'Notes for 3.0.1.'
+            ''
+            '## [3.0.1-preview1] - 2026-11-14'
+            ''
+            'Notes for 3.0.1-preview1.'
+            ''
+            '## 2.9.10'
+            ''
+            'Notes for 2.9.10.'
+            ''
+            '## 2.9.2-rc1'
+            ''
+            'Notes for 2.9.2-rc1.'
+            ''
+            '## 2.9.1 - 2025-06-01'
+            ''
+            'Notes for 2.9.1.'
+            ''
+            '## 2.9.0'
+            ''
+            'Notes for 2.9.0.'
+        )
+    }
+
+    It 'has one run block that reads CHANGELOG.md' {
+        $script:ReleaseNotesScript.Count | Should -Be 1
+    }
+
+    It 'takes the notes for <Tag> only from the section whose heading names exactly that version' -TestCases @(
+        @{ Tag = 'v3.0.1'; Expected = 'Notes for 3.0.1.' }
+        @{ Tag = 'v3.0.1-preview1'; Expected = 'Notes for 3.0.1-preview1.' }
+        @{ Tag = 'v3.0.10'; Expected = 'Notes for 3.0.10.' }
+        @{ Tag = 'v2.9.0'; Expected = 'Notes for 2.9.0.' }
+        @{ Tag = 'v2.9.1'; Expected = 'Notes for 2.9.1.' }
+        @{ Tag = 'v2.9.10'; Expected = 'Notes for 2.9.10.' }
+        @{ Tag = 'v2.9.2-rc1'; Expected = 'Notes for 2.9.2-rc1.' }
+        @{ Tag = 'v2.9.2'; Expected = $null }
+        @{ Tag = 'v3.0.2'; Expected = $null }
+        @{ Tag = 'v3.0'; Expected = $null }
+    ) {
+        $checkoutRoot = Join-Path -Path $TestDrive -ChildPath "release-$Tag"
+        $runnerTemp = Join-Path -Path $checkoutRoot -ChildPath 'runner-temp'
+        New-Item -Path (Join-Path -Path $checkoutRoot -ChildPath 'build/CompleterActions'), $runnerTemp -ItemType Directory | Out-Null
+        Set-Content -LiteralPath (Join-Path -Path $checkoutRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') -Value '@{}'
+        Set-Content -LiteralPath (Join-Path -Path $checkoutRoot -ChildPath 'CHANGELOG.md') -Value $script:ReleaseNotesChangelog -Encoding utf8
+
+        $runOutput = @(& $script:ReleaseNotesPwsh -NoProfile -NonInteractive -Command {
+                param($CheckoutRoot, $RunnerTemp, $RefName, $StepScript)
+
+                $env:GITHUB_REF_NAME = $RefName
+                $env:RUNNER_TEMP = $RunnerTemp
+                Set-Location -LiteralPath $CheckoutRoot
+                & ([scriptblock]::Create($StepScript))
+            } -args $checkoutRoot, $runnerTemp, $Tag, $script:ReleaseNotesScript[0] *>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($runOutput -join [Environment]::NewLine)
+
+        $notesPath = Join-Path -Path $runnerTemp -ChildPath 'notes.md'
+        if ($null -eq $Expected)
+        {
+            $notesPath | Should -Not -Exist -Because 'a tag with no exactly matching heading must fall back to generated notes'
+        }
+        else
+        {
+            @(Get-Content -LiteralPath $notesPath | Where-Object { $_ -ne '' }) | Should -Be @($Expected)
+        }
     }
 }
 

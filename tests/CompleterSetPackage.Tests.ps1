@@ -1478,6 +1478,18 @@ finally
         $findings | Should -Be @(Get-TestOutsideFinding -SetPath $setPath -Index 1 -DeclaredPath $repositoryScriptPath)
     }
 
+    It 'reports InvalidEntry and no PackageLayout error for an entry whose Path has a null character' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $setText = (Get-Content -LiteralPath $setPath -Raw).Replace("'cafixalpha_completer/cafixalpha_completer.ps1'", '"cafixalpha_completer/cafix`0alpha_completer.ps1"')
+        Set-Content -LiteralPath $setPath -Value $setText -Encoding utf8 -NoNewline
+
+        $errors = @(Test-CompleterSet -LiteralPath $setPath | Where-Object -Property Severity -EQ -Value 'Error')
+
+        @($errors.Construct) | Should -Be @('InvalidEntry')
+        $errors[0].Message | Should -BeLike '*: The Path is not a valid file path: *'
+    }
+
     It 'fails with Failed to test completer set for <Case>' -TestCases @(
         @{ Case = 'a missing module'; Kind = 'Missing'; Names = @('CaFixtureSet', 'cafixmissing') }
         @{ Case = 'a wildcard name'; Kind = 'Wildcard'; Names = @('CaFixtureSet', 'CaFixture[S]et') }

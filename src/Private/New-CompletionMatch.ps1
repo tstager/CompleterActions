@@ -21,15 +21,18 @@ The input text that was completed.
 .PARAMETER CursorPosition
 The cursor position within InputText at which completion ran.
 
+.PARAMETER FromTarget
+Indicates that the target's own completer produced the completion result.
+
 .OUTPUTS
 CompleterActions.CompletionMatch
 Returns a CompletionMatch instance for one completion result.
 
 .EXAMPLE
-PS> New-CompletionMatch -Target $target -CompletionResult $result -InputText 'git che' -CursorPosition 7
+PS> New-CompletionMatch -Target $target -CompletionResult $result -InputText 'git che' -CursorPosition 7 -FromTarget
 
-Creates the completion match record for one TabExpansion2 result against the
-resolved git native completer target.
+Creates the completion match record for one TabExpansion2 result that the
+resolved git native completer target produced.
 #>
 function New-CompletionMatch
 {
@@ -51,7 +54,10 @@ function New-CompletionMatch
 
         [Parameter(Mandatory)]
         [ValidateRange(0, [int]::MaxValue)]
-        [int] $CursorPosition
+        [int] $CursorPosition,
+
+        [Parameter()]
+        [switch] $FromTarget
     )
 
     [CompleterActions.CompletionMatch] @{
@@ -67,5 +73,6 @@ function New-CompletionMatch
         ListItemText   = $CompletionResult.ListItemText
         ResultType     = $CompletionResult.ResultType
         ToolTip        = $CompletionResult.ToolTip
+        FromTarget     = [bool] $FromTarget
     }
 }

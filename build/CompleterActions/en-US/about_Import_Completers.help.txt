@@ -60,7 +60,7 @@ THE STRICT TIER
     Script scope may contain only:
 
     - `Set-StrictMode`
-    - function definitions
+    - function definitions, except `global:` ones
     - `if` statements whose conditions and bodies stay inside the grammar
       (typically a `Get-Variable` guard around a `$script:` assignment)
     - script-scope `Register-ArgumentCompleter` calls with literal arguments
@@ -137,13 +137,14 @@ HOW IMPORT-COMPLETERSCRIPT WORKS
 
     `Import-CompleterScript` performs four steps for each input file:
 
-    1. Resolve the input path to a single `.ps1` file.
-    2. In the strict tier, parse the file and validate it against the grammar.
-       Any finding stops the import before the script runs. The trusted tier
-       skips this step.
-    3. Execute the script inside a temporary module that shadows
+    1. Resolve the input path to a single `.ps1` file and read it once.
+    2. In the strict tier, parse the text that was read and validate it
+       against the grammar. Any finding stops the import before the script
+       runs. The trusted tier skips this step.
+    3. Execute that same text inside a temporary module that shadows
        `Register-ArgumentCompleter`, so the script can declare its completers
-       without modifying the live runtime tables.
+       without modifying the live runtime tables. The file is not read
+       again, so a save after the check cannot change what runs.
     4. Emit normalized import objects for each resolved target.
 
     A single `Register-ArgumentCompleter` call can produce more than one output
@@ -459,10 +460,16 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
       `.bat`, `.ps1`, or `.com`, so `-CommandName rg` registers `'rg',
       'rg.exe'` and `-CommandName npm.cmd` registers `'npm.cmd'`.
     - The first name gives the stem of the state variable and the function:
-      `cargo` gives `Cargo`, `cargo-binstall` gives `CargoBinstall`, and
-      `oh-my-posh` gives `OhMyPosh`. The script uses four-space indentation
-      and opening braces on the same line, as completer repositories
-      usually do.
+      `cargo` and `cargo.exe` give `Cargo`, and `7z` gives `7z`. A name with
+      any other character than an ASCII letter or digit, apart from a
+      trailing `.exe`, also gets `_` and eight hex digits of a hash of that
+      name: `oh-my-posh` gives `OhMyPosh_f9e5f36d`, `ca-tool` gives
+      `CaTool_8f74ce7e`, `ca_tool` gives `CaTool_014e186e`, and `npm.cmd`
+      gives `Npm_a04d41f6`, so `tool`, `tool.cmd`, and `tool.bat` get
+      three stems. Scripts
+      dot-sourced from a profile share one scope, so two commands must not
+      share a stem. The script uses four-space indentation and opening
+      braces on the same line, as completer repositories usually do.
 
     The guarantee
 
@@ -506,9 +513,16 @@ THE STRICT GRAMMAR
       scope qualifier such as `script:`, `local:`, or `global:`. A definition
       by any of those names shadows the built-in the grammar allows, and its
       body would run at import time.
+    - Do not define a helper function with the `global:` qualifier. The
+      definition runs at import time, so it would change the caller's
+      function table even if the body never runs. Unqualified, `script:`,
+      `local:`, and `private:` helpers stay inside the import scope.
     - Use only `-CommandName`, `-ParameterName`, the bare `-Native` switch, and
       `-ScriptBlock`, always by name. Positional arguments and splatting are
-      not supported.
+      not supported. Name each parameter once and follow `-CommandName`,
+      `-ParameterName`, and `-ScriptBlock` with their values: PowerShell
+      cannot bind a repeated parameter or one left without its value, so
+      `Test-CompleterScript` reports both.
     - Keep `-CommandName` and `-ParameterName` literal: a literal string, a
       literal string array, or a literal `@('tool', 'tool.exe')` expression.
       An array with a redirection or a trailing `&` inside it, such as
@@ -516,7 +530,9 @@ THE STRICT GRAMMAR
       redirection there would write a file while the script is imported.
       `Test-CompleterScript` reports it, and `Import-CompleterScript` and
       `Register-Completer -Lazy` refuse the script, even when the
-      redirection writes nothing.
+      redirection writes nothing. Every name must be non-empty:
+      PowerShell cannot bind an empty string, and the importer refuses a
+      blank name, so `Test-CompleterScript` reports `''` and `' '`.
     - Keep `-ScriptBlock` a literal `{ ... }` block, not a variable.
     - Move cache initialization, alias bootstrap, tool discovery, generated
       completion loading, and every other piece of setup into functions that
@@ -840,15 +856,28 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
 
            RuntimeKey: demo
 
-        CompletionText ListItemText ResultType     ToolTip
-        -------------- ------------ ----------     -------
-        alpha          alpha        ParameterValue alpha
+        CompletionText ListItemText ResultType     FromTarget ToolTip
+        -------------- ------------ ----------     ---------- -------
+        alpha          alpha        ParameterValue True       alpha
 
     That is the complete strict-tier script from above, imported, registered,
     and completing `demo a` to `alpha`. Against a real completer the table
     lists every match; for a registered git completer,
     `-InputText 'git che'` returns `checkout`, `cherry`, `cherry-pick`, and
     the other `che` subcommands.
+
+    The table lists every match the engine returned, and `FromTarget` tells
+    whether the target's own completer produced it. A match the engine
+    returned without it, from another completer because the input or the
+    cursor completes a different parameter or command, or from the engine's
+    file-name fallback when the completer returned nothing, shows
+    `FromTarget` as False. `demo R` in a folder that holds `README.md`
+    returns `.\README.md` that way. Assert on the matches whose `FromTarget`
+    is True:
+
+        $matches = Test-CompleterRegistration -CommandName demo -Native `
+            -InputText 'demo a' | Where-Object FromTarget
+        $matches.CompletionText | Should -Be 'alpha'
 
     Registration records pipe in directly, and `-CursorPosition` moves the
     cursor away from the end of the input when the completion depends on it:
@@ -863,9 +892,14 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
     One input text invokes one completer, so each call tests exactly one
     target: the command throws, naming the targets, when an array or a piped
     set of records resolves to more than one. The command also throws when the
-    target has no runtime registration, returns nothing when the completer
-    yields no matches, and never changes any registration or PSReadLine
-    state. Completion runs from the module's
+    target has no runtime registration and returns nothing when the engine
+    yields no matches. For the duration of the completion it puts an
+    observer in front of the target's runtime entry, which puts the original
+    entry back before the completer runs; it changes no registration
+    otherwise and never touches PSReadLine state. Because the completer
+    really runs, testing a `Pending` lazy registration loads it as the first
+    Tab press would, and it becomes `Active`, or `Failed` when the load
+    fails. Completion runs from the module's
     scope, so the commands in `-InputText` must be visible from the global
     scope, as they are in an interactive session.
 
@@ -972,6 +1006,9 @@ COMMON FINDINGS
       `Get-Variable`, or `Set-StrictMode`, with or without a scope qualifier
       such as `script:` or `global:`: rename the wrapper and call the
       built-in directly (shape 3).
+    - `FunctionDefinitionAst` with the `global:` qualifier, at script scope
+      or inside a guarded `if`: drop the qualifier so the helper stays
+      inside the import scope.
     - `VariableExpressionAst` as a `-ScriptBlock`, `-CommandName`, or
       `-ParameterName` value, or as a splatted argument: make the argument a
       literal (shape 3).

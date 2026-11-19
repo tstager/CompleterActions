@@ -79,7 +79,8 @@ registrations whose script failed to load, 'Stale' for managed records that no
 longer match the runtime, and 'Conflicted' for live runtime values that
 replaced a managed registration outside this module. ScriptPath names the
 completer script behind a lazy or imported registration and LoadError holds
-the failure message of a Failed record.
+the failure message of a Failed record. Each record is a copy: changing one
+does not change the registration, and two queries return distinct objects.
 
 .EXAMPLE
 PS> Get-Completer -CommandName 'git' -Native
@@ -288,6 +289,8 @@ function Get-Completer
         }
 
         $endIndex = $startIndex + $itemsToEmit - 1
-        $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
+        # Active, Pending, and Failed records are the managed table's own objects,
+        # so the page is copied before it is written.
+        $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $registrations[$startIndex..$endIndex]), $true)
     }
 }

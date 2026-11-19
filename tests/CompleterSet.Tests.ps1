@@ -211,6 +211,8 @@ namespace CompleterActionsTests
         @{ CommandName = 'HashFixture.exe'; CompleterType = 'Native' },
         @{ CommandName = 'setfixturealpha'; CompleterType = 'Native' },
         @{ CommandName = 'setfixturealpha.exe'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixturecaseupper'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixturecaselower'; CompleterType = 'Native' },
         @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'setfixtureprobe'; CompleterType = 'Native' },
         @{ CommandName = 'setfixtureextra'; CompleterType = 'Native' },
@@ -340,6 +342,108 @@ Describe 'Completer sets' {
             $data.Entries[0].Trusted | Should -BeTrue
             $data.Entries[0].Targets[0].CommandName | Should -Be 'importfixture'
             $data.Entries[0].Targets[0].Native | Should -BeTrue
+        }
+
+        It 'resolves a relative script path against the PowerShell location, not the process working directory' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $expectedHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $scriptPath
+
+            Push-Location -LiteralPath $scriptFolder
+
+            try
+            {
+                [System.Environment]::CurrentDirectory | Should -Not -Be $scriptFolder -Because 'Push-Location moves only the PowerShell location'
+
+                [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = 'Native.ps1'; Trusted = $true } |
+                    Export-CompleterSet -Path $script:SetPath -WarningVariable trustedWarnings -WarningAction SilentlyContinue
+
+                @($trustedWarnings).Count | Should -Be 0 -Because 'the trusted script exists at the PowerShell location and can be hashed'
+                $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+                $data.Entries[0].Path | Should -Be 'scripts/Native.ps1'
+                $data.Entries[0].Hash | Should -BeExactly $expectedHash
+
+                @(
+                    [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = 'Native.ps1' }
+                    [pscustomobject] @{ CommandName = 'importfixture.exe'; IsNative = $true; ScriptPath = (Join-Path -Path '..' -ChildPath 'scripts' -AdditionalChildPath 'Native.ps1') }
+                ) | Export-CompleterSet -Path $script:SetPath
+
+                $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+                @($data.Entries).Count | Should -Be 1 -Because 'both spellings name the same script once resolved'
+                $data.Entries[0].Path | Should -Be 'scripts/Native.ps1'
+                $data.Entries[0].Trusted | Should -BeFalse
+                $data.Entries[0].Hash | Should -BeExactly $expectedHash
+                @($data.Entries[0].Targets.CommandName | Sort-Object) | Should -Be @('importfixture', 'importfixture.exe')
+            }
+            finally
+            {
+                Pop-Location
+            }
+        }
+
+        It 'refuses a relative script path that resolves outside the file system and writes nothing, and keeps a fully qualified one' {
+            # A rooted path such as /tmp/x is relative to the current drive, so the
+            # set path names the FileSystem provider while the location is Variable:.
+            $setPath = 'Microsoft.PowerShell.Core\FileSystem::{0}' -f $script:SetPath
+
+            Push-Location -LiteralPath 'Variable:\'
+
+            try
+            {
+                {
+                    [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = 'Native.ps1'; Trusted = $true } | Export-CompleterSet -Path $setPath
+                } | Should -Throw "*The script path 'Native.ps1' resolves to * on the Variable provider, not to a file system path.*"
+
+                Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+                [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; ScriptPath = $script:NativeFixturePath; Trusted = $true } | Export-CompleterSet -Path $setPath
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            [System.IO.Path]::GetFullPath($data.Entries[0].Path, $script:SetRoot) | Should -Be $script:NativeFixturePath
+            $data.Entries[0].Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
+        }
+
+        It 'refuses a provider-qualified script path that is not fully qualified and writes nothing, and keeps a fully qualified one' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $expectedHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $scriptPath
+
+            Push-Location -LiteralPath $scriptFolder
+
+            try
+            {
+                # The engine resolves the part after the qualifier against the process
+                # working directory, so accepting it would name a different script.
+                foreach ($declaredPath in 'Microsoft.PowerShell.Core\FileSystem::Native.ps1', 'FileSystem::Native.ps1')
+                {
+                    {
+                        [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = $declaredPath; Trusted = $true } | Export-CompleterSet -Path $script:SetPath
+                    } | Should -Throw "*The script path '$declaredPath' is provider-qualified but not fully qualified*"
+                }
+
+                Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+                [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = ('FileSystem::{0}' -f $scriptPath); Trusted = $true } |
+                    Export-CompleterSet -Path $script:SetPath -WarningVariable trustedWarnings -WarningAction SilentlyContinue
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            @($trustedWarnings).Count | Should -Be 0
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $data.Entries[0].Path | Should -Be 'scripts/Native.ps1'
+            $data.Entries[0].Hash | Should -BeExactly $expectedHash
         }
 
         It 'refuses a strict subset registration that Import-CompleterSet could not read back and writes nothing' {
@@ -558,6 +662,65 @@ Describe 'Completer sets' {
             ($data.Entries | Where-Object { -not $_.Trusted }).Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
         }
 
+        It 'keeps two scripts whose names differ only by case as two entries and imports each target from its own script on a case-sensitive file system' {
+            if ($IsWindows -or $IsMacOS)
+            {
+                Set-ItResult -Skipped -Because 'two file names that differ only by case name one file on a case-insensitive file system'
+                return
+            }
+
+            $upperPath = Join-Path -Path $script:SetRoot -ChildPath 'Case_completer.ps1'
+            $lowerPath = Join-Path -Path $script:SetRoot -ChildPath 'case_completer.ps1'
+            Set-Content -LiteralPath $upperPath -Value "Register-ArgumentCompleter -Native -CommandName 'setfixturecaseupper' -ScriptBlock { 'upper' }" -Encoding utf8
+            Set-Content -LiteralPath $lowerPath -Value "Register-ArgumentCompleter -Native -CommandName 'setfixturecaselower' -ScriptBlock { 'lower' }" -Encoding utf8
+
+            @(Import-CompleterScript -LiteralPath $upperPath) + @(Import-CompleterScript -LiteralPath $lowerPath) | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 2 -Because 'the two names identify two files'
+            @($data.Entries.Path) | Should -BeExactly @('Case_completer.ps1', 'case_completer.ps1')
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @('setfixturecaseupper')
+            @($data.Entries[1].Targets.CommandName) | Should -BeExactly @('setfixturecaselower')
+
+            $imported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($imported.Key) | Should -BeExactly @('setfixturecaseupper', 'setfixturecaselower')
+            @($imported | ForEach-Object { Split-Path -Path $_.ScriptPath -Leaf }) | Should -BeExactly @('Case_completer.ps1', 'case_completer.ps1')
+
+            foreach ($case in @{ Name = 'setfixturecaseupper'; Result = 'upper' }, @{ Name = 'setfixturecaselower'; Result = 'lower' })
+            {
+                $inputScript = "$($case.Name) "
+                @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @($case.Result)
+            }
+        }
+
+        # Safety guard: export now groups script paths the way the file system compares
+        # them, and on a case-insensitive one two spellings of one file must stay one
+        # entry, so this passes before and after that change; its Linux sibling above
+        # fails before it.
+        It 'groups records for two spellings of one script path into one entry on a case-insensitive file system' {
+            if (-not ($IsWindows -or $IsMacOS))
+            {
+                Set-ItResult -Skipped -Because 'two file names that differ only by case name two files on a case-sensitive file system'
+                return
+            }
+
+            $path = Join-Path -Path $script:SetRoot -ChildPath 'case_completer.ps1'
+            $otherSpelling = Join-Path -Path $script:SetRoot -ChildPath 'CASE_COMPLETER.PS1'
+            Set-Content -LiteralPath $path -Value "Register-ArgumentCompleter -Native -CommandName 'setfixturecaseupper' -ScriptBlock { 'upper' }" -Encoding utf8
+            $records = @(
+                [pscustomobject] @{ CommandName = 'setfixturecaseupper'; IsNative = $true; ScriptPath = $path; Trusted = $true }
+                [pscustomobject] @{ CommandName = 'setfixturecaselower'; IsNative = $true; ScriptPath = $otherSpelling; Trusted = $true }
+            )
+
+            $records | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1 -Because 'both spellings name one file'
+            $data.Entries[0].Path | Should -BeExactly 'case_completer.ps1' -Because 'the first record names the entry'
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @('setfixturecaseupper', 'setfixturecaselower')
+        }
+
         It 'reads each strict script once for both its targets and its hash' {
             $records = @(Import-CompleterScript -Path $script:NativeFixturePath) +
                 @(Import-CompleterScript -Path $script:ParameterFixturePath) +
@@ -763,6 +926,8 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
                     'Only a call with no pipe before it and no -InputObject, such as the command on its own or as the first command of a pipeline, exports every managed registration that records a ScriptPath.'
                     'The command cannot see a pipe in front of a function or script block that calls it, so a wrapper must pass its input on, for example as $input | Export-CompleterSet'
                     'A null carries no record and is skipped, so -InputObject $null, like the output of a Get-Completer filter that matches nothing, selects nothing.'
+                    'A script path that is not fully qualified is resolved against the current PowerShell location, as Push-Location sets it, and a path that resolves outside the file system is rejected.'
+                    'A provider-qualified path, such as FileSystem::Native.ps1, is rejected unless it is fully qualified.'
                 ))
             {
                 $flatText | Should -Match ([regex]::Escape($expectedText))
@@ -1036,10 +1201,30 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
             foreach ($record in $second)
             {
-                [object]::ReferenceEquals($record, ($first | Where-Object -Property Key -EQ -Value $record.Key)) | Should -BeTrue
+                [object]::ReferenceEquals($record.ScriptBlock, ($first | Where-Object -Property Key -EQ -Value $record.Key).ScriptBlock) | Should -BeTrue
             }
 
             @(Get-Completer -State Active, Pending, Failed, Stale).Count | Should -Be 3
+        }
+
+        It 'returns records that can be edited without editing the managed records' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+            )
+
+            $imported = @(Import-CompleterSet -Path $script:SetPath)
+            $imported.Count | Should -Be 2
+
+            foreach ($record in $imported)
+            {
+                $record.State = 'Failed'
+                $record.ScriptPath = $script:ParameterFixturePath
+                $record.Trusted = $true
+            }
+
+            $records = @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native)
+            @($records | ForEach-Object { '{0}/{1}/{2}' -f $_.State, $_.Source, $_.Trusted }) | Should -Be @('Pending/Managed/False', 'Pending/Managed/False')
+            @($records.ScriptPath | Select-Object -Unique) | Should -Be @($script:NativeFixturePath)
         }
 
         It 'registers the valid entries and warns about the rest with -SkipInvalid' {
@@ -1065,6 +1250,37 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             @($warningText | Where-Object { $_ -match 'Entry 5' }).Count | Should -Be 0
 
             (Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').Source | Should -Be 'Managed'
+        }
+
+        It 'reports a Path that <Case> as an invalid entry and still registers the valid entry after it' -TestCases @(
+            @{ Case = 'has a null character'; PathText = '"bad`0name.ps1"'; Reason = 'The Path is not a valid file path: *'; WindowsOnly = $false }
+            @{ Case = 'is past the Windows length limit'; PathText = "'$('a' * 40000).ps1'"; Reason = 'The Path is not a valid file path: it is longer than the platform allows.'; WindowsOnly = $true }
+        ) {
+            param($Case, $PathText, $Reason, $WindowsOnly)
+
+            $null = $Case
+
+            if ($WindowsOnly -and -not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'only Windows limits the length of a full path'
+            }
+
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = $PathText; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+            )
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Match 'has 1 invalid entry and nothing was registered'
+            @($thrown.Exception.Message -split '\r?\n' | Select-Object -Skip 1) | Should -BeLike "Entry 1 (*): $Reason"
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningVariable warnings -WarningAction SilentlyContinue)
+
+            @($registered.Key) | Should -Be @('test-importedfixturetool:name')
+            @($warnings.Message) | Should -BeLike "Completer set '*' skipped Entry 1 (*): $Reason"
+            Get-Completer -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
         }
 
         It 'registers a trusted entry through the trusted tier when it declares its targets' {
@@ -1184,7 +1400,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             $registered = @(Import-CompleterSet -Path $script:SetPath)
 
             @($registered.Key) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
-            [object]::ReferenceEquals($registered[2], $existing) | Should -BeTrue
+            [object]::ReferenceEquals($registered[2].ScriptBlock, $existing.ScriptBlock) | Should -BeTrue
             @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
             @(Get-Completer -State Active, Pending, Failed, Stale).Count | Should -Be 4
         }
@@ -1528,7 +1744,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
             for ($index = 1; $index -lt $keys.Count; $index++)
             {
-                [object]::ReferenceEquals($after[$index].Managed, $first[$index]) | Should -BeTrue -Because "'$($keys[$index])' keeps the Pending record of the first import"
+                [object]::ReferenceEquals($after[$index].Managed.ScriptBlock, $first[$index].ScriptBlock) | Should -BeTrue -Because "'$($keys[$index])' keeps the Pending record of the first import"
                 [object]::ReferenceEquals($after[$index].Runtime, $first[$index].ScriptBlock) | Should -BeTrue -Because "'$($keys[$index])' keeps the stub of the first import"
                 $after[$index].Managed.State | Should -Be 'Pending'
             }
@@ -1700,6 +1916,47 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*has no Entries*'
 
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'rejects a Version of <Literal>, which equals 1 only by coercion' -TestCases @(
+            @{ Literal = '$true' }
+            @{ Literal = '@(1)' }
+            @{ Literal = '@(1, 1)' }
+            @{ Literal = '[char]1' }
+        ) {
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = $Literal; Entries = @( @{ Path = '$script:ParameterFixturePath' } ) }" -Encoding utf8
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*must declare Version = 1*'
+
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'rejects a Version of <Name>, which equals the text 1 only under culture-aware comparison' -TestCases @(
+            @{ Name = "'1' followed by U+200B"; Text = "1$([char]0x200B)" }
+            @{ Name = "'1' followed by U+00AD"; Text = "1$([char]0x00AD)" }
+            @{ Name = 'U+0661'; Text = [string] [char] 0x0661 }
+            @{ Name = 'U+00B9'; Text = [string] [char] 0x00B9 }
+            @{ Name = 'U+2460'; Text = [string] [char] 0x2460 }
+        ) {
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = '$Text'; Entries = @( @{ Path = '$script:ParameterFixturePath' } ) }" -Encoding utf8
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*must declare Version = 1*'
+
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
+        It 'accepts a Version of <Literal>, which is the number or text 1' -TestCases @(
+            @{ Literal = '1' }
+            @{ Literal = '1L' }
+            @{ Literal = '1uy' }
+            @{ Literal = '1.0' }
+            @{ Literal = '1d' }
+            @{ Literal = '1n' }
+            @{ Literal = "'1'" }
+        ) {
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = $Literal; Entries = @( @{ Path = '$script:ParameterFixturePath' } ) }" -Encoding utf8
+
+            @(Import-CompleterSet -Path $script:SetPath) | Should -HaveCount 1
         }
 
         It 'leaves PSReadLine key handlers unchanged across import, first tab, and export' {

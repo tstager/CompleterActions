@@ -38,10 +38,12 @@ that can be piped directly to `Register-Completer -InputObject`.
 The command has two tiers. The strict tier is the default: it validates the
 script against a closed grammar before executing it, rejects every unsupported
 construct with the same findings `Test-CompleterScript` reports, and avoids
-mutating the live runtime completer tables during import. The trusted tier,
-selected with `-Trusted`, skips the grammar and dot-sources the script as-is
-inside the same capture module, so use it only for scripts you wrote or
-reviewed. Imported script blocks preserve the temporary module context that
+mutating the live runtime completer tables during import. The script is read
+once and the validated text is the text that runs, so a save after the check
+cannot change what executes. The trusted tier, selected with `-Trusted`, skips
+the grammar and dot-sources the script as-is inside the same capture module, so
+use it only for scripts you wrote or reviewed. Imported script blocks preserve
+the temporary module context that
 contains any helper functions and script-scope state defined by the source
 script under either tier, and they keep the script as their source file, so
 `$PSScriptRoot` and `$PSCommandPath` inside a completer name the script's
@@ -58,7 +60,8 @@ remain importable through the strict tier without redesign. Run
   `using assembly`; they load code when the script is dot-sourced.
 - Keep script scope limited to:
   - `Set-StrictMode`
-  - function definitions
+  - function definitions without the `global:` qualifier, which would change
+    the caller's function table at import time
   - importer-safe `if` statements
   - script-scope `Register-ArgumentCompleter` calls
 - Do not use top-level assignments, loops, `try`/`catch`, alias bootstrap,
@@ -74,10 +77,15 @@ remain importable through the strict tier without redesign. Run
   - `-ScriptBlock`
 - Use explicit parameter names only. Positional registration arguments and
   argument splatting are not supported.
+- Name each parameter once, and give `-CommandName`, `-ParameterName`, and
+  `-ScriptBlock` a value. PowerShell cannot bind a repeated parameter or one
+  left without its value.
 - Keep target metadata literal:
   - `-CommandName` and `-ParameterName` may be a single literal string
   - a literal string array
   - or a literal `@('name', 'name.exe')` array expression
+  - and every name must be non-empty: an empty or blank name cannot be bound
+    or imported
 - Keep `-ScriptBlock` literal.
 - Keep `Register-ArgumentCompleter` calls at script scope, not inside nested
   functions or nested script blocks.

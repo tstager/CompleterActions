@@ -13,9 +13,8 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Full history including the tag object is load-bearing: release_check only
-      # compares HEAD's tag with ModuleVersion when HEAD is actually tagged, and
-      # warns instead of throwing when it is not.
+      # Full history including the tags is load-bearing: the release policy test in
+      # the Test step reads the local v* tags and skips itself when there are none.
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -36,6 +35,8 @@ jobs:
         shell: pwsh
         run: Invoke-Build -Task compile
 
+      # On a tag push release_check compares GITHUB_REF_NAME, the tag the release
+      # below is created for, not whichever tag git describe picks on HEAD.
       - name: Verify tag matches ModuleVersion
         shell: pwsh
         run: Invoke-Build -Task release_check
@@ -72,8 +73,10 @@ jobs:
               return
           }
 
+          # The whole heading version must match, so 3.0.1 selects neither 3.0.1-preview1 nor 3.0.10.
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $heading = "^##\s+\[?$([regex]::Escape($version))\]?"
+          $escapedVersion = [regex]::Escape($version)
+          $heading = "^##\s+(\[$escapedVersion\]|$escapedVersion)(\s|$)"
           $section = [System.Collections.Generic.List[string]]::new()
           $capture = $false
 

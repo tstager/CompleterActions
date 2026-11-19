@@ -112,6 +112,26 @@ Describe 'Test-CompleterScript' {
         $findings[1].Hint | Should -Match 'function that the completer calls lazily'
     }
 
+    It 'reports a <Block> block in a script with no end block and keeps checking later paths' -TestCases @(
+        @{ Block = 'begin' },
+        @{ Block = 'process' },
+        @{ Block = 'dynamicparam' },
+        @{ Block = 'clean' }
+    ) {
+        param(
+            [string] $Block
+        )
+
+        $namedBlockPath = Join-Path -Path $TestDrive -ChildPath ('{0}Only_completer.ps1' -f $Block)
+        Set-Content -LiteralPath $namedBlockPath -Value ('{0} {{ }}' -f $Block) -Encoding utf8
+        $nonConformingPath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'GuardedObjectStateCompleter.ps1'
+
+        $findings = @(Test-CompleterScript -LiteralPath $namedBlockPath, $nonConformingPath)
+
+        @($findings | Where-Object -Property Path -EQ -Value $namedBlockPath).Construct | Should -Be @('NamedBlockAst', 'ScriptBlockAst')
+        @($findings | Where-Object -Property Path -EQ -Value $nonConformingPath).Construct | Should -Be @('ConvertExpressionAst')
+    }
+
     It 'reports parse errors as findings without checking the grammar' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'ParseErrorCompleter.ps1'
         Set-Content -LiteralPath $scriptPath -Value 'function {' -Encoding utf8
@@ -143,6 +163,125 @@ Describe 'Test-CompleterScript' {
         $importError.Exception.Message | Should -Match ('Line {0}, column {1} \({2}\)' -f $finding.Line, $finding.Column, $finding.Construct)
         $importError.Exception.Message | Should -Match ([regex]::Escape($finding.Message))
         $importError.Exception.Message | Should -Match ([regex]::Escape($finding.Hint))
+    }
+
+    It 'reports a registration PowerShell cannot bind because it <Name>' -TestCases @(
+        @{
+            Name         = 'repeats -CommandName'
+            Registration = "Register-ArgumentCompleter -CommandName 'unbound' -CommandName 'unbound.exe' -Native -ScriptBlock { 'ok' }"
+            Offending    = "-CommandName 'unbound.exe'"
+            Message      = "The script specifies Register-ArgumentCompleter parameter '-CommandName' more than once."
+        },
+        @{
+            Name         = 'repeats -Native'
+            Registration = "Register-ArgumentCompleter -Native -CommandName 'unbound' -Native -ScriptBlock { 'ok' }"
+            Offending    = "-Native -ScriptBlock"
+            Message      = "The script specifies Register-ArgumentCompleter parameter '-Native' more than once."
+        },
+        @{
+            Name         = 'gives -CommandName no value before -Native'
+            Registration = "Register-ArgumentCompleter -CommandName -Native -ScriptBlock { 'ok' }"
+            Offending    = '-CommandName'
+            Message      = 'The script is missing the argument for -CommandName.'
+        },
+        @{
+            Name         = 'gives -ParameterName no value before -ScriptBlock'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-UnboundTool' -ParameterName -ScriptBlock { 'ok' }"
+            Offending    = '-ParameterName'
+            Message      = 'The script is missing the argument for -ParameterName.'
+        }
+    ) {
+        param(
+            [string] $Name,
+            [string] $Registration,
+            [string] $Offending,
+            [string] $Message
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath (($Name -replace '[^A-Za-z0-9]+', '-') + '_completer.ps1')
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be 'CommandParameterAst'
+        $findings[0].Line | Should -Be 1
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Offending) + 1)
+        $findings[0].Message | Should -Be $Message
+        { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw '*does not conform to the strict import grammar*'
+    }
+
+    It 'compares Register-ArgumentCompleter parameter names as PowerShell does under the tr-TR culture' {
+        $repeatPath = Join-Path -Path $TestDrive -ChildPath 'tr-repeat_completer.ps1'
+        $repeat = "Register-ArgumentCompleter -CommandName 'unbound' -Native -ScriptBlock { 'ok' } -SCRIPTBLOCK { 'ok' }"
+        Set-Content -LiteralPath $repeatPath -Value $repeat -Encoding utf8
+        $upperPath = Join-Path -Path $TestDrive -ChildPath 'tr-upper_completer.ps1'
+        Set-Content -LiteralPath $upperPath -Value "Register-ArgumentCompleter -COMMANDNAME 'unbound' -NATIVE -SCRIPTBLOCK { 'ok' }" -Encoding utf8
+
+        $originalCulture = [System.Globalization.CultureInfo]::CurrentCulture
+        try
+        {
+            [System.Globalization.CultureInfo]::CurrentCulture = 'tr-TR'
+            $repeatFindings = @(Test-CompleterScript -LiteralPath $repeatPath)
+            $upperFindings = @(Test-CompleterScript -LiteralPath $upperPath)
+        }
+        finally
+        {
+            [System.Globalization.CultureInfo]::CurrentCulture = $originalCulture
+        }
+
+        $repeatFindings.Count | Should -Be 1
+        $repeatFindings[0].Construct | Should -Be 'CommandParameterAst'
+        $repeatFindings[0].Column | Should -Be ($repeat.IndexOf('-SCRIPTBLOCK') + 1)
+        $repeatFindings[0].Message | Should -Be "The script specifies Register-ArgumentCompleter parameter '-SCRIPTBLOCK' more than once."
+        $upperFindings.Count | Should -Be 0
+    }
+
+    It 'reports a registration that gives <Name>' -TestCases @(
+        @{
+            Name         = '-CommandName an empty string'
+            Registration = "Register-ArgumentCompleter -CommandName '' -Native -ScriptBlock { 'ok' }"
+            Offending    = "''"
+            Parameter    = 'CommandName'
+        },
+        @{
+            Name         = '-CommandName an array with an empty element'
+            Registration = "Register-ArgumentCompleter -CommandName @('unbound', '') -Native -ScriptBlock { 'ok' }"
+            Offending    = "'')"
+            Parameter    = 'CommandName'
+        },
+        @{
+            Name         = '-ParameterName an empty string'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-UnboundTool' -ParameterName '' -ScriptBlock { 'ok' }"
+            Offending    = "''"
+            Parameter    = 'ParameterName'
+        },
+        @{
+            Name         = '-CommandName a blank string'
+            Registration = "Register-ArgumentCompleter -CommandName ' ' -Native -ScriptBlock { 'ok' }"
+            Offending    = "' '"
+            Parameter    = 'CommandName'
+        }
+    ) {
+        param(
+            [string] $Name,
+            [string] $Registration,
+            [string] $Offending,
+            [string] $Parameter
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath (($Name -replace '[^A-Za-z0-9]+', '-') + '_completer.ps1')
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be 'StringConstantExpressionAst'
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Offending) + 1)
+        $findings[0].Message | Should -Be "The script uses an empty or blank name for -$Parameter."
+        { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw '*does not conform to the strict import grammar*'
     }
 
     It 'rejects directories and files that are not scripts' {
@@ -225,13 +364,16 @@ Describe 'Test-CompleterRegistration' {
         foreach ($cleanupTarget in @(
             @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'Two'; CompleterType = 'Parameter' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
         }
 
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-TwoParameterFixtureTool' -ErrorAction SilentlyContinue
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
 
@@ -251,13 +393,16 @@ Describe 'Test-CompleterRegistration' {
         foreach ($cleanupTarget in @(
             @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'Two'; CompleterType = 'Parameter' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
         }
 
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-TwoParameterFixtureTool' -ErrorAction SilentlyContinue
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
@@ -275,6 +420,7 @@ Describe 'Test-CompleterRegistration' {
         $matches[0].ListItemText | Should -Be 'imported-alpha'
         $matches[0].ResultType | Should -Be 'ParameterValue'
         $matches[0].ToolTip | Should -Be 'imported-alpha'
+        $matches[0].FromTarget | Should -BeTrue
     }
 
     It 'returns the completion matches for a registered native completer' {
@@ -283,6 +429,7 @@ Describe 'Test-CompleterRegistration' {
         @($matches.CompletionText) | Should -Be @('alpha')
         $matches[0].CompleterType | Should -Be 'Native'
         $matches[0].RuntimeKey | Should -Be 'importfixture'
+        $matches[0].FromTarget | Should -BeTrue
     }
 
     It 'accepts a piped registration record and a key-bearing input object with a native indicator' {
@@ -320,6 +467,92 @@ Describe 'Test-CompleterRegistration' {
 
     It 'returns nothing when the completer yields no matches' {
         @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture zzz') | Should -BeNullOrEmpty
+    }
+
+    It 'does not credit the target with a match another parameter completer produced' {
+        function global:Test-TwoParameterFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $One,
+                [string] $Two
+            )
+        }
+
+        Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -ScriptBlock { 'one-only' }
+        Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'Two' -ScriptBlock { 'two-only' }
+        $originalScriptBlock = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+
+        $mismatched = @(Test-CompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -InputText 'Test-TwoParameterFixtureTool -One x -Two ')
+
+        @($mismatched.CompletionText) | Should -Be @('two-only') -Because 'the engine completes -Two, whose completer the input reaches'
+        $mismatched[0].Key | Should -Be 'test-twoparameterfixturetool:one'
+        $mismatched[0].FromTarget | Should -BeOfType [bool]
+        $mismatched[0].FromTarget | Should -BeFalse
+
+        $matching = @(Test-CompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -InputText 'Test-TwoParameterFixtureTool -One ')
+
+        @($matching.CompletionText) | Should -Be @('one-only')
+        $matching[0].FromTarget | Should -BeTrue
+
+        $restoredScriptBlock = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+        [object]::ReferenceEquals($originalScriptBlock, $restoredScriptBlock) | Should -BeTrue -Because 'the runtime entry is put back whether or not the engine called the completer'
+    }
+
+    It 'completes and credits every output shape of a <Kind> completer as the prompt does' -TestCases @(
+        @{ Kind = 'native'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture ' },
+        @{ Kind = 'parameter'; Target = @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One' }; InputText = 'Test-TwoParameterFixtureTool -One ' }
+    ) {
+        param($Target, $InputText)
+
+        function global:Test-TwoParameterFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $One,
+                [string] $Two
+            )
+        }
+
+        $shapes = {
+            'plain-text'
+            [System.Management.Automation.CompletionResult]::new('result-text', 'result-list', 'ParameterValue', 'result-tip')
+            [pscustomobject] @{ Name = 'object-text' }
+            , @('slot-p', 'slot-q')
+        }
+
+        Register-ArgumentCompleter @Target -ScriptBlock $shapes
+
+        $promptTexts = @((TabExpansion2 -InputScript $InputText -CursorColumn $InputText.Length).CompletionMatches.CompletionText)
+        $matches = @(Test-CompleterRegistration @Target -InputText $InputText)
+
+        $promptTexts | Should -Be @('plain-text', 'result-text', '@{Name=object-text}', 'slot-p slot-q') -Because 'the engine keeps a CompletionResult and uses the text of any other item, without unrolling an item that is a collection'
+        @($matches.CompletionText) | Should -Be $promptTexts -Because 'observing the completer must not change what it completes'
+        @($matches.FromTarget) | Should -Be @($true, $true, $true, $true)
+    }
+
+    It 'does not credit the target with the engine file-name fallback when its completer returns nothing' {
+        $fallbackRoot = Join-Path -Path $TestDrive -ChildPath 'FallbackRoot'
+        $null = New-Item -ItemType Directory -Path $fallbackRoot
+        Set-Content -LiteralPath (Join-Path -Path $fallbackRoot -ChildPath 'fallback-marker.txt') -Value 'marker' -Encoding utf8
+
+        Push-Location -LiteralPath $fallbackRoot
+
+        try
+        {
+            $matches = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture fallback')
+        }
+        finally
+        {
+            Pop-Location
+        }
+
+        @($matches.CompletionText) | Should -Be @(Join-Path -Path '.' -ChildPath 'fallback-marker.txt') -Because 'the fixture emits only alpha and beta, so the engine falls back to file names'
+        $matches[0].ResultType | Should -Be 'ProviderItem'
+        $matches[0].Key | Should -Be 'importfixture'
+        $matches[0].FromTarget | Should -BeOfType [bool]
+        $matches[0].FromTarget | Should -BeFalse
+        (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
     }
 
     It 'throws when the target has no runtime registration' {

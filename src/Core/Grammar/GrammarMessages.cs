@@ -39,6 +39,10 @@ internal static class GrammarMessages
 
     internal static string LiteralStringValuesHint(string parameterName) => $"Replace the -{parameterName} value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed.";
 
+    internal static string BlankNameMessage(string parameterName) => $"The script uses an empty or blank name for -{parameterName}.";
+
+    internal static string BlankNameHint(string parameterName) => $"Give every -{parameterName} value a real name; PowerShell refuses to bind an empty string, and Import-CompleterScript refuses a blank name.";
+
     // Test-ImportSafeExpressionAst
     internal const string SplattingMessage = "The script uses argument splatting at script scope.";
 
@@ -92,6 +96,10 @@ internal static class GrammarMessages
 
     internal const string AssignmentTargetHint = "Assign only to unqualified or $script: variables at script scope; drive-qualified and member targets change state outside the script at import time.";
 
+    internal static string GlobalFunctionMessage(string name) => $"The script defines function '{name}' in the global scope.";
+
+    internal const string GlobalFunctionHint = "Drop the global: qualifier; an unqualified or script: helper stays inside the import scope, while a global: definition changes the caller's function table at import time.";
+
     // Test-RegisterArgumentCompleterCommandAst
     internal const string NestedRegistrationMessage = "The script registers a completer from inside a nested function or script block.";
 
@@ -100,6 +108,10 @@ internal static class GrammarMessages
     internal static string UnsupportedRegisterParameterMessage(string parameterName) => $"The script uses unsupported Register-ArgumentCompleter parameter '-{parameterName}'.";
 
     internal const string UnsupportedRegisterParameterHint = "Use only -CommandName, -ParameterName, -Native, and -ScriptBlock.";
+
+    internal static string DuplicateRegisterParameterMessage(string parameterName) => $"The script specifies Register-ArgumentCompleter parameter '-{parameterName}' more than once.";
+
+    internal const string DuplicateRegisterParameterHint = "Name each parameter once; PowerShell refuses to bind a repeated parameter. Pass several command names as one literal array, such as -CommandName 'tool', 'tool.exe'.";
 
     internal const string NativeArgumentMessage = "The script uses an argument for -Native.";
 
@@ -161,7 +173,8 @@ internal static class GrammarMessages
     internal const string MissingRegistrationHint = "Add a script-scope Register-ArgumentCompleter call with -CommandName, -ScriptBlock, and either -Native or -ParameterName.";
 
     // The 2.2.0 walk passed each end-block statement to a [ValidateNotNull()] parameter named
-    // StatementAst. A script with named blocks and no end block has no end block to walk, and the
-    // walk failed with the parameter binder's message instead of returning findings.
+    // StatementAst and failed with the parameter binder's message when a script had no end block.
+    // A script with another named block now returns that block's finding instead; the message
+    // remains for an AST with no blocks at all, which only a hand-built ScriptBlockAst can be.
     internal const string MissingEndBlockError = "Cannot validate argument on parameter 'StatementAst'. The argument is null. Provide a valid value for the argument, and then try running the command again.";
 }

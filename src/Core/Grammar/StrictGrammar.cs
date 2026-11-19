@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Management.Automation;
 using System.Management.Automation.Language;
 
 namespace CompleterActions.Internal;
@@ -71,7 +72,7 @@ public static class StrictGrammar
     /// <param name="ast">The script's AST, as the parser produced it from a script without parse errors.</param>
     /// <returns>Every unsupported construct, in source walk order; empty for a conforming script.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="ast"/> is <see langword="null"/>.</exception>
-    /// <exception cref="InvalidOperationException">The script has named blocks and no end block.</exception>
+    /// <exception cref="InvalidOperationException">The AST has no blocks at all, a shape the parser never produces.</exception>
     public static IReadOnlyList<GrammarFinding> Test(ScriptBlockAst ast)
     {
         ArgumentNullException.ThrowIfNull(ast);
@@ -132,27 +133,28 @@ public static class StrictGrammar
                 return;
             }
 
-            if (argumentAst is StringConstantExpressionAst)
+            IReadOnlyList<Ast>? elements = argumentAst switch
             {
+                StringConstantExpressionAst => new[] { argumentAst },
+                ArrayLiteralAst arrayLiteralAst => arrayLiteralAst.Elements,
+                ArrayExpressionAst arrayExpressionAst => GetLiteralArrayExpressionElement(arrayExpressionAst),
+                _ => null,
+            };
+
+            if (elements is null || !elements.All(element => element is StringConstantExpressionAst))
+            {
+                AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
                 return;
             }
 
-            IReadOnlyList<Ast>? elements = null;
-            if (argumentAst is ArrayLiteralAst arrayLiteralAst)
+            // PowerShell refuses to bind an empty name, and the importer refuses a blank one.
+            foreach (StringConstantExpressionAst element in elements.Cast<StringConstantExpressionAst>())
             {
-                elements = arrayLiteralAst.Elements;
+                if (string.IsNullOrWhiteSpace(element.Value))
+                {
+                    AddFinding(element.Extent, element.GetType().Name, GrammarMessages.BlankNameMessage(parameterName), GrammarMessages.BlankNameHint(parameterName));
+                }
             }
-            else if (argumentAst is ArrayExpressionAst arrayExpressionAst)
-            {
-                elements = GetLiteralArrayExpressionElement(arrayExpressionAst);
-            }
-
-            if (elements is not null && elements.All(element => element is StringConstantExpressionAst))
-            {
-                return;
-            }
-
-            AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
         }
 
         // Recognizes @('name') and @('name', 'name.exe'). The array expression runs when the script
@@ -403,8 +405,17 @@ public static class StrictGrammar
 
         private void TestImportSafeStatementAst(StatementAst statementAst, bool allowAssignment)
         {
-            if (statementAst is FunctionDefinitionAst)
+            if (statementAst is FunctionDefinitionAst functionDefinitionAst)
             {
+                // A definition statement runs at import time. The capture module dot-sources the
+                // script into its own scope, so unqualified, script:, local:, and private: helpers
+                // stay inside it; only global: writes the caller's function table. VariablePath
+                // classifies the qualifier the way the engine does when it defines the function.
+                if (new VariablePath(functionDefinitionAst.Name).IsGlobal)
+                {
+                    AddFinding(statementAst.Extent, GrammarMessages.ConstructFunctionDefinitionAst, GrammarMessages.GlobalFunctionMessage(functionDefinitionAst.Name), GrammarMessages.GlobalFunctionHint);
+                }
+
                 return;
             }
 
@@ -495,11 +506,12 @@ public static class StrictGrammar
                 ancestor = ancestor.Parent;
             }
 
-            string? currentParameter = null;
+            // The parameter whose value the next element must supply, if any.
+            CommandParameterAst? pendingParameter = null;
 
-            // The 2.2.0 walk kept these in an [ordered] dictionary, whose keys compare with the
-            // current culture, ignoring case.
-            var seenParameters = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+            // Compared as the parameter binder compares names, so the duplicate and required-parameter
+            // checks agree with PowerShell in every culture.
+            var seenParameters = new HashSet<string>(NameComparer);
 
             foreach (CommandElementAst commandElement in commandAst.CommandElements.Skip(1))
             {
@@ -512,6 +524,20 @@ public static class StrictGrammar
                         return;
                     }
 
+                    // PowerShell binds no parameter as the value of another, so a parameter that
+                    // follows one still owed a value fails with a missing-argument error.
+                    if (pendingParameter is not null)
+                    {
+                        AddFinding(pendingParameter.Extent, GrammarMessages.ConstructCommandParameterAst, GrammarMessages.MissingArgumentMessage(pendingParameter.ParameterName), GrammarMessages.MissingArgumentHint(pendingParameter.ParameterName));
+                        return;
+                    }
+
+                    if (!seenParameters.Add(parameterName))
+                    {
+                        AddFinding(commandElement.Extent, GrammarMessages.ConstructCommandParameterAst, GrammarMessages.DuplicateRegisterParameterMessage(parameterName), GrammarMessages.DuplicateRegisterParameterHint);
+                        return;
+                    }
+
                     if (commandParameterAst.Argument is not null)
                     {
                         if (NameEquals(parameterName, "Native"))
@@ -521,18 +547,12 @@ public static class StrictGrammar
                         }
 
                         TestIsSupportedRegisterArgumentAst(commandParameterAst.Argument, parameterName);
-                        currentParameter = null;
                     }
-                    else if (NameEquals(parameterName, "Native"))
+                    else if (!NameEquals(parameterName, "Native"))
                     {
-                        currentParameter = null;
-                    }
-                    else
-                    {
-                        currentParameter = parameterName;
+                        pendingParameter = commandParameterAst;
                     }
 
-                    seenParameters.Add(parameterName);
                     continue;
                 }
 
@@ -542,19 +562,19 @@ public static class StrictGrammar
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(currentParameter))
+                if (pendingParameter is null)
                 {
                     AddFinding(commandElement.Extent, commandElement.GetType().Name, GrammarMessages.PositionalArgumentMessage, GrammarMessages.PositionalArgumentHint);
                     return;
                 }
 
-                TestIsSupportedRegisterArgumentAst(commandElement, currentParameter);
-                currentParameter = null;
+                TestIsSupportedRegisterArgumentAst(commandElement, pendingParameter.ParameterName);
+                pendingParameter = null;
             }
 
-            if (!string.IsNullOrWhiteSpace(currentParameter))
+            if (pendingParameter is not null)
             {
-                AddFinding(commandAst.Extent, GrammarMessages.ConstructCommandAst, GrammarMessages.MissingArgumentMessage(currentParameter), GrammarMessages.MissingArgumentHint(currentParameter));
+                AddFinding(commandAst.Extent, GrammarMessages.ConstructCommandAst, GrammarMessages.MissingArgumentMessage(pendingParameter.ParameterName), GrammarMessages.MissingArgumentHint(pendingParameter.ParameterName));
                 return;
             }
 
@@ -602,10 +622,13 @@ public static class StrictGrammar
                 }
             }
 
+            bool hasNamedBlock = false;
+
             foreach (Ast? namedBlock in new Ast?[] { ast.ParamBlock, ast.BeginBlock, ast.ProcessBlock, ast.DynamicParamBlock, ast.CleanBlock })
             {
                 if (namedBlock is not null)
                 {
+                    hasNamedBlock = true;
                     string blockTypeName = namedBlock.GetType().Name;
                     AddFinding(namedBlock.Extent, blockTypeName, GrammarMessages.UnsupportedSyntaxMessage(blockTypeName), GrammarMessages.NamedBlockHint);
                 }
@@ -616,14 +639,18 @@ public static class StrictGrammar
                 AddFinding(traps[0].Extent, GrammarMessages.ConstructTrapStatementAst, GrammarMessages.TrapMessage, GrammarMessages.TrapHint);
             }
 
-            if (ast.EndBlock is null)
+            // The parser leaves out the end block only when the script declares another named
+            // block, which the loop above has already reported, so there is nothing more to walk.
+            if (ast.EndBlock is not null)
+            {
+                foreach (StatementAst statement in ast.EndBlock.Statements)
+                {
+                    TestImportSafeStatementAst(statement, allowAssignment: false);
+                }
+            }
+            else if (!hasNamedBlock)
             {
                 throw new InvalidOperationException(GrammarMessages.MissingEndBlockError);
-            }
-
-            foreach (StatementAst statement in ast.EndBlock.Statements)
-            {
-                TestImportSafeStatementAst(statement, allowAssignment: false);
             }
 
             // One pass collects what the 2.2.0 walk found with three FindAll calls; FindAll visits in

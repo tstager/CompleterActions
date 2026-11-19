@@ -11,20 +11,22 @@ Import-CompleterScript has two tiers. The strict tier is the default: it
 validates the script against a closed grammar before executing it, rejects
 every unsupported construct with the same findings Test-CompleterScript
 reports, and avoids mutating the live runtime completer tables during import.
-The trusted tier, selected with -Trusted, skips the grammar and dot-sources the
-script as-is inside the same capture module, so use it only for scripts you
-wrote or reviewed. Imported ScriptBlock objects keep the temporary module
+The script is read once and the validated text is the text that runs, so a
+save after the check cannot change what executes. The trusted tier, selected
+with -Trusted, skips the grammar and dot-sources the script as-is inside the
+same capture module, so use it only for scripts you wrote or reviewed.
+Imported ScriptBlock objects keep the temporary module
 context that contains helper functions and script-scope state defined by the
 source script under either tier, and they keep the script as their source
 file, so $PSScriptRoot and $PSCommandPath inside a completer name the script's
 directory and path exactly as they do when the script is dot-sourced.
 
 Compatible strict-tier completer scripts must be self-contained and must keep script scope
-limited to Set-StrictMode, function definitions, importer-safe if statements,
-and script-scope Register-ArgumentCompleter calls. Register-ArgumentCompleter
-usage must use explicit parameter names and only the supported import-time
-surface: -CommandName, -ParameterName, the bare -Native switch, and
--ScriptBlock.
+limited to Set-StrictMode, function definitions without the global: qualifier,
+importer-safe if statements, and script-scope Register-ArgumentCompleter calls.
+Register-ArgumentCompleter usage must use explicit parameter names and only the
+supported import-time surface: -CommandName, -ParameterName, the bare -Native
+switch, and -ScriptBlock.
 
 Target metadata must stay literal. -CommandName and -ParameterName may be a
 single literal string, a literal string array, or a literal @('...') array
@@ -107,12 +109,48 @@ function Import-CompleterScript
 
             foreach ($resolvedPath in @(Resolve-CompleterScriptPath @pathParameters))
             {
-                if (-not $Trusted)
+                # The script is read once. The grammar validates the contents this
+                # command information holds and the capture module executes the same
+                # object, so a save between the two cannot run unvalidated code.
+                # GetCommand looks a path with wildcard characters up as a pattern and
+                # has no literal mode. Passing each '[', '*' and '?' as a class that
+                # matches only itself finds most paths exactly, but a backtick in the
+                # path defeats that form while the plain path then finds the file. So
+                # both forms are tried in turn, and only command information for the
+                # resolved file itself is accepted, never a sibling a pattern matched.
+                $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+                $scriptInfo = $null
+                $otherPath = $null
+                foreach ($lookupPath in @(($resolvedPath -replace '[\[*?]', '[$0]'), $resolvedPath))
                 {
-                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath
+                    $candidate = try { $ExecutionContext.InvokeCommand.GetCommand($lookupPath, [System.Management.Automation.CommandTypes]::ExternalScript) } catch { $null }
+                    if ($null -eq $candidate) { continue }
+                    if ([string]::Equals($candidate.Path, $resolvedPath, $pathComparison))
+                    {
+                        $scriptInfo = $candidate
+                        break
+                    }
+
+                    $otherPath = $candidate.Path
                 }
 
-                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath
+                if ($null -eq $scriptInfo)
+                {
+                    if ($null -ne $otherPath)
+                    {
+                        throw "The completer script path '$resolvedPath' resolves to the different file '$otherPath', so it was not loaded. Remove the backticks or wildcard characters from the path."
+                    }
+
+                    throw "The completer script '$resolvedPath' could not be loaded as a script file. Check that it still exists."
+                }
+
+                if (-not $Trusted)
+                {
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptInfo
+                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath -ParseResult $parseResult
+                }
+
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptInfo
 
                 foreach ($definition in $importSession.Definitions)
                 {

@@ -19,7 +19,7 @@ public sealed class CompletionMatch
     private string listItemText = string.Empty;
     private string toolTip = string.Empty;
 
-    /// <summary>The module's key for the registration that produced the result.</summary>
+    /// <summary>The module's key for the target that was tested.</summary>
     [AllowNull]
     public string Key { get => key; set => key = value ?? string.Empty; }
 
@@ -62,4 +62,11 @@ public sealed class CompletionMatch
     /// <summary>The tool tip of the completion result.</summary>
     [AllowNull]
     public string ToolTip { get => toolTip; set => toolTip = value ?? string.Empty; }
+
+    /// <summary>
+    /// Whether the tested target's completer produced the result. <see langword="false"/> marks a
+    /// result the completion engine returned without it, such as another completer's result or the
+    /// engine's own fallback completion.
+    /// </summary>
+    public bool FromTarget { get; set; }
 }

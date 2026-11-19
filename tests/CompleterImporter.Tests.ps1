@@ -201,6 +201,215 @@ Describe 'Completer script importer public API' {
         @(Test-CompleterRegistration -CommandName 'locationfixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
     }
 
+    It 'executes the revision the strict grammar validated when the file changes after validation (<Name>)' -TestCases @(
+        @{ Name = 'eager import'; Lazy = $false },
+        @{ Name = 'first-tab load'; Lazy = $true }
+    ) {
+        param(
+            [bool] $Lazy
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'RevisionSwap_completer.ps1'
+        $revisionTemplate = @'
+Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+
+    foreach ($completionText in @('{0}', $PSScriptRoot, $PSCommandPath))
+    {
+        [System.Management.Automation.CompletionResult]::new($completionText, $completionText, 'ParameterValue', $completionText)
+    }
+}
+'@
+        $revisionOne = $revisionTemplate.Replace('{0}', 'revision-one')
+        $revisionTwo = $revisionTemplate.Replace('{0}', 'revision-two')
+        $expected = @('revision-one', $TestDrive, $scriptPath)
+        $inputScript = 'locationfixture '
+
+        Set-Content -LiteralPath $scriptPath -Value $revisionOne -Encoding utf8
+
+        if ($Lazy)
+        {
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+        }
+
+        # The shim saves the second revision as soon as the grammar has parsed the first, which
+        # is the moment a concurrent save would land between validation and execution.
+        & (Get-Module -Name 'CompleterActions') {
+            param($SwapPath, $SwapContents)
+
+            $script:TestParseFunction = ${function:Get-CompleterScriptParseResult}
+            $script:TestSwapPath = $SwapPath
+            $script:TestSwapContents = $SwapContents
+            $script:TestSwapCount = 0
+
+            function script:Get-CompleterScriptParseResult
+            {
+                param($LiteralPath, $Script)
+
+                $parseResult = & $script:TestParseFunction @PSBoundParameters
+                Set-Content -LiteralPath $script:TestSwapPath -Value $script:TestSwapContents -Encoding utf8
+                $script:TestSwapCount++
+                $parseResult
+            }
+        } $scriptPath $revisionTwo
+
+        if ($Lazy)
+        {
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be $expected
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $scriptPath
+            @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
+        }
+
+        & (Get-Module -Name 'CompleterActions') { $script:TestSwapCount } | Should -Be 1 -Because 'the swap must happen between validation and execution'
+        Get-Content -LiteralPath $scriptPath -Raw | Should -Match 'revision-two' -Because 'the file on disk holds the second revision'
+
+        if ($Lazy)
+        {
+            $record = Get-Completer -CommandName 'locationfixture' -Native
+            $record.State | Should -Be 'Active'
+            $record.ScriptBlock.File | Should -Be $scriptPath
+        }
+    }
+
+    It 'runs the script at a bracketed literal path, not a sibling the brackets match as a wildcard (<Name>)' -TestCases @(
+        @{ Name = 'bracketed folder, strict'; Script = '[x]/Bracket_completer.ps1'; Sibling = 'x/Bracket_completer.ps1'; Trusted = $false; Lazy = $false },
+        @{ Name = 'bracketed folder, trusted'; Script = '[x]/Bracket_completer.ps1'; Sibling = 'x/Bracket_completer.ps1'; Trusted = $true; Lazy = $false },
+        @{ Name = 'bracketed file name, strict'; Script = '[x]_completer.ps1'; Sibling = 'x_completer.ps1'; Trusted = $false; Lazy = $false },
+        @{ Name = 'bracketed folder, first-tab load'; Script = '[x]/Bracket_completer.ps1'; Sibling = 'x/Bracket_completer.ps1'; Trusted = $false; Lazy = $true },
+        @{ Name = 'backtick and bracket in the file name, strict'; Script = 'c`d[x]_completer.ps1'; Sibling = 'cdx_completer.ps1'; Trusted = $false; Lazy = $false },
+        @{ Name = 'backtick and bracket in the folder, trusted'; Script = 'c`d[x]/Bracket_completer.ps1'; Sibling = 'cdx/Bracket_completer.ps1'; Trusted = $true; Lazy = $false },
+        @{ Name = 'backtick in the folder, bracketed file name, first-tab load'; Script = 'tw`o/[x]_completer.ps1'; Sibling = 'tw`o/x_completer.ps1'; Trusted = $false; Lazy = $true }
+    ) {
+        param(
+            [string] $Script,
+            [string] $Sibling,
+            [bool] $Trusted,
+            [bool] $Lazy
+        )
+
+        $template = @'
+Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+
+    foreach ($completionText in @('{0}', $PSCommandPath))
+    {
+        [System.Management.Automation.CompletionResult]::new($completionText, $completionText, 'ParameterValue', $completionText)
+    }
+}
+'@
+        # '[x]' as a wildcard matches 'x' and a backtick escapes the next character, so
+        # each case has a sibling the path would find if it were read as a pattern.
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath $Script
+        $siblingPath = Join-Path -Path $TestDrive -ChildPath $Sibling
+
+        foreach ($fixture in @(@{ Path = $scriptPath; Text = 'requested-file' }, @{ Path = $siblingPath; Text = 'sibling-file' }))
+        {
+            $null = [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($fixture.Path))
+            Set-Content -LiteralPath $fixture.Path -Value $template.Replace('{0}', $fixture.Text) -Encoding utf8
+        }
+
+        $scriptPath = (Get-Item -LiteralPath $scriptPath).FullName
+        $expected = @('requested-file', $scriptPath)
+
+        if ($Lazy)
+        {
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+
+            $inputScript = 'locationfixture '
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be $expected
+
+            $record = Get-Completer -CommandName 'locationfixture' -Native
+            $record.State | Should -Be 'Active'
+            $record.ScriptBlock.File | Should -Be $scriptPath
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted:$Trusted)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $scriptPath
+            @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
+        }
+    }
+
+    It 'reports a script that cannot be read as a file read error, not as a grammar finding (<Name>)' -TestCases @(
+        @{ Name = 'eager import'; Lazy = $false },
+        @{ Name = 'first-tab load'; Lazy = $true }
+    ) {
+        param(
+            [bool] $Lazy
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'Unreadable_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+
+    'unreadable'
+}
+'@
+
+        if ($Lazy)
+        {
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+        }
+
+        # An exclusive handle is what an editor, a sync client or a scanner holding the file
+        # looks like to the importer: the path resolves, but reading it fails.
+        $lock = [System.IO.FileStream]::new($scriptPath, 'Open', 'ReadWrite', 'None')
+        try
+        {
+            try
+            {
+                $null = [System.IO.File]::ReadAllText($scriptPath)
+                Set-ItResult -Skipped -Because 'this platform does not enforce an exclusive file share between handles'
+                return
+            }
+            catch [System.IO.IOException]
+            {
+                $null = $_
+            }
+
+            $expectedMessage = '*Line 0, column 0 (ParseError): The file could not be read:*'
+
+            if ($Lazy)
+            {
+                $inputScript = 'locationfixture '
+                $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+                @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'unreadable'
+
+                $record = Get-Completer -CommandName 'locationfixture' -Native
+                $record.State | Should -Be 'Failed'
+                $record.LoadError | Should -BeLike $expectedMessage
+                $record.LoadError | Should -Not -BeLike '*Register-ArgumentCompleter call*'
+            }
+            else
+            {
+                $failure = { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw -PassThru
+                $failure.Exception.Message | Should -BeLike $expectedMessage
+                $failure.Exception.Message | Should -Not -BeLike '*Register-ArgumentCompleter call*'
+            }
+        }
+        finally
+        {
+            $lock.Dispose()
+        }
+    }
+
     It 'resolves the types a top-level using namespace statement names inside the imported block (<Name>)' -TestCases @(
         @{ Name = 'strict'; Trusted = $false; Lazy = $false },
         @{ Name = 'trusted'; Trusted = $true; Lazy = $false },
@@ -573,6 +782,18 @@ end
     {Registration}
 }
 '@
+        },
+        @{
+            Name    = 'begin block without an end block'
+            Message = '*unsupported top-level syntax ''NamedBlockAst''*'
+            Script  = @'
+begin
+{
+    [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+
+    {Registration}
+}
+'@
         }
     )
 
@@ -684,6 +905,144 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
         }
 
         Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeTrue
+    }
+
+    Context 'helper definition scope' {
+        BeforeEach {
+            Remove-Item -LiteralPath 'Function:\Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+        }
+
+        AfterEach {
+            Remove-Item -LiteralPath 'Function:\Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+        }
+
+        It 'rejects a <Name> and leaves the caller''s function table unchanged' -TestCases @(
+            @{
+                Name   = 'global-scoped helper definition'
+                Script = @'
+function global:Test-ImportProbeHelper
+{
+    'helper'
+}
+
+{Registration}
+'@
+            },
+            @{
+                Name   = 'GLOBAL-scoped (upper-case) helper definition'
+                Script = @'
+function GLOBAL:Test-ImportProbeHelper
+{
+    'helper'
+}
+
+{Registration}
+'@
+            },
+            @{
+                Name   = 'global-scoped helper definition inside an if body'
+                Script = @'
+if (-not (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue))
+{
+    function global:Test-ImportProbeHelper
+    {
+        'helper'
+    }
+}
+
+{Registration}
+'@
+            }
+        ) {
+            param(
+                [string] $Name,
+                [string] $Script
+            )
+
+            $adversarial = Write-AdversarialImportScript -Name $Name -Script $Script
+
+            $findings = @(Test-CompleterScript -LiteralPath $adversarial.ScriptPath)
+            $findings.Count | Should -Be 1
+            $findings[0].Construct | Should -Be 'FunctionDefinitionAst'
+            $findings[0].Message | Should -BeLike '*defines function ''global:Test-ImportProbeHelper'' in the global scope*'
+
+            {
+                Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+            } | Should -Throw '*defines function ''global:Test-ImportProbeHelper'' in the global scope*'
+
+            Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeFalse
+            Get-Completer -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'confirms a global-scoped helper definition reaches the caller''s function table when the script runs without validation' {
+            $adversarial = Write-AdversarialImportScript -Name 'global-scoped helper definition' -Script @'
+function global:Test-ImportProbeHelper
+{
+    'helper'
+}
+
+{Registration}
+'@
+
+            $null = & { . $adversarial.ScriptPath }
+
+            Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeTrue
+        }
+
+        It 'still imports <Name> helpers and keeps them inside the import scope' -TestCases @(
+            @{ Name = 'unqualified'; Qualifier = '' },
+            @{ Name = 'script-scoped'; Qualifier = 'script:' },
+            @{ Name = 'local-scoped'; Qualifier = 'local:' },
+            @{ Name = 'private-scoped'; Qualifier = 'private:' }
+        ) {
+            param(
+                [string] $Name,
+                [string] $Qualifier
+            )
+
+            $supported = Write-AdversarialImportScript -Name "$Name helper definition" -Script (
+                "function $($Qualifier)Test-ImportProbeHelper`n{`n    'helper'`n}`n`n{Registration}"
+            )
+
+            Test-CompleterScript -LiteralPath $supported.ScriptPath | Should -BeNullOrEmpty
+
+            $imported = @(Import-CompleterScript -LiteralPath $supported.ScriptPath)
+
+            $imported.Count | Should -Be 1
+            $imported[0].Key | Should -Be 'test-importprobetool:name'
+            Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeFalse
+            & (Get-Module -Name 'CompleterActions') {
+                Get-Command -Name 'Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+            } | Should -BeNullOrEmpty
+        }
+
+        It 'keeps helpers and the capture shim from replacing module commands or disabling the strict gate' {
+            $shadowing = Write-AdversarialImportScript -Name 'module command shadowing helpers' -Script @'
+function Get-CompleterScriptFinding
+{
+}
+
+{Registration}
+'@
+            $violating = Write-AdversarialImportScript -Name 'strict violation after shadowing' -Script @'
+Set-Content -LiteralPath '{ProbePath}' -Value 'ran'
+
+{Registration}
+'@
+            $module = Get-Module -Name 'CompleterActions'
+            $findingDefinition = & $module { (Get-Command -Name 'Get-CompleterScriptFinding' -CommandType Function).Definition }
+
+            Test-CompleterScript -LiteralPath $shadowing.ScriptPath | Should -BeNullOrEmpty
+            @(Import-CompleterScript -LiteralPath $shadowing.ScriptPath).Count | Should -Be 1
+
+            & $module { (Get-Command -Name 'Get-CompleterScriptFinding' -CommandType Function).Definition } | Should -BeExactly $findingDefinition
+            & $module { (Get-Command -Name 'Register-ArgumentCompleter').CommandType } | Should -Be 'Cmdlet'
+
+            {
+                Import-CompleterScript -LiteralPath $violating.ScriptPath
+            } | Should -Throw '*does not conform to the strict import grammar*'
+            Test-ImportProbeFired -ProbePath $violating.ProbePath | Should -BeFalse
+        }
     }
 
     It 'still imports the guarded script-state initialization shape' {

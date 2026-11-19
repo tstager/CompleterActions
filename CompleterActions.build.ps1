@@ -6,7 +6,11 @@ Author: tstager
 param (
     [Parameter()]
     [String]
-    $author
+    $author,
+
+    [Parameter()]
+    [String]
+    $Repository = 'PSGallery'
 )
 
 
@@ -195,10 +199,33 @@ task build clean, compile, external_help, {
             $helpLine = $helpStart.StartLineNumber
         }
 
+        $fileLines = @(Get-Content -Path $file.FullName)
+
+        # The parser finds the using statements, so a line inside a string that reads like one stays where it is. Only a
+        # statement's own text moves to the top: it is blanked in place, which keeps the columns the declaration line is
+        # cut by, and anything else on its lines, such as the end of a comment, stays. A line left blank is dropped.
+        $usingLines = [System.Collections.Generic.HashSet[int]]::new()
+
+        foreach ($usingAst in $fileAst.UsingStatements) {
+            $extent = $usingAst.Extent
+
+            if (-not $usingStatements.Contains($extent.Text)) {
+                $usingStatements.Add($extent.Text)
+            }
+
+            foreach ($usingLine in $extent.StartLineNumber..$extent.EndLineNumber) {
+                $text = $fileLines[$usingLine - 1]
+                $start = if ($usingLine -eq $extent.StartLineNumber) { $extent.StartColumnNumber - 1 } else { 0 }
+                $end = if ($usingLine -eq $extent.EndLineNumber) { $extent.EndColumnNumber - 1 } else { $text.Length }
+                $fileLines[$usingLine - 1] = $text.Substring(0, $start) + [string]::new(' ', $end - $start) + $text.Substring($end)
+                $null = $usingLines.Add($usingLine)
+            }
+        }
+
         $fileBody = [System.Collections.Generic.List[string]]::new()
         $lineNumber = 0
 
-        foreach ($line in Get-Content -Path $file.FullName) {
+        foreach ($line in $fileLines) {
             $lineNumber++
 
             if ($lineNumber -ge $helpLine -and $lineNumber -lt $commandLine) {
@@ -223,11 +250,7 @@ task build clean, compile, external_help, {
                 continue
             }
 
-            if ($line -match '^\s*using\s+(namespace|module|assembly)\b') {
-                if (-not $usingStatements.Contains($line)) {
-                    $usingStatements.Add($line)
-                }
-
+            if ($usingLines.Contains($lineNumber) -and [string]::IsNullOrWhiteSpace($line)) {
                 continue
             }
 
@@ -450,18 +473,26 @@ task external_help {
     [System.IO.File]::WriteAllText($mamlFile.FullName, $mamlText, $settings.Encoding)
 }
 
-# Synopsis: Asserts that the tag on HEAD (if any) matches the source manifest ModuleVersion plus any Prerelease label
+# Synopsis: Asserts that the tag a GitHub Actions tag push publishes, or else the tag on HEAD (if any), matches the source manifest ModuleVersion plus any Prerelease label
 task release_check {
 
-    if (-not (Get-Command -Name git -ErrorAction SilentlyContinue)) {
-        throw "release_check: git is not available, so the HEAD tag cannot be compared with ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+    # A tag push publishes the tag that triggered it, which git describe need not select when HEAD carries several tags.
+    if ($env:GITHUB_REF_TYPE -eq 'tag') {
+        $tag = $env:GITHUB_REF_NAME
+        $tagSource = 'release event tag'
     }
+    else {
+        if (-not (Get-Command -Name git -ErrorAction SilentlyContinue)) {
+            throw "release_check: git is not available, so the HEAD tag cannot be compared with ModuleVersion '$($sourceManifestData.ModuleVersion)'."
+        }
 
-    $headTag = git -C $PSScriptRoot describe --tags --exact-match 2>$null
+        $tag = git -C $PSScriptRoot describe --tags --exact-match 2>$null
+        $tagSource = 'HEAD tag'
 
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headTag)) {
-        Write-Build Yellow "release_check: HEAD is not tagged; ModuleVersion '$($sourceManifestData.ModuleVersion)' was not compared with a tag."
-        return
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tag)) {
+            Write-Build Yellow "release_check: HEAD is not tagged; ModuleVersion '$($sourceManifestData.ModuleVersion)' was not compared with a tag."
+            return
+        }
     }
 
     $expectedVersion = $sourceManifestData.ModuleVersion
@@ -473,18 +504,80 @@ task release_check {
 
     $expectedTag = "v$expectedVersion"
 
-    if ($headTag -ne $expectedTag) {
-        throw "release_check: HEAD tag '$headTag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
+    # The release is created under the tag name exactly as pushed, so the comparison is ordinal: -cne is culture-aware,
+    # and treats tags that differ only by an ignorable character such as U+200B as equal.
+    if (-not [string]::Equals($tag, $expectedTag, [System.StringComparison]::Ordinal)) {
+        throw "release_check: the $tagSource '$tag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
     }
 
-    Write-Build Green "release_check: HEAD tag '$headTag' matches the source manifest version '$expectedVersion'."
+    Write-Build Green "release_check: the $tagSource '$tag' matches the source manifest version '$expectedVersion'."
 }
 
+# Synopsis: Publishes the built package to -Repository (PSGallery by default), or publishes nothing when the repository already holds that exact version with the same files, so a rerun of a partly finished release continues
 task Publish_build {
 
+    $packageManifestData = Import-PowerShellDataFile -Path (Join-Path -Path $modulepath -ChildPath "$modulename.psd1")
+    $version = $packageManifestData.ModuleVersion
+    $prerelease = $packageManifestData.PrivateData.PSData.Prerelease
 
-    Publish-PSResource -ApiKey $env:GalleryAPI -Repository PSGallery -Path $modulepath
+    if (-not [string]::IsNullOrWhiteSpace($prerelease)) {
+        $version = "$version-$prerelease"
+    }
 
+    $published = try {
+        Find-PSResource -Name $modulename -Version $version -Prerelease -Repository $Repository -ErrorAction Stop
+    }
+    catch {
+        if ($_.FullyQualifiedErrorId -notlike 'PackageNotFound,*') {
+            throw
+        }
+    }
+
+    if ($null -eq $published) {
+        Publish-PSResource -ApiKey $env:GalleryAPI -Repository $Repository -Path $modulepath
+        return
+    }
+
+    # A published version cannot be replaced, so a rerun continues only when the repository holds what this build made.
+    # Update-ModuleManifest dates the manifest, so its Generated on line is the one line a later rebuild changes.
+    $getDigest = {
+        param($Root)
+
+        foreach ($file in Get-ChildItem -LiteralPath $Root -File -Recurse) {
+            $relativePath = [System.IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
+            $hash = if ($relativePath -eq "$modulename.psd1") {
+                $text = @(Get-Content -LiteralPath $file.FullName) -notmatch '^# Generated on: ' -join "`n"
+                [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($text)))
+            }
+            else {
+                (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            }
+
+            "$hash $relativePath"
+        }
+    }
+
+    $savedRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "$modulename-published-$([guid]::NewGuid().ToString('N'))"
+    New-Item -Path $savedRoot -ItemType Directory | Out-Null
+
+    try {
+        Save-PSResource -Name $modulename -Version $version -Prerelease -Repository $Repository -Path $savedRoot -SkipDependencyCheck -TrustRepository
+        $publishedPath = Join-Path -Path (Join-Path -Path $savedRoot -ChildPath $modulename) -ChildPath $packageManifestData.ModuleVersion
+        $differences = @(
+            Compare-Object -ReferenceObject @(& $getDigest $modulepath) -DifferenceObject @(& $getDigest $publishedPath) -CaseSensitive |
+                ForEach-Object { ($_.InputObject -split ' ', 2)[1] } |
+                Sort-Object -Unique
+        )
+    }
+    finally {
+        Remove-Item -LiteralPath $savedRoot -Recurse -Force
+    }
+
+    if ($differences.Count -gt 0) {
+        throw "Publish_build: $Repository already holds $modulename $version, and that copy differs from '$modulepath' in $($differences -join ', '). A published version cannot be replaced, so publish this build under a new version."
+    }
+
+    Write-Build Green "Publish_build: $Repository already holds $modulename $version with the same files as '$modulepath', so nothing was published."
 }
 
 # Synopsis: Default task

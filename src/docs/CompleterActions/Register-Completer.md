@@ -144,8 +144,11 @@ included, it needs `-Force`.
 If the script fails to load on the first tab press, the press returns no
 completions, the runtime entry is removed so the completion engine's default
 completion applies exactly as with no completer registered, and the managed
-record moves to `State` `Failed` with the error message in `LoadError`. Nothing
-is written to the host. Registering the same target again with `-Force`
+record moves to `State` `Failed` with the error message in `LoadError`. A
+trusted script that replaced or removed the managed record for its own target
+before it failed, for example with `Register-Completer -Force` or
+`Unregister-Completer`, keeps that newer state, and no failure is recorded.
+Nothing is written to the host. Registering the same target again with `-Force`
 retries the load, or use `Reset-Completer`. Lazy loading runs entirely inside
 the ordinary completer call; it never hooks key handlers, replaces
 `TabExpansion2`, or changes PSReadLine options.
@@ -291,10 +294,12 @@ without a native indicator is rejected; keys are output-only identifiers and
 are never classified by their shape. `ScriptPath` or
 `SourcePath` and `Trusted` properties, such as those on `Import-CompleterScript`
 records, are carried onto the managed record. `IsNative`, `Native`, and
-`Trusted` take a Boolean value, a number, where zero is `False`, or the text
-`True` or `False` in any letter case, with or without white space around it,
-as `Export-Csv` writes a Boolean. A null value, or text that is empty or only
-white space, counts as `False`, and any other text is rejected.
+`Trusted` take a Boolean or switch value, a number, where zero is `False`, or
+the text `True` or `False` in any letter case, with or without white space
+around it, as `Export-Csv` writes a Boolean. A null value, or text that is
+empty or only white space, counts as `False`. Any other text, a collection
+such as an array, even one that holds a single value, and any other kind of
+object are rejected.
 An `ImportModule` property is ignored: the managed record's `ImportModule` is
 the capture module `Import-CompleterScript` ran the script in, and only for a
 script block the import emitted. `CommandName`, or `RuntimeKey`, names the
