@@ -1070,6 +1070,127 @@ Describe 'Markdown_templates build task' {
     }
 }
 
+Describe 'Release workflow' {
+    BeforeAll {
+        # The release notes come from the literal block of the release step that reads CHANGELOG.md, so the
+        # test runs that block itself rather than a copy of its selection logic.
+        $workflowPath = Join-Path -Path (Split-Path -Path $PSScriptRoot -Parent) -ChildPath '.github/workflows/release.yml'
+        $workflowLines = Get-Content -LiteralPath $workflowPath
+        $runBlocks = for ($index = 0; $index -lt $workflowLines.Count; $index++)
+        {
+            if ($workflowLines[$index] -notmatch '^\s*run: \|\s*$')
+            {
+                continue
+            }
+
+            $blockIndent = $null
+            $blockLines = for ($next = $index + 1; $next -lt $workflowLines.Count; $next++)
+            {
+                $line = $workflowLines[$next]
+                if ($line -match '^\s*$')
+                {
+                    ''
+                    continue
+                }
+
+                $lineIndent = $line.Length - $line.TrimStart().Length
+                $blockIndent ??= $lineIndent
+                if ($lineIndent -lt $blockIndent)
+                {
+                    break
+                }
+
+                $line.Substring($blockIndent)
+            }
+
+            $blockLines -join [Environment]::NewLine
+        }
+
+        $script:ReleaseNotesScript = @($runBlocks | Where-Object { $_ -match 'CHANGELOG\.md' })
+        $script:ReleaseNotesPwsh = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+        $script:ReleaseNotesChangelog = @(
+            '# Changelog'
+            ''
+            '## [Unreleased]'
+            ''
+            '## [3.0.10] - 2026-12-20'
+            ''
+            'Notes for 3.0.10.'
+            ''
+            '## [3.0.2-preview1] - 2026-12-01'
+            ''
+            'Notes for 3.0.2-preview1.'
+            ''
+            '## [3.0.1] - 2026-11-20'
+            ''
+            'Notes for 3.0.1.'
+            ''
+            '## [3.0.1-preview1] - 2026-11-14'
+            ''
+            'Notes for 3.0.1-preview1.'
+            ''
+            '## 2.9.10'
+            ''
+            'Notes for 2.9.10.'
+            ''
+            '## 2.9.2-rc1'
+            ''
+            'Notes for 2.9.2-rc1.'
+            ''
+            '## 2.9.1 - 2025-06-01'
+            ''
+            'Notes for 2.9.1.'
+            ''
+            '## 2.9.0'
+            ''
+            'Notes for 2.9.0.'
+        )
+    }
+
+    It 'has one run block that reads CHANGELOG.md' {
+        $script:ReleaseNotesScript.Count | Should -Be 1
+    }
+
+    It 'takes the notes for <Tag> only from the section whose heading names exactly that version' -TestCases @(
+        @{ Tag = 'v3.0.1'; Expected = 'Notes for 3.0.1.' }
+        @{ Tag = 'v3.0.1-preview1'; Expected = 'Notes for 3.0.1-preview1.' }
+        @{ Tag = 'v3.0.10'; Expected = 'Notes for 3.0.10.' }
+        @{ Tag = 'v2.9.0'; Expected = 'Notes for 2.9.0.' }
+        @{ Tag = 'v2.9.1'; Expected = 'Notes for 2.9.1.' }
+        @{ Tag = 'v2.9.10'; Expected = 'Notes for 2.9.10.' }
+        @{ Tag = 'v2.9.2-rc1'; Expected = 'Notes for 2.9.2-rc1.' }
+        @{ Tag = 'v2.9.2'; Expected = $null }
+        @{ Tag = 'v3.0.2'; Expected = $null }
+        @{ Tag = 'v3.0'; Expected = $null }
+    ) {
+        $checkoutRoot = Join-Path -Path $TestDrive -ChildPath "release-$Tag"
+        $runnerTemp = Join-Path -Path $checkoutRoot -ChildPath 'runner-temp'
+        New-Item -Path (Join-Path -Path $checkoutRoot -ChildPath 'build/CompleterActions'), $runnerTemp -ItemType Directory | Out-Null
+        Set-Content -LiteralPath (Join-Path -Path $checkoutRoot -ChildPath 'build/CompleterActions/CompleterActions.psd1') -Value '@{}'
+        Set-Content -LiteralPath (Join-Path -Path $checkoutRoot -ChildPath 'CHANGELOG.md') -Value $script:ReleaseNotesChangelog -Encoding utf8
+
+        $runOutput = @(& $script:ReleaseNotesPwsh -NoProfile -NonInteractive -Command {
+                param($CheckoutRoot, $RunnerTemp, $RefName, $StepScript)
+
+                $env:GITHUB_REF_NAME = $RefName
+                $env:RUNNER_TEMP = $RunnerTemp
+                Set-Location -LiteralPath $CheckoutRoot
+                & ([scriptblock]::Create($StepScript))
+            } -args $checkoutRoot, $runnerTemp, $Tag, $script:ReleaseNotesScript[0] *>&1)
+        $LASTEXITCODE | Should -Be 0 -Because ($runOutput -join [Environment]::NewLine)
+
+        $notesPath = Join-Path -Path $runnerTemp -ChildPath 'notes.md'
+        if ($null -eq $Expected)
+        {
+            $notesPath | Should -Not -Exist -Because 'a tag with no exactly matching heading must fall back to generated notes'
+        }
+        else
+        {
+            @(Get-Content -LiteralPath $notesPath | Where-Object { $_ -ne '' }) | Should -Be @($Expected)
+        }
+    }
+}
+
 Describe 'Build script' {
     It 'writes a RequiredAssemblies line that reads back entries holding every single-quote character the tokenizer accepts' {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
