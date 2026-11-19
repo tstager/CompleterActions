@@ -1252,6 +1252,37 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             (Get-Completer -CommandName 'Test-ImportedFixtureTool' -ParameterName 'Name').Source | Should -Be 'Managed'
         }
 
+        It 'reports a Path that <Case> as an invalid entry and still registers the valid entry after it' -TestCases @(
+            @{ Case = 'has a null character'; PathText = '"bad`0name.ps1"'; Reason = 'The Path is not a valid file path: *'; WindowsOnly = $false }
+            @{ Case = 'is past the Windows length limit'; PathText = "'$('a' * 40000).ps1'"; Reason = 'The Path is not a valid file path: it is longer than the platform allows.'; WindowsOnly = $true }
+        ) {
+            param($Case, $PathText, $Reason, $WindowsOnly)
+
+            $null = $Case
+
+            if ($WindowsOnly -and -not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'only Windows limits the length of a full path'
+            }
+
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = $PathText; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
+                "@{ Path = '$script:ParameterFixturePath' }"
+            )
+
+            $thrown = { Import-CompleterSet -Path $script:SetPath } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -Match 'has 1 invalid entry and nothing was registered'
+            @($thrown.Exception.Message -split '\r?\n' | Select-Object -Skip 1) | Should -BeLike "Entry 1 (*): $Reason"
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+
+            $registered = @(Import-CompleterSet -Path $script:SetPath -SkipInvalid -WarningVariable warnings -WarningAction SilentlyContinue)
+
+            @($registered.Key) | Should -Be @('test-importedfixturetool:name')
+            @($warnings.Message) | Should -BeLike "Completer set '*' skipped Entry 1 (*): $Reason"
+            Get-Completer -CommandName 'Test-TrustedFixtureTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
         It 'registers a trusted entry through the trusted tier when it declares its targets' {
             Write-TestCompleterSet -Path $script:SetPath -Entry "@{ Path = '$script:TrustedFixturePath'; Trusted = `$true; Targets = @( @{ CommandName = 'Test-TrustedFixtureTool'; ParameterName = 'Name' } ) }"
 
