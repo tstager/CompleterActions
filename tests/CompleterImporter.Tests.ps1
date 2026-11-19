@@ -573,6 +573,18 @@ end
     {Registration}
 }
 '@
+        },
+        @{
+            Name    = 'begin block without an end block'
+            Message = '*unsupported top-level syntax ''NamedBlockAst''*'
+            Script  = @'
+begin
+{
+    [System.Environment]::SetEnvironmentVariable('COMPLETERACTIONS_IMPORT_PROBE', 'executed', 'Process')
+
+    {Registration}
+}
+'@
         }
     )
 
