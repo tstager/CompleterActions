@@ -18,15 +18,9 @@ behaviour changes they bring are listed under Changed.
   reads ran text the grammar never saw, on eager import and on a lazy stub's
   first-tab load alike. The script is now resolved once and the contents
   that were parsed are the contents that run, with the script still the
-  source file of errors, `$PSScriptRoot`, and `$PSCommandPath`. Two related
-  defects went with it: a literal path with brackets, such as
-  `[x]\a_completer.ps1`, ran a sibling the brackets matched as a wildcard
-  (`x\a_completer.ps1`) under both tiers, and now runs the file it names,
-  with the importer refusing to run any other file; and a script that was locked or deleted
-  after resolution was parsed as empty and reported a missing
-  `Register-ArgumentCompleter` call, where it now reports the same
-  `The file could not be read` finding `Test-CompleterScript` reports
-  (2026-11-18 review, finding 1).
+  source file of errors, `$PSScriptRoot`, and `$PSCommandPath`. The importer
+  refuses to run any file other than the one it resolved (2026-11-18
+  review, finding 1).
 - Strict import keeps a script's helpers out of the caller's and the
   module's function tables. `function global:Name` passed the grammar and
   defined `Name` in the caller's global scope while the script was
@@ -133,9 +127,7 @@ behaviour changes they bring are listed under Changed.
 - The build moves only top-level `using` statements into the package, and
   only their own text. Any source line that read like a `using` statement
   was hoisted, so a here-string line `using namespace System.Text` was
-  removed from its function, and other text on a real `using` line moved
-  with it, so a comment block that closed on that line was left open and
-  swallowed the next function (2026-11-18 review, finding 16).
+  removed from its function (2026-11-18 review, finding 16).
 - The release workflow takes its notes only from the changelog heading
   whose version matches the tag exactly. The pattern matched a prefix, so a
   stable `3.0.1` tag would have published the `3.0.1-preview1` section, and
