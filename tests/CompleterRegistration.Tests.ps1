@@ -148,6 +148,14 @@ Describe 'Module Manifest Tests' {
             $result.Output | Should -Match "release event tag '$([regex]::Escape($otherTag))' does not match the source manifest version"
         }
 
+        It 'fails for a release event tag that differs from the manifest version only in case' {
+            $caseVariantTag = $manifestTag.ToUpperInvariant()
+            $result = Invoke-TestReleaseCheck -EventTag $caseVariantTag
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -MatchExactly "release event tag '$([regex]::Escape($caseVariantTag))' does not match the source manifest version"
+        }
+
         It 'passes for a release event tag that equals the manifest version' {
             $result = Invoke-TestReleaseCheck -EventTag $manifestTag
 

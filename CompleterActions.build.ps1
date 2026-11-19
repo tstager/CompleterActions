@@ -481,7 +481,8 @@ task release_check {
 
     $expectedTag = "v$expectedVersion"
 
-    if ($tag -ne $expectedTag) {
+    # Git tag names are case-sensitive, and the release is created under the tag name exactly as pushed.
+    if ($tag -cne $expectedTag) {
         throw "release_check: the $tagSource '$tag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
     }
 
