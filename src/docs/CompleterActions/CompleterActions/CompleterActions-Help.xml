@@ -740,10 +740,12 @@ that can be piped directly to `Register-Completer -InputObject`.
 The command has two tiers. The strict tier is the default: it validates the
 script against a closed grammar before executing it, rejects every unsupported
 construct with the same findings `Test-CompleterScript` reports, and avoids
-mutating the live runtime completer tables during import. The trusted tier,
-selected with `-Trusted`, skips the grammar and dot-sources the script as-is
-inside the same capture module, so use it only for scripts you wrote or
-reviewed. Imported script blocks preserve the temporary module context that
+mutating the live runtime completer tables during import. The script is read
+once and the validated text is the text that runs, so a save after the check
+cannot change what executes. The trusted tier, selected with `-Trusted`, skips
+the grammar and dot-sources the script as-is inside the same capture module, so
+use it only for scripts you wrote or reviewed. Imported script blocks preserve
+the temporary module context that
 contains any helper functions and script-scope state defined by the source
 script under either tier, and they keep the script as their source file, so
 `$PSScriptRoot` and `$PSCommandPath` inside a completer name the script's
@@ -777,10 +779,15 @@ remain importable through the strict tier without redesign. Run
   - `-ScriptBlock`
 - Use explicit parameter names only. Positional registration arguments and
   argument splatting are not supported.
+- Name each parameter once, and give `-CommandName`, `-ParameterName`, and
+  `-ScriptBlock` a value. PowerShell cannot bind a repeated parameter or one
+  left without its value.
 - Keep target metadata literal:
   - `-CommandName` and `-ParameterName` may be a single literal string
   - a literal string array
   - or a literal `@('name', 'name.exe')` array expression
+  - and every name must be non-empty: an empty or blank name cannot be bound
+    or imported
 - Keep `-ScriptBlock` literal.
 - Keep `Register-ArgumentCompleter` calls at script scope, not inside nested
   functions or nested script blocks.
@@ -964,8 +971,10 @@ never executes a completer script. A set file that holds more than 128 KB
 to write one, and nothing from it is registered; split a larger set into
 several.
 
-Every entry is checked before anything is registered: the script file must
-exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because
+Every entry is checked before anything is registered: the entry's `Path` must
+be a file path the platform can resolve, with no null character and, on
+Windows, a full path within the length limit, the script file must exist and
+be a `.ps1`, `Trusted` entries must declare their `Targets` because
 the script is not parsed, strict entries must name their targets with literal
 `Register-ArgumentCompleter` arguments so the targets can be derived from the
 parsed script and compared against any `Targets` the entry declares, no target
@@ -1352,12 +1361,19 @@ name: at least one letter or digit, no path separators, spaces, quotes, or
 wildcard characters, no leading `-` or `.`, and no trailing `.` or `-`. A name
 must also keep a letter or digit outside a trailing `.exe`, `.cmd`, `.bat`,
 `.ps1`, or `.com`, because the function names are derived from what is left:
-`_.exe` is refused and `_a` gives `Complete-A`. The target list follows the
-`-CommandName` order, and a name that does not end in `.exe`, `.cmd`, `.bat`,
-`.ps1`, or `.com` is followed by the same name with `.exe` appended, so
-`-CommandName rg` registers `'rg', 'rg.exe'` and `-CommandName npm.cmd`
-registers `'npm.cmd'` alone. Names are de-duplicated case-insensitively,
-keeping the first spelling.
+`_.exe` is refused and `_a` gives `Complete-A_34fb7160`. A name with a
+character other than an ASCII letter or digit, apart from a trailing `.exe`,
+gets `_` and eight hex digits of a hash of that name, so `ca-tool` gives
+`Complete-CaTool_8f74ce7e`, `ca_tool` gives `Complete-CaTool_014e186e`, and
+`npm.cmd` gives `Complete-Npm_a04d41f6`, and scripts dot-sourced into one
+scope keep their own tables. A name of letters and digits, with or without
+`.exe`, keeps its plain stem: `cargo` and `cargo.exe` give `Complete-Cargo`,
+because `-CommandName cargo` registers `cargo.exe` too. The target
+list follows the `-CommandName` order, and a name that does not end in `.exe`,
+`.cmd`, `.bat`, `.ps1`, or `.com` is followed by the same name with `.exe`
+appended, so `-CommandName rg` registers `'rg', 'rg.exe'` and
+`-CommandName npm.cmd` registers `'npm.cmd'` alone. Names are de-duplicated
+case-insensitively, keeping the first spelling.
 
 The subcommand table is seeded in one of three ways:
 
@@ -2854,13 +2870,30 @@ target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
 `ToolTip`, so the same check that used to be done by hand after every
 registration can be scripted and asserted on.
 
+Every match the engine returns is reported, and `FromTarget` tells whether the
+target's own completer produced it. A match with `FromTarget` set to `$false`
+came from somewhere else: another completer, because the input or the cursor
+position completes a different parameter or command, or the engine's own
+fallback completion, such as file names, which the engine offers when the
+target's completer returns nothing. Assert on the matches whose `FromTarget`
+is `$true` to verify the registration itself.
+
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as `Get-Completer` so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
-The command only reads the completion engine. It does not change any
-registration, and it never touches PSReadLine.</maml:para>
+To see what the target's completer produces, the command puts an observer in
+front of the target's runtime entry for the duration of the completion. The
+observer puts the original entry back before it hands the call on, so the
+completer runs exactly as it does at the prompt, and the command puts it back
+itself when the engine never calls the completer. The command does not
+otherwise change any registration, and it never touches PSReadLine.
+
+Because the completer really runs, testing a `Pending` lazy registration loads
+it as the first tab press would: its script is imported, and the registration,
+with any `Pending` registration of the same script, becomes `Active`, or
+`Failed` when the load fails.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -3063,9 +3096,11 @@ parameter completer.</maml:para>
           <maml:para>Returns `CompleterActions.CompletionMatch` records, one per completion match,
 with `Key`, `RuntimeKey`, `CommandName`, `ParameterName`, `IsNative`,
 `CompleterType`, `InputText`, `CursorPosition`, `CompletionText`,
-`ListItemText`, `ResultType`, and `ToolTip` properties. `IsNative` lets a
-match pipe back into Get-Completer, Unregister-Completer, and this command. Nothing is returned when the completer yields no
-matches.</maml:para>
+`ListItemText`, `ResultType`, `ToolTip`, and `FromTarget` properties.
+`IsNative` lets a match pipe back into Get-Completer, Unregister-Completer,
+and this command. Nothing is returned when the engine yields no matches.
+Matches the engine returns without the target's completer, such as fallback
+file names, are returned with `FromTarget` set to `$false`.</maml:para>
         </maml:description>
       </command:returnValue>
     </command:returnValues>
@@ -3109,11 +3144,14 @@ completing an argument for its parameter.</maml:para>
         <maml:title>--------- EXAMPLE 3 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
+$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' |
+    Where-Object FromTarget
 $matches.CompletionText | Should -Contain 'checkout'
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
-          <maml:para>Asserts on the matches inside a Pester test.</maml:para>
+          <maml:para>Asserts inside a Pester test on the matches the git completer produced
+itself, so a match the engine supplied without it cannot satisfy the
+assertion.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
