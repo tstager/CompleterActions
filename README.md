@@ -60,13 +60,19 @@ Import-Module CompleterActions
 
 ### Import from the repository during development
 
+The source manifest loads `lib\CompleterActions.Core.dll`, which git does not track, so a fresh clone compiles it first. `compile` needs `Invoke-Build` and the dotnet SDK 8.0 or later; see [Build](#build).
+
 ```powershell
+Invoke-Build -Task compile
 Import-Module .\CompleterActions.psd1
 ```
 
 ### Import the built module output
 
+The packaged module loads `build\CompleterActions\lib\CompleterActions.Core.dll`, which git does not track either. `build` compiles the assembly, places it there, and regenerates the package.
+
 ```powershell
+Invoke-Build -Task build
 Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```
 
