@@ -17,6 +17,11 @@ Register-ArgumentCompleter cmdlet.
 .PARAMETER LiteralPath
 The literal path to the completer script file.
 
+.PARAMETER Script
+The script's command information. It is dot-sourced as it is, so the contents it
+has already read are what runs, under the same execution policy and #requires
+checks as dot-sourcing LiteralPath; the file is not read again.
+
 .OUTPUTS
 CompleterActions.CompleterScriptImportSession
 #>
@@ -27,7 +32,11 @@ function Import-CompleterScriptDefinition
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [System.Management.Automation.ExternalScriptInfo] $Script
     )
 
     $importModule = $null
@@ -35,10 +44,10 @@ function Import-CompleterScriptDefinition
 
     try
     {
-        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -Function @() -ArgumentList $LiteralPath -ScriptBlock {
+        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -Function @() -ArgumentList $Script -ScriptBlock {
             param(
                 [Parameter(Mandatory)]
-                [string] $ScriptPath
+                [System.Management.Automation.ExternalScriptInfo] $ScriptInfo
             )
 
             $script:CapturedCompleterDefinitions = [System.Collections.Generic.List[object]]::new()
@@ -83,7 +92,7 @@ function Import-CompleterScriptDefinition
                 }
             }
 
-            $null = @(. $ScriptPath)
+            $null = @(. $ScriptInfo)
         }
 
         $capturedDefinitions = @(& $importModule {
