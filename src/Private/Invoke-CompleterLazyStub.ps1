@@ -28,7 +28,10 @@ fails a record whose own load is still running.
 When anything in the load fails, the helper returns nothing, stores the error
 message on the managed record as LoadError with State Failed, and removes the
 runtime entry for the target, so the completion engine's default completion
-applies exactly as it would with no completer registered. No error reaches the
+applies exactly as it would with no completer registered. When the script
+replaced or removed the managed record for its own target before it failed,
+for example through Register-Completer -Force or Unregister-Completer, that
+newer state is left as it is and no failure is recorded. No error reaches the
 host. The helper never hooks key handlers, replaces TabExpansion2, or touches
 PSReadLine options.
 
@@ -160,7 +163,10 @@ function Invoke-CompleterLazyStub
 
         try
         {
-            if ($null -ne $registration)
+            # A trusted script can replace or remove its own target before it
+            # fails, so the failure is recorded only while the record this call
+            # loaded still owns the managed slot.
+            if ($null -ne $registration -and [object]::ReferenceEquals((Find-ManagedCompleterRegistration -Target $registration), $registration))
             {
                 $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $registration
 

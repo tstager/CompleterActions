@@ -359,6 +359,56 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         (Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name').State | Should -Be 'Failed'
     }
 
+    It 'keeps the managed registration a trusted script made for its own target before it throws' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyReplacingCompleter.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+Register-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' -Force -ScriptBlock {
+    [System.Management.Automation.CompletionResult]::new('replacement', 'replacement', 'ParameterValue', 'replacement')
+}
+
+throw 'lazy fixture failure after replacement'
+'@
+
+        $null = Register-Completer -LiteralPath $scriptPath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $stub = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
+
+        $inputScript = 'Test-LazyTrustedTool -Name '
+        $firstCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($firstCompletion.CompletionMatches.CompletionText) | Should -Not -Contain 'replacement'
+
+        $replacement = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
+        [object]::ReferenceEquals($stub, $replacement) | Should -BeFalse
+        $replacement.ToString() | Should -Match 'replacement'
+
+        $record = Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+        $record.State | Should -Be 'Active'
+        $record.Source | Should -Be 'Managed'
+        $record.LoadError | Should -BeNullOrEmpty
+        [object]::ReferenceEquals($record.ScriptBlock, $replacement) | Should -BeTrue
+        Get-Completer -State Failed, Conflicted, Discovered | Should -BeNullOrEmpty
+
+        $secondCompletion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        @($secondCompletion.CompletionMatches.CompletionText) | Should -Be @('replacement')
+    }
+
+    It 'records no failure for a target a trusted script unregistered before it throws' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyUnregisteringCompleter.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+Unregister-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+
+throw 'lazy fixture failure after unregistration'
+'@
+
+        $null = Register-Completer -LiteralPath $scriptPath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
+
+        $inputScript = 'Test-LazyTrustedTool -Name '
+        $null = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+
+        Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name' | Should -BeNullOrEmpty
+        Get-Completer -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+    }
+
     It 'loads a script once and keeps it Active when it requests completion for its own target while loading' {
         $null = Register-Completer -LiteralPath $script:ReentrantFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
         $stub = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
