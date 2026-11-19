@@ -2310,6 +2310,126 @@ Describe 'Packaged command help' {
         $buildOutput | Should -Match "'Reset-Completer' is defined at [^'\r\n]*CompleterActions\.psm1:\d+"
     }
 
+    It 'publishes a version once and lets a rerun continue only when the repository holds the same package' {
+        if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+        {
+            Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
+        }
+
+        if ($null -eq (Get-Module -ListAvailable -Name 'Microsoft.PowerShell.PlatyPS'))
+        {
+            Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
+        }
+
+        if ($IsWindows -and $env:GITHUB_ACTIONS -ne 'true')
+        {
+            Set-ItResult -Skipped -Because 'the PSResourceGet store cannot be redirected on Windows'
+        }
+
+        # The release job publishes before it creates the GitHub release, so rerunning it after a later step failed runs
+        # Publish_build again for a version the repository already holds, which PSGallery refuses. A rebuild on another
+        # day changes only the manifest's Generated on line; any other difference must stop the release.
+        $stagingRoot = New-TestBuildStage -Name 'publish'
+        $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+        $buildOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' build" 2>&1) -join [Environment]::NewLine
+        $LASTEXITCODE | Should -Be 0 -Because $buildOutput
+
+        $packagePath = Join-Path -Path $stagingRoot -ChildPath 'build/CompleterActions'
+        $packageManifest = Import-PowerShellDataFile -Path (Join-Path -Path $packagePath -ChildPath 'CompleterActions.psd1')
+        $version = $packageManifest.ModuleVersion
+        if (-not [string]::IsNullOrWhiteSpace($packageManifest.PrivateData.PSData.Prerelease))
+        {
+            $version = "$version-$($packageManifest.PrivateData.PSData.Prerelease)"
+        }
+
+        $repositoryPath = Join-Path -Path $TestDrive -ChildPath 'publish-repo'
+        $dataHome = Join-Path -Path $TestDrive -ChildPath 'publish-xdg'
+        New-Item -Path $repositoryPath, $dataHome -ItemType Directory | Out-Null
+        $repositoryName = 'CaLocal-{0}' -f ([guid]::NewGuid().ToString('N').Substring(0, 8))
+        $resultPath = Join-Path -Path $TestDrive -ChildPath 'publish-runs.json'
+
+        $publishScriptPath = Join-Path -Path $TestDrive -ChildPath 'publish-runs.ps1'
+        Set-Content -LiteralPath $publishScriptPath -Encoding utf8 -Value @'
+param($RepositoryName, $RepositoryPath, $BuildScriptPath, $PackagePath, $ResultPath)
+$ErrorActionPreference = 'Stop'
+# A folder repository ignores the key, but Publish-PSResource refuses an empty one.
+$env:GalleryAPI = 'test-key'
+$runs = [System.Collections.Generic.List[object]]::new()
+Register-PSResourceRepository -Name $RepositoryName -Uri $RepositoryPath -Trusted
+try
+{
+    foreach ($step in 'first', 'rebuilt', 'changed')
+    {
+        $manifestPath = Join-Path -Path $PackagePath -ChildPath 'CompleterActions.psd1'
+        if ($step -eq 'rebuilt')
+        {
+            (Get-Content -LiteralPath $manifestPath) -replace '^# Generated on: .*$', '# Generated on: 1/2/2099' | Set-Content -LiteralPath $manifestPath
+        }
+
+        if ($step -eq 'changed')
+        {
+            Add-Content -LiteralPath (Join-Path -Path $PackagePath -ChildPath 'CompleterActions.psm1') -Value '# changed after publication'
+        }
+
+        $text = $null
+        $failure = $null
+        try
+        {
+            $text = Invoke-Build -File $BuildScriptPath -Task Publish_build -Repository $RepositoryName 6>&1 | Out-String
+        }
+        catch
+        {
+            $failure = $_.Exception.Message
+        }
+
+        $runs.Add([pscustomobject] @{
+                Step     = $step
+                Text     = $text
+                Failure  = $failure
+                Packages = @(Get-ChildItem -LiteralPath $RepositoryPath -File | ForEach-Object { "$($_.Name) $((Get-FileHash -LiteralPath $_.FullName).Hash)" })
+            })
+    }
+}
+finally
+{
+    Unregister-PSResourceRepository -Name $RepositoryName -ErrorAction SilentlyContinue
+}
+
+ConvertTo-Json -InputObject $runs.ToArray() -Depth 3 | Set-Content -LiteralPath $ResultPath -Encoding utf8
+'@
+
+        $savedDataHome = $env:XDG_DATA_HOME
+        try
+        {
+            if (-not $IsWindows)
+            {
+                $env:XDG_DATA_HOME = $dataHome
+            }
+
+            $publishOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $publishScriptPath -RepositoryName $repositoryName -RepositoryPath $repositoryPath -BuildScriptPath $buildScriptPath -PackagePath $packagePath -ResultPath $resultPath 2>&1) -join [Environment]::NewLine
+            $publishExitCode = $LASTEXITCODE
+        }
+        finally
+        {
+            $env:XDG_DATA_HOME = $savedDataHome
+        }
+
+        $publishExitCode | Should -Be 0 -Because $publishOutput
+        $runs = @(Get-Content -LiteralPath $resultPath -Raw | ConvertFrom-Json)
+        $runs.Step | Should -Be @('first', 'rebuilt', 'changed')
+
+        $runs[0].Failure | Should -BeNullOrEmpty
+        @($runs[0].Packages) | Should -HaveCount 1
+        @($runs[0].Packages)[0] | Should -BeLike "CompleterActions.$version.nupkg *"
+
+        $runs[1].Failure | Should -BeNullOrEmpty -Because 'a rebuild of the published version continues the release'
+        $runs[1].Text | Should -Match "already holds CompleterActions $([regex]::Escape($version)) with the same files as '[^'\r\n]+', so nothing was published\."
+        @($runs[1].Packages) | Should -Be @($runs[0].Packages) -Because 'the rerun must not publish the version again'
+
+        $runs[2].Failure | Should -Match "already holds CompleterActions $([regex]::Escape($version)), and that copy differs from '[^'\r\n]+' in CompleterActions\.psm1\. A published version cannot be replaced"
+        @($runs[2].Packages) | Should -Be @($runs[0].Packages) -Because 'a different package must not replace the published one'
+    }
+
     It 'builds a package that writes to the host while it loads' {
         if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
         {
