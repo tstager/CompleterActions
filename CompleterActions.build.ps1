@@ -481,8 +481,9 @@ task release_check {
 
     $expectedTag = "v$expectedVersion"
 
-    # Git tag names are case-sensitive, and the release is created under the tag name exactly as pushed.
-    if ($tag -cne $expectedTag) {
+    # The release is created under the tag name exactly as pushed, so the comparison is ordinal: -cne is culture-aware,
+    # and treats tags that differ only by an ignorable character such as U+200B as equal.
+    if (-not [string]::Equals($tag, $expectedTag, [System.StringComparison]::Ordinal)) {
         throw "release_check: the $tagSource '$tag' does not match the source manifest version '$expectedVersion' (expected tag '$expectedTag')."
     }
 

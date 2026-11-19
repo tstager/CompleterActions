@@ -156,6 +156,15 @@ Describe 'Module Manifest Tests' {
             $result.Output | Should -MatchExactly "release event tag '$([regex]::Escape($caseVariantTag))' does not match the source manifest version"
         }
 
+        It 'fails for a release event tag that differs from the manifest version only by a zero-width space' {
+            # A culture-aware comparison ignores U+200B; the child's console encoding may not carry it, so the message is
+            # matched without the tag text.
+            $result = Invoke-TestReleaseCheck -EventTag "$manifestTag$([char] 0x200B)"
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '.+' does not match the source manifest version"
+        }
+
         It 'passes for a release event tag that equals the manifest version' {
             $result = Invoke-TestReleaseCheck -EventTag $manifestTag
 
