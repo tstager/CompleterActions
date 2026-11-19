@@ -1715,6 +1715,20 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
 
+        It 'rejects a Version of <Name>, which equals the text 1 only under culture-aware comparison' -TestCases @(
+            @{ Name = "'1' followed by U+200B"; Text = "1$([char]0x200B)" }
+            @{ Name = "'1' followed by U+00AD"; Text = "1$([char]0x00AD)" }
+            @{ Name = 'U+0661'; Text = [string] [char] 0x0661 }
+            @{ Name = 'U+00B9'; Text = [string] [char] 0x00B9 }
+            @{ Name = 'U+2460'; Text = [string] [char] 0x2460 }
+        ) {
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = '$Text'; Entries = @( @{ Path = '$script:ParameterFixturePath' } ) }" -Encoding utf8
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*must declare Version = 1*'
+
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
         It 'accepts a Version of <Literal>, which is the number or text 1' -TestCases @(
             @{ Literal = '1' }
             @{ Literal = '1L' }
