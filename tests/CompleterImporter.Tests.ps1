@@ -246,7 +246,7 @@ Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
 
             function script:Get-CompleterScriptParseResult
             {
-                param($LiteralPath, $ScriptContents)
+                param($LiteralPath, $Script)
 
                 $parseResult = & $script:TestParseFunction @PSBoundParameters
                 Set-Content -LiteralPath $script:TestSwapPath -Value $script:TestSwapContents -Encoding utf8
@@ -277,6 +277,137 @@ Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
             $record = Get-Completer -CommandName 'locationfixture' -Native
             $record.State | Should -Be 'Active'
             $record.ScriptBlock.File | Should -Be $scriptPath
+        }
+    }
+
+    It 'runs the script at a bracketed literal path, not a sibling the brackets match as a wildcard (<Name>)' -TestCases @(
+        @{ Name = 'bracketed folder, strict'; Folder = $true; Trusted = $false; Lazy = $false },
+        @{ Name = 'bracketed folder, trusted'; Folder = $true; Trusted = $true; Lazy = $false },
+        @{ Name = 'bracketed file name, strict'; Folder = $false; Trusted = $false; Lazy = $false },
+        @{ Name = 'bracketed folder, first-tab load'; Folder = $true; Trusted = $false; Lazy = $true }
+    ) {
+        param(
+            [bool] $Folder,
+            [bool] $Trusted,
+            [bool] $Lazy
+        )
+
+        $template = @'
+Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+
+    foreach ($completionText in @('{0}', $PSCommandPath))
+    {
+        [System.Management.Automation.CompletionResult]::new($completionText, $completionText, 'ParameterValue', $completionText)
+    }
+}
+'@
+        # '[x]' as a wildcard matches 'x', so each case has a sibling the pattern would find.
+        $scriptPath, $siblingPath = if ($Folder)
+        {
+            (Join-Path -Path $TestDrive -ChildPath '[x]/Bracket_completer.ps1'), (Join-Path -Path $TestDrive -ChildPath 'x/Bracket_completer.ps1')
+        }
+        else
+        {
+            (Join-Path -Path $TestDrive -ChildPath '[x]_completer.ps1'), (Join-Path -Path $TestDrive -ChildPath 'x_completer.ps1')
+        }
+
+        foreach ($fixture in @(@{ Path = $scriptPath; Text = 'requested-file' }, @{ Path = $siblingPath; Text = 'sibling-file' }))
+        {
+            $null = [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($fixture.Path))
+            Set-Content -LiteralPath $fixture.Path -Value $template.Replace('{0}', $fixture.Text) -Encoding utf8
+        }
+
+        $scriptPath = (Get-Item -LiteralPath $scriptPath).FullName
+        $expected = @('requested-file', $scriptPath)
+
+        if ($Lazy)
+        {
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+
+            $inputScript = 'locationfixture '
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be $expected
+
+            $record = Get-Completer -CommandName 'locationfixture' -Native
+            $record.State | Should -Be 'Active'
+            $record.ScriptBlock.File | Should -Be $scriptPath
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath -Trusted:$Trusted)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $scriptPath
+            @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
+        }
+    }
+
+    It 'reports a script that cannot be read as a file read error, not as a grammar finding (<Name>)' -TestCases @(
+        @{ Name = 'eager import'; Lazy = $false },
+        @{ Name = 'first-tab load'; Lazy = $true }
+    ) {
+        param(
+            [bool] $Lazy
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'Unreadable_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'
+Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+
+    'unreadable'
+}
+'@
+
+        if ($Lazy)
+        {
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+        }
+
+        # An exclusive handle is what an editor, a sync client or a scanner holding the file
+        # looks like to the importer: the path resolves, but reading it fails.
+        $lock = [System.IO.FileStream]::new($scriptPath, 'Open', 'ReadWrite', 'None')
+        try
+        {
+            try
+            {
+                $null = [System.IO.File]::ReadAllText($scriptPath)
+                Set-ItResult -Skipped -Because 'this platform does not enforce an exclusive file share between handles'
+                return
+            }
+            catch [System.IO.IOException]
+            {
+                $null = $_
+            }
+
+            $expectedMessage = '*Line 0, column 0 (ParseError): The file could not be read:*'
+
+            if ($Lazy)
+            {
+                $inputScript = 'locationfixture '
+                $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+                @($completion.CompletionMatches.CompletionText) | Should -Not -Contain 'unreadable'
+
+                $record = Get-Completer -CommandName 'locationfixture' -Native
+                $record.State | Should -Be 'Failed'
+                $record.LoadError | Should -BeLike $expectedMessage
+                $record.LoadError | Should -Not -BeLike '*Register-ArgumentCompleter call*'
+            }
+            else
+            {
+                $failure = { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw -PassThru
+                $failure.Exception.Message | Should -BeLike $expectedMessage
+                $failure.Exception.Message | Should -Not -BeLike '*Register-ArgumentCompleter call*'
+            }
+        }
+        finally
+        {
+            $lock.Dispose()
         }
     }
 

@@ -112,11 +112,24 @@ function Import-CompleterScript
                 # The script is read once. The grammar validates the contents this
                 # command information holds and the capture module executes the same
                 # object, so a save between the two cannot run unvalidated code.
-                $scriptInfo = $ExecutionContext.InvokeCommand.GetCommand($resolvedPath, [System.Management.Automation.CommandTypes]::ExternalScript)
+                # GetCommand looks a path with wildcard characters up as a pattern, so
+                # each '[' is passed as the class '[[]' that matches only itself, and
+                # the file it finds must be the resolved file, never a sibling.
+                $scriptInfo = $ExecutionContext.InvokeCommand.GetCommand(($resolvedPath -replace '\[', '[[]'), [System.Management.Automation.CommandTypes]::ExternalScript)
+                if ($null -eq $scriptInfo)
+                {
+                    throw "The completer script '$resolvedPath' could not be loaded as a script file. Check that it still exists and that its path does not combine backticks with brackets."
+                }
+
+                $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+                if (-not [string]::Equals($scriptInfo.Path, $resolvedPath, $pathComparison))
+                {
+                    throw "The completer script path '$resolvedPath' resolves to the different file '$($scriptInfo.Path)', so it was not loaded. Remove the backticks or wildcard characters from the path."
+                }
 
                 if (-not $Trusted)
                 {
-                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -ScriptContents $scriptInfo.ScriptContents
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptInfo
                     Assert-CompleterScriptConformance -LiteralPath $resolvedPath -ParseResult $parseResult
                 }
 
