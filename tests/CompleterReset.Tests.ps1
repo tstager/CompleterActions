@@ -368,6 +368,15 @@ Describe 'Reset-Completer' {
         $after = @(Get-Completer -CommandName 'resetfixture' -Native)
         @($after | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Pending/Managed') -Because 'editing a Reset-Completer -PassThru record does not edit the managed record'
         $after[0].ScriptPath | Should -Be $scriptPath
+
+        $alreadyPending = Reset-Completer -CommandName 'resetfixture' -Native -PassThru
+        $alreadyPending.State | Should -Be 'Pending' -Because 'resetting a pending record returns it unchanged'
+        $alreadyPending.ScriptPath = $otherPath
+        $alreadyPending.State = 'Failed'
+
+        $stillPending = @(Get-Completer -CommandName 'resetfixture' -Native)
+        @($stillPending | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Pending/Managed') -Because 'editing the record Reset-Completer -PassThru returns for an already-pending target does not edit the managed record'
+        $stillPending[0].ScriptPath | Should -Be $scriptPath
         Invoke-TestResetPress -CommandName 'resetfixture' | Should -Be @('own-value')
     }
 
