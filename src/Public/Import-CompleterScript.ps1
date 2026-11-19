@@ -112,19 +112,36 @@ function Import-CompleterScript
                 # The script is read once. The grammar validates the contents this
                 # command information holds and the capture module executes the same
                 # object, so a save between the two cannot run unvalidated code.
-                # GetCommand looks a path with wildcard characters up as a pattern, so
-                # each '[' is passed as the class '[[]' that matches only itself, and
-                # the file it finds must be the resolved file, never a sibling.
-                $scriptInfo = $ExecutionContext.InvokeCommand.GetCommand(($resolvedPath -replace '\[', '[[]'), [System.Management.Automation.CommandTypes]::ExternalScript)
-                if ($null -eq $scriptInfo)
+                # GetCommand looks a path with wildcard characters up as a pattern and
+                # has no literal mode. Passing each '[', '*' and '?' as a class that
+                # matches only itself finds most paths exactly, but a backtick in the
+                # path defeats that form while the plain path then finds the file. So
+                # both forms are tried in turn, and only command information for the
+                # resolved file itself is accepted, never a sibling a pattern matched.
+                $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+                $scriptInfo = $null
+                $otherPath = $null
+                foreach ($lookupPath in @(($resolvedPath -replace '[\[*?]', '[$0]'), $resolvedPath))
                 {
-                    throw "The completer script '$resolvedPath' could not be loaded as a script file. Check that it still exists and that its path does not combine backticks with brackets."
+                    $candidate = try { $ExecutionContext.InvokeCommand.GetCommand($lookupPath, [System.Management.Automation.CommandTypes]::ExternalScript) } catch { $null }
+                    if ($null -eq $candidate) { continue }
+                    if ([string]::Equals($candidate.Path, $resolvedPath, $pathComparison))
+                    {
+                        $scriptInfo = $candidate
+                        break
+                    }
+
+                    $otherPath = $candidate.Path
                 }
 
-                $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
-                if (-not [string]::Equals($scriptInfo.Path, $resolvedPath, $pathComparison))
+                if ($null -eq $scriptInfo)
                 {
-                    throw "The completer script path '$resolvedPath' resolves to the different file '$($scriptInfo.Path)', so it was not loaded. Remove the backticks or wildcard characters from the path."
+                    if ($null -ne $otherPath)
+                    {
+                        throw "The completer script path '$resolvedPath' resolves to the different file '$otherPath', so it was not loaded. Remove the backticks or wildcard characters from the path."
+                    }
+
+                    throw "The completer script '$resolvedPath' could not be loaded as a script file. Check that it still exists."
                 }
 
                 if (-not $Trusted)

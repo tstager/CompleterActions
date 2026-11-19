@@ -281,13 +281,17 @@ Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
     }
 
     It 'runs the script at a bracketed literal path, not a sibling the brackets match as a wildcard (<Name>)' -TestCases @(
-        @{ Name = 'bracketed folder, strict'; Folder = $true; Trusted = $false; Lazy = $false },
-        @{ Name = 'bracketed folder, trusted'; Folder = $true; Trusted = $true; Lazy = $false },
-        @{ Name = 'bracketed file name, strict'; Folder = $false; Trusted = $false; Lazy = $false },
-        @{ Name = 'bracketed folder, first-tab load'; Folder = $true; Trusted = $false; Lazy = $true }
+        @{ Name = 'bracketed folder, strict'; Script = '[x]/Bracket_completer.ps1'; Sibling = 'x/Bracket_completer.ps1'; Trusted = $false; Lazy = $false },
+        @{ Name = 'bracketed folder, trusted'; Script = '[x]/Bracket_completer.ps1'; Sibling = 'x/Bracket_completer.ps1'; Trusted = $true; Lazy = $false },
+        @{ Name = 'bracketed file name, strict'; Script = '[x]_completer.ps1'; Sibling = 'x_completer.ps1'; Trusted = $false; Lazy = $false },
+        @{ Name = 'bracketed folder, first-tab load'; Script = '[x]/Bracket_completer.ps1'; Sibling = 'x/Bracket_completer.ps1'; Trusted = $false; Lazy = $true },
+        @{ Name = 'backtick and bracket in the file name, strict'; Script = 'c`d[x]_completer.ps1'; Sibling = 'cdx_completer.ps1'; Trusted = $false; Lazy = $false },
+        @{ Name = 'backtick and bracket in the folder, trusted'; Script = 'c`d[x]/Bracket_completer.ps1'; Sibling = 'cdx/Bracket_completer.ps1'; Trusted = $true; Lazy = $false },
+        @{ Name = 'backtick in the folder, bracketed file name, first-tab load'; Script = 'tw`o/[x]_completer.ps1'; Sibling = 'tw`o/x_completer.ps1'; Trusted = $false; Lazy = $true }
     ) {
         param(
-            [bool] $Folder,
+            [string] $Script,
+            [string] $Sibling,
             [bool] $Trusted,
             [bool] $Lazy
         )
@@ -304,15 +308,10 @@ Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
     }
 }
 '@
-        # '[x]' as a wildcard matches 'x', so each case has a sibling the pattern would find.
-        $scriptPath, $siblingPath = if ($Folder)
-        {
-            (Join-Path -Path $TestDrive -ChildPath '[x]/Bracket_completer.ps1'), (Join-Path -Path $TestDrive -ChildPath 'x/Bracket_completer.ps1')
-        }
-        else
-        {
-            (Join-Path -Path $TestDrive -ChildPath '[x]_completer.ps1'), (Join-Path -Path $TestDrive -ChildPath 'x_completer.ps1')
-        }
+        # '[x]' as a wildcard matches 'x' and a backtick escapes the next character, so
+        # each case has a sibling the path would find if it were read as a pattern.
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath $Script
+        $siblingPath = Join-Path -Path $TestDrive -ChildPath $Sibling
 
         foreach ($fixture in @(@{ Path = $scriptPath; Text = 'requested-file' }, @{ Path = $siblingPath; Text = 'sibling-file' }))
         {
