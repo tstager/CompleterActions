@@ -3367,6 +3367,50 @@ function Register-TestIdentitySameArgument
                 [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = ' yes ' } | Get-Completer
             } | Should -Throw "*' yes ' for IsNative, which is not a Boolean value*"
         }
+
+        It 'rejects a collection or another kind of object for the kind or tier and registers nothing' {
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; Native = @($false, $false); ScriptBlock = { 'from-row' }; Trusted = @($false, $false) } |
+                    Register-Completer
+            } | Should -Throw '*a collection for Native, which takes a single Boolean value*'
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; ScriptBlock = { 'from-row' }; Trusted = @($false) } |
+                    Register-Completer
+            } | Should -Throw '*a collection for Trusted, which takes a single Boolean value*'
+
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool:Name'; IsNative = [pscustomobject] @{ Value = $false } } | Get-Completer
+            } | Should -Throw '*type System.Management.Automation.PSCustomObject for IsNative, which is not a Boolean value*'
+
+            Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
+            Get-TestIdentityState -CompleterType Native | Should -BeNullOrEmpty
+
+            $scriptPath = Join-Path -Path $TestDrive -ChildPath 'identity-collection.ps1'
+            Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value "Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'from-set' }"
+            $setPath = Join-Path -Path $TestDrive -ChildPath 'identity-collection.psd1'
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = $false; SourcePath = $scriptPath; Trusted = @($false, $false) } | Export-CompleterSet -Path $setPath
+            } | Should -Throw '*a collection for Trusted, which takes a single Boolean value*'
+            Test-Path -LiteralPath $setPath | Should -BeFalse
+        }
+
+        It 'reads a Boolean, switch, number, or null for the kind and tier' {
+            $parameter = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; Native = 0; ScriptBlock = { 'from-row' }; Trusted = $null } |
+                Register-Completer -PassThru
+            $parameter.CompleterType | Should -Be 'Parameter'
+            $parameter.Trusted | Should -BeFalse
+
+            $trusted = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; IsNative = [switch]::new($false); ScriptBlock = { 'from-row' }; Trusted = 1 } |
+                Register-Completer -Force -PassThru
+            $trusted.CompleterType | Should -Be 'Parameter'
+            $trusted.Trusted | Should -BeTrue
+
+            $native = [pscustomobject] @{ CommandName = 'Test-IdentityTool:Name'; Native = [switch]::new($true); ScriptBlock = { 'native-result' }; Trusted = $false } |
+                Register-Completer -PassThru
+            $native.CompleterType | Should -Be 'Native'
+            $native.Trusted | Should -BeFalse
+        }
     }
 }
 

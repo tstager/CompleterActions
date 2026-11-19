@@ -101,10 +101,11 @@ indicator is rejected; keys are output-only identifiers and are never
 classified by their shape. ScriptPath or SourcePath and
 Trusted properties, such as those on Import-CompleterScript records, are
 carried onto the managed record. IsNative, Native, and Trusted take a Boolean
-value, a number, where zero is False, or the text 'True' or 'False' in any
-letter case, with or without white space around it, as Export-Csv writes a
-Boolean. A null value, or text that is empty or only white space, counts as
-False, and any other text is rejected.
+or switch value, a number, where zero is False, or the text 'True' or 'False'
+in any letter case, with or without white space around it, as Export-Csv
+writes a Boolean. A null value, or text that is empty or only white space,
+counts as False. Any other text, a collection such as an array, even one that
+holds a single value, and any other kind of object are rejected.
 An ImportModule property is ignored: the managed record's ImportModule is the
 capture module Import-CompleterScript ran the script in, and only for a script
 block the import emitted. CommandName, or RuntimeKey, names the target
