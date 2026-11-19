@@ -69,10 +69,10 @@ Import-Module .\CompleterActions.psd1
 
 ### Import the built module output
 
-The packaged module loads `build\CompleterActions\lib\CompleterActions.Core.dll`, which git does not track either. `build` compiles the assembly, places it there, and regenerates the package.
+The packaged module loads `build\CompleterActions\lib\CompleterActions.Core.dll`, which git does not track either. The same `compile` step copies the assembly there too, so run it once per clone; skip it if you already ran it above, because it cannot overwrite an assembly that the current session has loaded. `build` is not needed here: it regenerates the tracked package and also needs the `Microsoft.PowerShell.PlatyPS` module.
 
 ```powershell
-Invoke-Build -Task build
+Invoke-Build -Task compile
 Import-Module .\build\CompleterActions\CompleterActions.psd1
 ```
 
