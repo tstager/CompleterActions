@@ -508,7 +508,10 @@ THE STRICT GRAMMAR
       body would run at import time.
     - Use only `-CommandName`, `-ParameterName`, the bare `-Native` switch, and
       `-ScriptBlock`, always by name. Positional arguments and splatting are
-      not supported.
+      not supported. Name each parameter once and follow `-CommandName`,
+      `-ParameterName`, and `-ScriptBlock` with their values: PowerShell
+      cannot bind a repeated parameter or one left without its value, so
+      `Test-CompleterScript` reports both at the offending parameter.
     - Keep `-CommandName` and `-ParameterName` literal: a literal string, a
       literal string array, or a literal `@('tool', 'tool.exe')` expression.
       An array with a redirection or a trailing `&` inside it, such as

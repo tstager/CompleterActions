@@ -495,7 +495,8 @@ public static class StrictGrammar
                 ancestor = ancestor.Parent;
             }
 
-            string? currentParameter = null;
+            // The parameter whose value the next element must supply, if any.
+            CommandParameterAst? pendingParameter = null;
 
             // The 2.2.0 walk kept these in an [ordered] dictionary, whose keys compare with the
             // current culture, ignoring case.
@@ -512,6 +513,20 @@ public static class StrictGrammar
                         return;
                     }
 
+                    // PowerShell binds no parameter as the value of another, so a parameter that
+                    // follows one still owed a value fails with a missing-argument error.
+                    if (pendingParameter is not null)
+                    {
+                        AddFinding(pendingParameter.Extent, GrammarMessages.ConstructCommandParameterAst, GrammarMessages.MissingArgumentMessage(pendingParameter.ParameterName), GrammarMessages.MissingArgumentHint(pendingParameter.ParameterName));
+                        return;
+                    }
+
+                    if (!seenParameters.Add(parameterName))
+                    {
+                        AddFinding(commandElement.Extent, GrammarMessages.ConstructCommandParameterAst, GrammarMessages.DuplicateRegisterParameterMessage(parameterName), GrammarMessages.DuplicateRegisterParameterHint);
+                        return;
+                    }
+
                     if (commandParameterAst.Argument is not null)
                     {
                         if (NameEquals(parameterName, "Native"))
@@ -521,18 +536,12 @@ public static class StrictGrammar
                         }
 
                         TestIsSupportedRegisterArgumentAst(commandParameterAst.Argument, parameterName);
-                        currentParameter = null;
                     }
-                    else if (NameEquals(parameterName, "Native"))
+                    else if (!NameEquals(parameterName, "Native"))
                     {
-                        currentParameter = null;
-                    }
-                    else
-                    {
-                        currentParameter = parameterName;
+                        pendingParameter = commandParameterAst;
                     }
 
-                    seenParameters.Add(parameterName);
                     continue;
                 }
 
@@ -542,19 +551,19 @@ public static class StrictGrammar
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(currentParameter))
+                if (pendingParameter is null)
                 {
                     AddFinding(commandElement.Extent, commandElement.GetType().Name, GrammarMessages.PositionalArgumentMessage, GrammarMessages.PositionalArgumentHint);
                     return;
                 }
 
-                TestIsSupportedRegisterArgumentAst(commandElement, currentParameter);
-                currentParameter = null;
+                TestIsSupportedRegisterArgumentAst(commandElement, pendingParameter.ParameterName);
+                pendingParameter = null;
             }
 
-            if (!string.IsNullOrWhiteSpace(currentParameter))
+            if (pendingParameter is not null)
             {
-                AddFinding(commandAst.Extent, GrammarMessages.ConstructCommandAst, GrammarMessages.MissingArgumentMessage(currentParameter), GrammarMessages.MissingArgumentHint(currentParameter));
+                AddFinding(commandAst.Extent, GrammarMessages.ConstructCommandAst, GrammarMessages.MissingArgumentMessage(pendingParameter.ParameterName), GrammarMessages.MissingArgumentHint(pendingParameter.ParameterName));
                 return;
             }
 

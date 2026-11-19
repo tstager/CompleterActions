@@ -101,6 +101,10 @@ internal static class GrammarMessages
 
     internal const string UnsupportedRegisterParameterHint = "Use only -CommandName, -ParameterName, -Native, and -ScriptBlock.";
 
+    internal static string DuplicateRegisterParameterMessage(string parameterName) => $"The script specifies Register-ArgumentCompleter parameter '-{parameterName}' more than once.";
+
+    internal const string DuplicateRegisterParameterHint = "Name each parameter once; PowerShell refuses to bind a repeated parameter. Pass several command names as one literal array, such as -CommandName 'tool', 'tool.exe'.";
+
     internal const string NativeArgumentMessage = "The script uses an argument for -Native.";
 
     internal const string NativeArgumentHint = "Use the bare -Native switch.";
