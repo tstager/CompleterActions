@@ -790,6 +790,37 @@ function global:Test-ImportProbeHelper
             $imported.Count | Should -Be 1
             $imported[0].Key | Should -Be 'test-importprobetool:name'
             Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeFalse
+            & (Get-Module -Name 'CompleterActions') {
+                Get-Command -Name 'Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+            } | Should -BeNullOrEmpty
+        }
+
+        It 'keeps helpers and the capture shim from replacing module commands or disabling the strict gate' {
+            $shadowing = Write-AdversarialImportScript -Name 'module command shadowing helpers' -Script @'
+function Get-CompleterScriptFinding
+{
+}
+
+{Registration}
+'@
+            $violating = Write-AdversarialImportScript -Name 'strict violation after shadowing' -Script @'
+Set-Content -LiteralPath '{ProbePath}' -Value 'ran'
+
+{Registration}
+'@
+            $module = Get-Module -Name 'CompleterActions'
+            $findingDefinition = & $module { (Get-Command -Name 'Get-CompleterScriptFinding' -CommandType Function).Definition }
+
+            Test-CompleterScript -LiteralPath $shadowing.ScriptPath | Should -BeNullOrEmpty
+            @(Import-CompleterScript -LiteralPath $shadowing.ScriptPath).Count | Should -Be 1
+
+            & $module { (Get-Command -Name 'Get-CompleterScriptFinding' -CommandType Function).Definition } | Should -BeExactly $findingDefinition
+            & $module { (Get-Command -Name 'Register-ArgumentCompleter').CommandType } | Should -Be 'Cmdlet'
+
+            {
+                Import-CompleterScript -LiteralPath $violating.ScriptPath
+            } | Should -Throw '*does not conform to the strict import grammar*'
+            Test-ImportProbeFired -ProbePath $violating.ProbePath | Should -BeFalse
         }
     }
 
