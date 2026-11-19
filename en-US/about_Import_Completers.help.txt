@@ -512,7 +512,10 @@ THE STRICT GRAMMAR
       `local:`, and `private:` helpers stay inside the import scope.
     - Use only `-CommandName`, `-ParameterName`, the bare `-Native` switch, and
       `-ScriptBlock`, always by name. Positional arguments and splatting are
-      not supported.
+      not supported. Name each parameter once and follow `-CommandName`,
+      `-ParameterName`, and `-ScriptBlock` with their values: PowerShell
+      cannot bind a repeated parameter or one left without its value, so
+      `Test-CompleterScript` reports both.
     - Keep `-CommandName` and `-ParameterName` literal: a literal string, a
       literal string array, or a literal `@('tool', 'tool.exe')` expression.
       An array with a redirection or a trailing `&` inside it, such as
@@ -520,7 +523,9 @@ THE STRICT GRAMMAR
       redirection there would write a file while the script is imported.
       `Test-CompleterScript` reports it, and `Import-CompleterScript` and
       `Register-Completer -Lazy` refuse the script, even when the
-      redirection writes nothing.
+      redirection writes nothing. Every name must be non-empty:
+      PowerShell cannot bind an empty string, and the importer refuses a
+      blank name, so `Test-CompleterScript` reports `''` and `' '`.
     - Keep `-ScriptBlock` a literal `{ ... }` block, not a variable.
     - Move cache initialization, alias bootstrap, tool discovery, generated
       completion loading, and every other piece of setup into functions that

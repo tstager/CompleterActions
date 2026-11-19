@@ -75,10 +75,15 @@ remain importable through the strict tier without redesign. Run
   - `-ScriptBlock`
 - Use explicit parameter names only. Positional registration arguments and
   argument splatting are not supported.
+- Name each parameter once, and give `-CommandName`, `-ParameterName`, and
+  `-ScriptBlock` a value. PowerShell cannot bind a repeated parameter or one
+  left without its value.
 - Keep target metadata literal:
   - `-CommandName` and `-ParameterName` may be a single literal string
   - a literal string array
   - or a literal `@('name', 'name.exe')` array expression
+  - and every name must be non-empty: an empty or blank name cannot be bound
+    or imported
 - Keep `-ScriptBlock` literal.
 - Keep `Register-ArgumentCompleter` calls at script scope, not inside nested
   functions or nested script blocks.

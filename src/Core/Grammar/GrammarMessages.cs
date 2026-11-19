@@ -39,6 +39,10 @@ internal static class GrammarMessages
 
     internal static string LiteralStringValuesHint(string parameterName) => $"Replace the -{parameterName} value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed.";
 
+    internal static string BlankNameMessage(string parameterName) => $"The script uses an empty or blank name for -{parameterName}.";
+
+    internal static string BlankNameHint(string parameterName) => $"Give every -{parameterName} value a real name; PowerShell refuses to bind an empty string, and Import-CompleterScript refuses a blank name.";
+
     // Test-ImportSafeExpressionAst
     internal const string SplattingMessage = "The script uses argument splatting at script scope.";
 
@@ -104,6 +108,10 @@ internal static class GrammarMessages
     internal static string UnsupportedRegisterParameterMessage(string parameterName) => $"The script uses unsupported Register-ArgumentCompleter parameter '-{parameterName}'.";
 
     internal const string UnsupportedRegisterParameterHint = "Use only -CommandName, -ParameterName, -Native, and -ScriptBlock.";
+
+    internal static string DuplicateRegisterParameterMessage(string parameterName) => $"The script specifies Register-ArgumentCompleter parameter '-{parameterName}' more than once.";
+
+    internal const string DuplicateRegisterParameterHint = "Name each parameter once; PowerShell refuses to bind a repeated parameter. Pass several command names as one literal array, such as -CommandName 'tool', 'tool.exe'.";
 
     internal const string NativeArgumentMessage = "The script uses an argument for -Native.";
 

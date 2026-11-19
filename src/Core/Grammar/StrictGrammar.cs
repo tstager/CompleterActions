@@ -133,27 +133,28 @@ public static class StrictGrammar
                 return;
             }
 
-            if (argumentAst is StringConstantExpressionAst)
+            IReadOnlyList<Ast>? elements = argumentAst switch
             {
+                StringConstantExpressionAst => new[] { argumentAst },
+                ArrayLiteralAst arrayLiteralAst => arrayLiteralAst.Elements,
+                ArrayExpressionAst arrayExpressionAst => GetLiteralArrayExpressionElement(arrayExpressionAst),
+                _ => null,
+            };
+
+            if (elements is null || !elements.All(element => element is StringConstantExpressionAst))
+            {
+                AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
                 return;
             }
 
-            IReadOnlyList<Ast>? elements = null;
-            if (argumentAst is ArrayLiteralAst arrayLiteralAst)
+            // PowerShell refuses to bind an empty name, and the importer refuses a blank one.
+            foreach (StringConstantExpressionAst element in elements.Cast<StringConstantExpressionAst>())
             {
-                elements = arrayLiteralAst.Elements;
+                if (string.IsNullOrWhiteSpace(element.Value))
+                {
+                    AddFinding(element.Extent, element.GetType().Name, GrammarMessages.BlankNameMessage(parameterName), GrammarMessages.BlankNameHint(parameterName));
+                }
             }
-            else if (argumentAst is ArrayExpressionAst arrayExpressionAst)
-            {
-                elements = GetLiteralArrayExpressionElement(arrayExpressionAst);
-            }
-
-            if (elements is not null && elements.All(element => element is StringConstantExpressionAst))
-            {
-                return;
-            }
-
-            AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
         }
 
         // Recognizes @('name') and @('name', 'name.exe'). The array expression runs when the script
@@ -505,11 +506,12 @@ public static class StrictGrammar
                 ancestor = ancestor.Parent;
             }
 
-            string? currentParameter = null;
+            // The parameter whose value the next element must supply, if any.
+            CommandParameterAst? pendingParameter = null;
 
-            // The 2.2.0 walk kept these in an [ordered] dictionary, whose keys compare with the
-            // current culture, ignoring case.
-            var seenParameters = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+            // Compared as the parameter binder compares names, so the duplicate and required-parameter
+            // checks agree with PowerShell in every culture.
+            var seenParameters = new HashSet<string>(NameComparer);
 
             foreach (CommandElementAst commandElement in commandAst.CommandElements.Skip(1))
             {
@@ -522,6 +524,20 @@ public static class StrictGrammar
                         return;
                     }
 
+                    // PowerShell binds no parameter as the value of another, so a parameter that
+                    // follows one still owed a value fails with a missing-argument error.
+                    if (pendingParameter is not null)
+                    {
+                        AddFinding(pendingParameter.Extent, GrammarMessages.ConstructCommandParameterAst, GrammarMessages.MissingArgumentMessage(pendingParameter.ParameterName), GrammarMessages.MissingArgumentHint(pendingParameter.ParameterName));
+                        return;
+                    }
+
+                    if (!seenParameters.Add(parameterName))
+                    {
+                        AddFinding(commandElement.Extent, GrammarMessages.ConstructCommandParameterAst, GrammarMessages.DuplicateRegisterParameterMessage(parameterName), GrammarMessages.DuplicateRegisterParameterHint);
+                        return;
+                    }
+
                     if (commandParameterAst.Argument is not null)
                     {
                         if (NameEquals(parameterName, "Native"))
@@ -531,18 +547,12 @@ public static class StrictGrammar
                         }
 
                         TestIsSupportedRegisterArgumentAst(commandParameterAst.Argument, parameterName);
-                        currentParameter = null;
                     }
-                    else if (NameEquals(parameterName, "Native"))
+                    else if (!NameEquals(parameterName, "Native"))
                     {
-                        currentParameter = null;
-                    }
-                    else
-                    {
-                        currentParameter = parameterName;
+                        pendingParameter = commandParameterAst;
                     }
 
-                    seenParameters.Add(parameterName);
                     continue;
                 }
 
@@ -552,19 +562,19 @@ public static class StrictGrammar
                     return;
                 }
 
-                if (string.IsNullOrWhiteSpace(currentParameter))
+                if (pendingParameter is null)
                 {
                     AddFinding(commandElement.Extent, commandElement.GetType().Name, GrammarMessages.PositionalArgumentMessage, GrammarMessages.PositionalArgumentHint);
                     return;
                 }
 
-                TestIsSupportedRegisterArgumentAst(commandElement, currentParameter);
-                currentParameter = null;
+                TestIsSupportedRegisterArgumentAst(commandElement, pendingParameter.ParameterName);
+                pendingParameter = null;
             }
 
-            if (!string.IsNullOrWhiteSpace(currentParameter))
+            if (pendingParameter is not null)
             {
-                AddFinding(commandAst.Extent, GrammarMessages.ConstructCommandAst, GrammarMessages.MissingArgumentMessage(currentParameter), GrammarMessages.MissingArgumentHint(currentParameter));
+                AddFinding(commandAst.Extent, GrammarMessages.ConstructCommandAst, GrammarMessages.MissingArgumentMessage(pendingParameter.ParameterName), GrammarMessages.MissingArgumentHint(pendingParameter.ParameterName));
                 return;
             }
 

@@ -145,6 +145,125 @@ Describe 'Test-CompleterScript' {
         $importError.Exception.Message | Should -Match ([regex]::Escape($finding.Hint))
     }
 
+    It 'reports a registration PowerShell cannot bind because it <Name>' -TestCases @(
+        @{
+            Name         = 'repeats -CommandName'
+            Registration = "Register-ArgumentCompleter -CommandName 'unbound' -CommandName 'unbound.exe' -Native -ScriptBlock { 'ok' }"
+            Offending    = "-CommandName 'unbound.exe'"
+            Message      = "The script specifies Register-ArgumentCompleter parameter '-CommandName' more than once."
+        },
+        @{
+            Name         = 'repeats -Native'
+            Registration = "Register-ArgumentCompleter -Native -CommandName 'unbound' -Native -ScriptBlock { 'ok' }"
+            Offending    = "-Native -ScriptBlock"
+            Message      = "The script specifies Register-ArgumentCompleter parameter '-Native' more than once."
+        },
+        @{
+            Name         = 'gives -CommandName no value before -Native'
+            Registration = "Register-ArgumentCompleter -CommandName -Native -ScriptBlock { 'ok' }"
+            Offending    = '-CommandName'
+            Message      = 'The script is missing the argument for -CommandName.'
+        },
+        @{
+            Name         = 'gives -ParameterName no value before -ScriptBlock'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-UnboundTool' -ParameterName -ScriptBlock { 'ok' }"
+            Offending    = '-ParameterName'
+            Message      = 'The script is missing the argument for -ParameterName.'
+        }
+    ) {
+        param(
+            [string] $Name,
+            [string] $Registration,
+            [string] $Offending,
+            [string] $Message
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath (($Name -replace '[^A-Za-z0-9]+', '-') + '_completer.ps1')
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be 'CommandParameterAst'
+        $findings[0].Line | Should -Be 1
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Offending) + 1)
+        $findings[0].Message | Should -Be $Message
+        { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw '*does not conform to the strict import grammar*'
+    }
+
+    It 'compares Register-ArgumentCompleter parameter names as PowerShell does under the tr-TR culture' {
+        $repeatPath = Join-Path -Path $TestDrive -ChildPath 'tr-repeat_completer.ps1'
+        $repeat = "Register-ArgumentCompleter -CommandName 'unbound' -Native -ScriptBlock { 'ok' } -SCRIPTBLOCK { 'ok' }"
+        Set-Content -LiteralPath $repeatPath -Value $repeat -Encoding utf8
+        $upperPath = Join-Path -Path $TestDrive -ChildPath 'tr-upper_completer.ps1'
+        Set-Content -LiteralPath $upperPath -Value "Register-ArgumentCompleter -COMMANDNAME 'unbound' -NATIVE -SCRIPTBLOCK { 'ok' }" -Encoding utf8
+
+        $originalCulture = [System.Globalization.CultureInfo]::CurrentCulture
+        try
+        {
+            [System.Globalization.CultureInfo]::CurrentCulture = 'tr-TR'
+            $repeatFindings = @(Test-CompleterScript -LiteralPath $repeatPath)
+            $upperFindings = @(Test-CompleterScript -LiteralPath $upperPath)
+        }
+        finally
+        {
+            [System.Globalization.CultureInfo]::CurrentCulture = $originalCulture
+        }
+
+        $repeatFindings.Count | Should -Be 1
+        $repeatFindings[0].Construct | Should -Be 'CommandParameterAst'
+        $repeatFindings[0].Column | Should -Be ($repeat.IndexOf('-SCRIPTBLOCK') + 1)
+        $repeatFindings[0].Message | Should -Be "The script specifies Register-ArgumentCompleter parameter '-SCRIPTBLOCK' more than once."
+        $upperFindings.Count | Should -Be 0
+    }
+
+    It 'reports a registration that gives <Name>' -TestCases @(
+        @{
+            Name         = '-CommandName an empty string'
+            Registration = "Register-ArgumentCompleter -CommandName '' -Native -ScriptBlock { 'ok' }"
+            Offending    = "''"
+            Parameter    = 'CommandName'
+        },
+        @{
+            Name         = '-CommandName an array with an empty element'
+            Registration = "Register-ArgumentCompleter -CommandName @('unbound', '') -Native -ScriptBlock { 'ok' }"
+            Offending    = "'')"
+            Parameter    = 'CommandName'
+        },
+        @{
+            Name         = '-ParameterName an empty string'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-UnboundTool' -ParameterName '' -ScriptBlock { 'ok' }"
+            Offending    = "''"
+            Parameter    = 'ParameterName'
+        },
+        @{
+            Name         = '-CommandName a blank string'
+            Registration = "Register-ArgumentCompleter -CommandName ' ' -Native -ScriptBlock { 'ok' }"
+            Offending    = "' '"
+            Parameter    = 'CommandName'
+        }
+    ) {
+        param(
+            [string] $Name,
+            [string] $Registration,
+            [string] $Offending,
+            [string] $Parameter
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath (($Name -replace '[^A-Za-z0-9]+', '-') + '_completer.ps1')
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be 'StringConstantExpressionAst'
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Offending) + 1)
+        $findings[0].Message | Should -Be "The script uses an empty or blank name for -$Parameter."
+        { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw '*does not conform to the strict import grammar*'
+    }
+
     It 'rejects directories and files that are not scripts' {
         { Test-CompleterScript -Path $script:ImportFixtureRoot } | Should -Throw '*is a directory*'
 
