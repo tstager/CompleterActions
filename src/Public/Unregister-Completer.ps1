@@ -207,7 +207,7 @@ function Unregister-Completer
                         }
                         elseif ($null -ne $removedRuntimeRegistration)
                         {
-                            $PSCmdlet.WriteObject($removedRuntimeRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $removedRuntimeRegistration))
                         }
                     }
                 }

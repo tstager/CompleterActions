@@ -1525,6 +1525,40 @@ else
         $records[0].ScriptPath | Should -BeNullOrEmpty
     }
 
+    It 'restores the untouched runtime completer when a pipeline failure undoes Unregister-Completer -AllowUnmanaged -PassThru' {
+        function Test-RemoveUnmanagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $originalScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('original', 'original', 'ParameterValue', 'original')
+        }
+
+        Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $originalScriptBlock
+
+        {
+            Unregister-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru | ForEach-Object {
+                $_.ScriptBlock = { [System.Management.Automation.CompletionResult]::new('edited', 'edited', 'ParameterValue', 'edited') }
+                $_.ScriptText = 'edited'
+                throw 'downstream failure'
+            }
+        } | Should -Throw '*downstream failure*'
+
+        $records = @(Get-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name')
+        @($records | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Discovered/Discovered')
+        [object]::ReferenceEquals($records[0].ScriptBlock, $originalScriptBlock) | Should -BeTrue -Because 'the rollback puts back the runtime script block, not the one set on the emitted copy'
+
+        $inputScript = 'Test-RemoveUnmanagedTool -Name '
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('original')
+    }
+
     It 'treats a managed record as stale after the runtime is overwritten outside the module' {
         function Test-ManagedTool
         {
