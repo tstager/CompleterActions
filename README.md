@@ -371,6 +371,8 @@ git push origin main vX.Y.Z
 
 The tag push runs `release_check`, `build`, the Pester suite, `Publish_build`, and finally creates the GitHub release. The tag must equal `v` plus `ModuleVersion` or `release_check` throws before anything is published.
 
+A failed release can be rerun. `Publish_build` publishes nothing when the PowerShell Gallery already holds that exact version, prerelease label included, with the same files as `build\CompleterActions` (the manifest's `Generated on` date line aside), so the rerun continues to the GitHub release. When the published copy differs, `Publish_build` throws and names the differing files, because a published version cannot be replaced. `Invoke-Build -Task Publish_build -Repository <name>` targets another registered repository.
+
 ## Architecture notes
 
 - `CompleterActions.psd1` is the root manifest and defines the exported functions, the compiled assembly it loads through `RequiredAssemblies` (`lib/CompleterActions.Core.dll`), formatting file, and PowerShell/Core compatibility.

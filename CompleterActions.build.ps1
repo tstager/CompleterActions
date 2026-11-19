@@ -6,7 +6,11 @@ Author: tstager
 param (
     [Parameter()]
     [String]
-    $author
+    $author,
+
+    [Parameter()]
+    [String]
+    $Repository = 'PSGallery'
 )
 
 
@@ -509,11 +513,71 @@ task release_check {
     Write-Build Green "release_check: the $tagSource '$tag' matches the source manifest version '$expectedVersion'."
 }
 
+# Synopsis: Publishes the built package to -Repository (PSGallery by default), or publishes nothing when the repository already holds that exact version with the same files, so a rerun of a partly finished release continues
 task Publish_build {
 
+    $packageManifestData = Import-PowerShellDataFile -Path (Join-Path -Path $modulepath -ChildPath "$modulename.psd1")
+    $version = $packageManifestData.ModuleVersion
+    $prerelease = $packageManifestData.PrivateData.PSData.Prerelease
 
-    Publish-PSResource -ApiKey $env:GalleryAPI -Repository PSGallery -Path $modulepath
+    if (-not [string]::IsNullOrWhiteSpace($prerelease)) {
+        $version = "$version-$prerelease"
+    }
 
+    $published = try {
+        Find-PSResource -Name $modulename -Version $version -Prerelease -Repository $Repository -ErrorAction Stop
+    }
+    catch {
+        if ($_.FullyQualifiedErrorId -notlike 'PackageNotFound,*') {
+            throw
+        }
+    }
+
+    if ($null -eq $published) {
+        Publish-PSResource -ApiKey $env:GalleryAPI -Repository $Repository -Path $modulepath
+        return
+    }
+
+    # A published version cannot be replaced, so a rerun continues only when the repository holds what this build made.
+    # Update-ModuleManifest dates the manifest, so its Generated on line is the one line a later rebuild changes.
+    $getDigest = {
+        param($Root)
+
+        foreach ($file in Get-ChildItem -LiteralPath $Root -File -Recurse) {
+            $relativePath = [System.IO.Path]::GetRelativePath($Root, $file.FullName).Replace('\', '/')
+            $hash = if ($relativePath -eq "$modulename.psd1") {
+                $text = @(Get-Content -LiteralPath $file.FullName) -notmatch '^# Generated on: ' -join "`n"
+                [System.Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($text)))
+            }
+            else {
+                (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            }
+
+            "$hash $relativePath"
+        }
+    }
+
+    $savedRoot = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath "$modulename-published-$([guid]::NewGuid().ToString('N'))"
+    New-Item -Path $savedRoot -ItemType Directory | Out-Null
+
+    try {
+        Save-PSResource -Name $modulename -Version $version -Prerelease -Repository $Repository -Path $savedRoot -SkipDependencyCheck -TrustRepository
+        $publishedPath = Join-Path -Path (Join-Path -Path $savedRoot -ChildPath $modulename) -ChildPath $packageManifestData.ModuleVersion
+        $differences = @(
+            Compare-Object -ReferenceObject @(& $getDigest $modulepath) -DifferenceObject @(& $getDigest $publishedPath) -CaseSensitive |
+                ForEach-Object { ($_.InputObject -split ' ', 2)[1] } |
+                Sort-Object -Unique
+        )
+    }
+    finally {
+        Remove-Item -LiteralPath $savedRoot -Recurse -Force
+    }
+
+    if ($differences.Count -gt 0) {
+        throw "Publish_build: $Repository already holds $modulename $version, and that copy differs from '$modulepath' in $($differences -join ', '). A published version cannot be replaced, so publish this build under a new version."
+    }
+
+    Write-Build Green "Publish_build: $Repository already holds $modulename $version with the same files as '$modulepath', so nothing was published."
 }
 
 # Synopsis: Default task
