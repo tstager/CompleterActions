@@ -112,6 +112,26 @@ Describe 'Test-CompleterScript' {
         $findings[1].Hint | Should -Match 'function that the completer calls lazily'
     }
 
+    It 'reports a <Block> block in a script with no end block and keeps checking later paths' -TestCases @(
+        @{ Block = 'begin' },
+        @{ Block = 'process' },
+        @{ Block = 'dynamicparam' },
+        @{ Block = 'clean' }
+    ) {
+        param(
+            [string] $Block
+        )
+
+        $namedBlockPath = Join-Path -Path $TestDrive -ChildPath ('{0}Only_completer.ps1' -f $Block)
+        Set-Content -LiteralPath $namedBlockPath -Value ('{0} {{ }}' -f $Block) -Encoding utf8
+        $nonConformingPath = Join-Path -Path $script:ImportFixtureRoot -ChildPath 'GuardedObjectStateCompleter.ps1'
+
+        $findings = @(Test-CompleterScript -LiteralPath $namedBlockPath, $nonConformingPath)
+
+        @($findings | Where-Object -Property Path -EQ -Value $namedBlockPath).Construct | Should -Be @('NamedBlockAst', 'ScriptBlockAst')
+        @($findings | Where-Object -Property Path -EQ -Value $nonConformingPath).Construct | Should -Be @('ConvertExpressionAst')
+    }
+
     It 'reports parse errors as findings without checking the grammar' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'ParseErrorCompleter.ps1'
         Set-Content -LiteralPath $scriptPath -Value 'function {' -Encoding utf8

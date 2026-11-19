@@ -72,7 +72,7 @@ public static class StrictGrammar
     /// <param name="ast">The script's AST, as the parser produced it from a script without parse errors.</param>
     /// <returns>Every unsupported construct, in source walk order; empty for a conforming script.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="ast"/> is <see langword="null"/>.</exception>
-    /// <exception cref="InvalidOperationException">The script has named blocks and no end block.</exception>
+    /// <exception cref="InvalidOperationException">The AST has no blocks at all, a shape the parser never produces.</exception>
     public static IReadOnlyList<GrammarFinding> Test(ScriptBlockAst ast)
     {
         ArgumentNullException.ThrowIfNull(ast);
@@ -622,10 +622,13 @@ public static class StrictGrammar
                 }
             }
 
+            bool hasNamedBlock = false;
+
             foreach (Ast? namedBlock in new Ast?[] { ast.ParamBlock, ast.BeginBlock, ast.ProcessBlock, ast.DynamicParamBlock, ast.CleanBlock })
             {
                 if (namedBlock is not null)
                 {
+                    hasNamedBlock = true;
                     string blockTypeName = namedBlock.GetType().Name;
                     AddFinding(namedBlock.Extent, blockTypeName, GrammarMessages.UnsupportedSyntaxMessage(blockTypeName), GrammarMessages.NamedBlockHint);
                 }
@@ -636,14 +639,18 @@ public static class StrictGrammar
                 AddFinding(traps[0].Extent, GrammarMessages.ConstructTrapStatementAst, GrammarMessages.TrapMessage, GrammarMessages.TrapHint);
             }
 
-            if (ast.EndBlock is null)
+            // The parser leaves out the end block only when the script declares another named
+            // block, which the loop above has already reported, so there is nothing more to walk.
+            if (ast.EndBlock is not null)
+            {
+                foreach (StatementAst statement in ast.EndBlock.Statements)
+                {
+                    TestImportSafeStatementAst(statement, allowAssignment: false);
+                }
+            }
+            else if (!hasNamedBlock)
             {
                 throw new InvalidOperationException(GrammarMessages.MissingEndBlockError);
-            }
-
-            foreach (StatementAst statement in ast.EndBlock.Statements)
-            {
-                TestImportSafeStatementAst(statement, allowAssignment: false);
             }
 
             // One pass collects what the 2.2.0 walk found with three FindAll calls; FindAll visits in

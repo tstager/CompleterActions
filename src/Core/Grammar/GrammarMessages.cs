@@ -173,7 +173,8 @@ internal static class GrammarMessages
     internal const string MissingRegistrationHint = "Add a script-scope Register-ArgumentCompleter call with -CommandName, -ScriptBlock, and either -Native or -ParameterName.";
 
     // The 2.2.0 walk passed each end-block statement to a [ValidateNotNull()] parameter named
-    // StatementAst. A script with named blocks and no end block has no end block to walk, and the
-    // walk failed with the parameter binder's message instead of returning findings.
+    // StatementAst and failed with the parameter binder's message when a script had no end block.
+    // A script with another named block now returns that block's finding instead; the message
+    // remains for an AST with no blocks at all, which only a hand-built ScriptBlockAst can be.
     internal const string MissingEndBlockError = "Cannot validate argument on parameter 'StatementAst'. The argument is null. Provide a valid value for the argument, and then try running the command again.";
 }
