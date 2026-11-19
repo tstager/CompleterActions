@@ -20,11 +20,11 @@ file, so $PSScriptRoot and $PSCommandPath inside a completer name the script's
 directory and path exactly as they do when the script is dot-sourced.
 
 Compatible strict-tier completer scripts must be self-contained and must keep script scope
-limited to Set-StrictMode, function definitions, importer-safe if statements,
-and script-scope Register-ArgumentCompleter calls. Register-ArgumentCompleter
-usage must use explicit parameter names and only the supported import-time
-surface: -CommandName, -ParameterName, the bare -Native switch, and
--ScriptBlock.
+limited to Set-StrictMode, function definitions without the global: qualifier,
+importer-safe if statements, and script-scope Register-ArgumentCompleter calls.
+Register-ArgumentCompleter usage must use explicit parameter names and only the
+supported import-time surface: -CommandName, -ParameterName, the bare -Native
+switch, and -ScriptBlock.
 
 Target metadata must stay literal. -CommandName and -ParameterName may be a
 single literal string, a literal string array, or a literal @('...') array

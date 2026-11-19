@@ -92,6 +92,10 @@ internal static class GrammarMessages
 
     internal const string AssignmentTargetHint = "Assign only to unqualified or $script: variables at script scope; drive-qualified and member targets change state outside the script at import time.";
 
+    internal static string GlobalFunctionMessage(string name) => $"The script defines function '{name}' in the global scope.";
+
+    internal const string GlobalFunctionHint = "Drop the global: qualifier; an unqualified or script: helper stays inside the import scope, while a global: definition changes the caller's function table at import time.";
+
     // Test-RegisterArgumentCompleterCommandAst
     internal const string NestedRegistrationMessage = "The script registers a completer from inside a nested function or script block.";
 

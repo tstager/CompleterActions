@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Management.Automation;
 using System.Management.Automation.Language;
 
 namespace CompleterActions.Internal;
@@ -403,8 +404,17 @@ public static class StrictGrammar
 
         private void TestImportSafeStatementAst(StatementAst statementAst, bool allowAssignment)
         {
-            if (statementAst is FunctionDefinitionAst)
+            if (statementAst is FunctionDefinitionAst functionDefinitionAst)
             {
+                // A definition statement runs at import time. The capture module dot-sources the
+                // script into its own scope, so unqualified, script:, local:, and private: helpers
+                // stay inside it; only global: writes the caller's function table. VariablePath
+                // classifies the qualifier the way the engine does when it defines the function.
+                if (new VariablePath(functionDefinitionAst.Name).IsGlobal)
+                {
+                    AddFinding(statementAst.Extent, GrammarMessages.ConstructFunctionDefinitionAst, GrammarMessages.GlobalFunctionMessage(functionDefinitionAst.Name), GrammarMessages.GlobalFunctionHint);
+                }
+
                 return;
             }
 
