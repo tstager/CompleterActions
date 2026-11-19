@@ -130,8 +130,12 @@ Describe 'Completer script skeleton' {
     It 'derives the stem <Stem> from <Name>' -TestCases @(
         @{ Name = 'rg'; Stem = 'Rg' }
         @{ Name = 'rg.exe'; Stem = 'Rg' }
-        @{ Name = 'cargo-binstall'; Stem = 'CargoBinstall' }
-        @{ Name = 'oh-my-posh'; Stem = 'OhMyPosh' }
+        @{ Name = 'cargo-binstall'; Stem = 'CargoBinstall_f8016b04' }
+        @{ Name = 'oh-my-posh'; Stem = 'OhMyPosh_f9e5f36d' }
+        @{ Name = 'ca-tool'; Stem = 'CaTool_8f74ce7e' }
+        @{ Name = 'ca-tool.exe'; Stem = 'CaTool_8f74ce7e' }
+        @{ Name = 'ca_tool'; Stem = 'CaTool_014e186e' }
+        @{ Name = '_a'; Stem = 'A_34fb7160' }
         @{ Name = 'DSC'; Stem = 'DSC' }
         @{ Name = '7z'; Stem = '7z' }
         @{ Name = 'npm.cmd'; Stem = 'Npm' }
@@ -146,6 +150,19 @@ Describe 'Completer script skeleton' {
         }
 
         $actual | Should -BeExactly $Stem
+    }
+
+    It 'derives a distinct stem, ignoring case, for each name that differs only in punctuation' {
+        $names = 'catool', 'ca-tool', 'ca_tool', 'ca.tool', 'ca+tool', 'c-atool', 'cat-ool', 'g', 'g+', 'g++', 'a', '_a'
+
+        $stems = @(InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Names = $names } -ScriptBlock {
+                param($Names)
+
+                $Names | ForEach-Object { ConvertTo-CompleterScriptStem -Name $_ }
+            })
+
+        $stems.Count | Should -Be $names.Count
+        @($stems | Sort-Object -Unique).Count | Should -Be $names.Count
     }
 
     It 'doubles every single-quote character the tokenizer accepts' {
@@ -743,6 +760,40 @@ switch ($Case)
         }
     }
 
+    It 'completes each command from its own table when the scripts for ca-tool and ca_tool are both dot-sourced' {
+        $dashPath = Join-Path -Path $script:CaseFolder -ChildPath 'ca-tool_completer.ps1'
+        $underscorePath = Join-Path -Path $script:CaseFolder -ChildPath 'ca_tool_completer.ps1'
+        'Commands:', '  dashonly    Only ca-tool has this' | New-CompleterScript -CommandName 'ca-tool' -Path $dashPath
+        'Commands:', '  underonly   Only ca_tool has this' | New-CompleterScript -CommandName 'ca_tool' -Path $underscorePath
+
+        Test-CompleterScript -LiteralPath $dashPath, $underscorePath | Should -BeNullOrEmpty
+
+        # A profile dot-sources each script into one scope; a runspace of its own keeps these registrations out of the test session.
+        $powershell = [powershell]::Create()
+        try
+        {
+            $null = $powershell.AddScript({
+                    param($DashPath, $UnderscorePath)
+
+                    . $DashPath
+                    . $UnderscorePath
+
+                    foreach ($inputText in 'ca-tool ', 'ca_tool ')
+                    {
+                        (TabExpansion2 -inputScript $inputText -cursorColumn $inputText.Length).CompletionMatches.CompletionText -join '|'
+                    }
+                }).AddArgument($dashPath).AddArgument($underscorePath)
+            $completions = @($powershell.Invoke())
+
+            $powershell.Streams.Error | Should -BeNullOrEmpty
+            $completions | Should -Be @('dashonly', 'underonly')
+        }
+        finally
+        {
+            $powershell.Dispose()
+        }
+    }
+
     It 'round-trips quotes and cleans control, format, separator, and escape characters in every tooltip' {
         $escape = [string] [char] 0x1B
         $quotes = 'Don{0}t {1}quote{2} {3}this{4} here' -f [char] 0x0027, [char] 0x2018, [char] 0x2019, [char] 0x201A, [char] 0x201B
@@ -1133,13 +1184,13 @@ switch ($Case)
         @(Get-ChildItem -LiteralPath $script:CaseFolder -Recurse -File -Force).Count | Should -Be 0
     }
 
-    It 'writes Complete-A for the name _a, whose letter is outside any suffix' {
+    It 'writes Complete-A_34fb7160 for the name _a, whose letter is outside any suffix' {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'a_completer.ps1'
 
         New-CompleterScript -CommandName '_a' -Path $scriptPath -NoProbe
 
         $text = Get-Content -LiteralPath $scriptPath -Raw
-        $text | Should -BeLikeExactly '*function Complete-A {*'
+        $text | Should -BeLikeExactly '*function Complete-A_34fb7160 {*'
         $text | Should -BeLikeExactly "*-CommandName '_a', '_a.exe' -ScriptBlock*"
         Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
     }
