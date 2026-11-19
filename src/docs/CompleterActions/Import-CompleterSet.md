@@ -49,8 +49,10 @@ never executes a completer script. A set file that holds more than 128 KB
 to write one, and nothing from it is registered; split a larger set into
 several.
 
-Every entry is checked before anything is registered: the script file must
-exist and be a `.ps1`, `Trusted` entries must declare their `Targets` because
+Every entry is checked before anything is registered: the entry's `Path` must
+be a file path the platform can resolve, with no null character and, on
+Windows, a full path within the length limit, the script file must exist and
+be a `.ps1`, `Trusted` entries must declare their `Targets` because
 the script is not parsed, strict entries must name their targets with literal
 `Register-ArgumentCompleter` arguments so the targets can be derived from the
 parsed script and compared against any `Targets` the entry declares, no target

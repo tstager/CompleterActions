@@ -194,6 +194,8 @@ VALIDATION BEFORE REGISTRATION
     `Import-CompleterSet` checks every entry before it registers anything:
 
     - the entry is a hashtable with a `Path`
+    - the `Path` is a file path the platform can resolve: it has no null
+      character and, on Windows, its full path is within the length limit
     - the file exists and is a `.ps1` script
     - `Trusted`, when present, is `$true` or `$false`
     - each target has a `CommandName` and either `Native = $true` or a
@@ -415,10 +417,11 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
       existing file. Restore the script or remove the entry, then
       regenerate the set.
     - `InvalidEntry` (Error): any other problem `Import-CompleterSet`
-      reports for the entry itself, such as no `Path`, a `Path` that is not
-      a `.ps1`, a `Trusted` value that is not `$true` or `$false`, a
-      malformed target, or a trusted entry without `Targets`, with import's
-      text word for word. Fix the entry, or regenerate the set.
+      reports for the entry itself, such as no `Path`, a `Path` the platform
+      cannot resolve, a `Path` that is not a `.ps1`, a `Trusted` value that
+      is not `$true` or `$false`, a malformed target, or a trusted entry
+      without `Targets`, with import's text word for word. Fix the entry, or
+      regenerate the set.
     - `UnreadableTargets` (Error): a strict script does not parse, or does
       not name its targets with literal arguments. Run
       `Test-CompleterScript` on the script, or mark the entry trusted and

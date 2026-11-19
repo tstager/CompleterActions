@@ -535,6 +535,7 @@ Describe 'Test-CompleterSet' {
         @{ Case = 'an entry that is not a hashtable' }
         @{ Case = 'an entry without Path' }
         @{ Case = 'a path that is not a .ps1' }
+        @{ Case = 'a path with a null character' }
         @{ Case = 'a Trusted value that is not a bool' }
         @{ Case = 'a malformed target' }
         @{ Case = 'a trusted entry without Targets' }
@@ -561,6 +562,10 @@ Describe 'Test-CompleterSet' {
             {
                 Copy-Item -LiteralPath $script:BetaPath -Destination ([System.IO.Path]::ChangeExtension($script:BetaPath, '.txt'))
                 Edit-TestSetValue -Path $script:SetPath -Anchor 'Path' -Entry 2 -Value "'beta_completer/beta_completer.txt'"
+            }
+            'a path with a null character'
+            {
+                Edit-TestSetValue -Path $script:SetPath -Anchor 'Path' -Entry 2 -Value '"beta_completer/beta`0_completer.ps1"'
             }
             'a Trusted value that is not a bool'
             {
