@@ -73,8 +73,25 @@ function Import-CompleterSetDefinition
     }
 
     $data = $dataFile.Data
+    $version = $data['Version']
 
-    if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
+    # -eq converts 1 to the type on its left, so $true or [char]1 would equal
+    # it and an array would be filtered rather than compared: only a number of
+    # one of these exact types is compared with 1. Text is compared ordinally,
+    # because string -eq is culture-aware and takes '1' followed by a
+    # zero-width space, or an Arabic-Indic one, as equal to '1'.
+    $numberTypes = [sbyte], [byte], [int16], [uint16], [int], [uint32], [long], [uint64], [single], [double], [decimal], [bigint]
+
+    $isVersionOne = if ($version -is [string])
+    {
+        [string]::Equals($version, '1', [System.StringComparison]::Ordinal)
+    }
+    else
+    {
+        $null -ne $version -and $version.GetType() -in $numberTypes -and $version -eq 1
+    }
+
+    if (-not $isVersionOne)
     {
         throw "Completer set '$($file.FullName)' must declare Version = 1."
     }
