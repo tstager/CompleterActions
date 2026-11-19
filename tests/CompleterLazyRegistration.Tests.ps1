@@ -225,6 +225,27 @@ Describe 'Lazy completer registration' {
         @($verified.CompletionText) | Should -Be @('alpha')
     }
 
+    It 'loads a Pending registration when Test-CompleterRegistration tests it and credits the loaded completer' {
+        $null = Register-Completer -Path $script:NativeFixturePath -Lazy
+
+        $stub = Get-TestRuntimeScriptBlock -Key 'importfixture'
+        (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Pending'
+
+        $verified = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture a')
+
+        @($verified.CompletionText) | Should -Be @('alpha')
+        $verified[0].FromTarget | Should -BeTrue
+
+        $loaded = Get-TestRuntimeScriptBlock -Key 'importfixture'
+        [object]::ReferenceEquals($stub, $loaded) | Should -BeFalse
+        $loaded.ToString() | Should -Match 'Complete-ImportFixture'
+
+        $record = Get-Completer -CommandName 'importfixture' -Native
+        $record.State | Should -Be 'Active'
+        [object]::ReferenceEquals($record.ScriptBlock, $loaded) | Should -BeTrue
+        (Get-Completer -CommandName 'importfixture.exe' -Native).State | Should -Be 'Active'
+    }
+
     It 'loads the last definition when a script registers the same target twice, on the first press and after it' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'LazyDuplicateCompleter.ps1'
         Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @'

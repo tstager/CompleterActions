@@ -10,13 +10,30 @@ alongside CompletionText, ListItemText, ResultType, and ToolTip, so the same
 check that used to be done by hand after every registration can be scripted
 and asserted on.
 
+Every match the engine returns is reported, and FromTarget tells whether the
+target's own completer produced it. A match with FromTarget set to $false came
+from somewhere else: another completer, because the input or the cursor
+position completes a different parameter or command, or the engine's own
+fallback completion, such as file names, which the engine offers when the
+target's completer returns nothing. Assert on the matches whose FromTarget is
+$true to verify the registration itself.
+
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as Get-Completer so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
-The command only reads the completion engine. It does not change any
-registration, and it never touches PSReadLine.
+To see what the target's completer produces, the command puts an observer in
+front of the target's runtime entry for the duration of the completion. The
+observer puts the original entry back before it hands the call on, so the
+completer runs exactly as it does at the prompt, and the command puts it back
+itself when the engine never calls the completer. The command does not
+otherwise change any registration, and it never touches PSReadLine.
+
+Because the completer really runs, testing a Pending lazy registration loads
+it as the first tab press would: its script is imported, and the registration,
+with any Pending registration of the same script, becomes Active, or Failed
+when the load fails.
 
 .PARAMETER InputObject
 Supplies an object that describes the completer target, such as a record
@@ -55,8 +72,10 @@ default is the end of the input.
 CompleterActions.CompletionMatch
 Returns CompleterActions.CompletionMatch records, one per completion match,
 with Key, RuntimeKey, CommandName, ParameterName, CompleterType, InputText,
-CursorPosition, CompletionText, ListItemText, ResultType, and ToolTip
-properties. Nothing is returned when the completer yields no matches.
+CursorPosition, CompletionText, ListItemText, ResultType, ToolTip, and
+FromTarget properties. Nothing is returned when the engine yields no matches.
+Matches the engine returns without the target's completer, such as fallback
+file names, are returned with FromTarget set to $false.
 
 .EXAMPLE
 PS> Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
@@ -69,6 +88,14 @@ PS> Get-Completer -CommandName Invoke-DemoTool -ParameterName Name | Test-Comple
 
 Verifies a registration record returned by Get-Completer by
 completing an argument for its parameter.
+
+.EXAMPLE
+PS> $matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' | Where-Object FromTarget
+$matches.CompletionText | Should -Contain 'checkout'
+
+Asserts inside a Pester test on the matches the git completer produced
+itself, so a match the engine supplied without it cannot satisfy the
+assertion.
 
 .NOTES
 Completion runs from the module's scope, so the commands named in InputText
@@ -168,16 +195,65 @@ function Test-CompleterRegistration
 
             $target = $resolvedTargets[0]
 
-            if ($null -eq (Find-RuntimeCompleterRegistration -Target $target))
+            $runtimeRegistration = Find-RuntimeCompleterRegistration -Target $target
+
+            if ($null -eq $runtimeRegistration)
             {
                 throw "No runtime completer registration exists for '$($target.RuntimeKey)'. Register the completer before testing it."
             }
 
-            $completion = TabExpansion2 -InputScript $InputText -CursorColumn $resolvedCursorPosition
+            # TabExpansion2 reports what the engine completed, not which completer
+            # produced it, so the target's entry is fronted by an observer that
+            # records the target's own output. The observer puts the original
+            # entry back before it delegates, so the completer, including a lazy
+            # stub that checks it still owns its entry, runs as it would at the
+            # prompt.
+            $runtime = Get-CompleterRuntime
+            $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
+            $runtimeKey = $runtimeRegistration.RuntimeKey
+            $completerScriptBlock = $runtimeRegistration.ScriptBlock
+            $targetOutput = [System.Collections.Generic.List[object]]::new()
+            $observer = {
+                $dictionary[$runtimeKey] = $completerScriptBlock
+
+                foreach ($result in $completerScriptBlock.Invoke($args))
+                {
+                    $targetOutput.Add($result)
+                    $result
+                }
+            }.GetNewClosure()
+
+            $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey -Value $observer
+
+            try
+            {
+                $completion = TabExpansion2 -InputScript $InputText -CursorColumn $resolvedCursorPosition
+            }
+            finally
+            {
+                if ([object]::ReferenceEquals((Get-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey), $observer))
+                {
+                    $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey -Value $completerScriptBlock
+                }
+            }
+
+            # The engine keeps a CompletionResult a completer emits and turns any
+            # other output into one whose CompletionText is the output's text.
+            $targetCompletionTexts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+
+            foreach ($output in $targetOutput)
+            {
+                if ($null -eq $output)
+                {
+                    continue
+                }
+
+                $null = $targetCompletionTexts.Add($(if ($output -is [System.Management.Automation.CompletionResult]) { $output.CompletionText } else { $output.ToString() }))
+            }
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition))
+                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition -FromTarget:$targetCompletionTexts.Contains($completionMatch.CompletionText)))
             }
         }
         catch

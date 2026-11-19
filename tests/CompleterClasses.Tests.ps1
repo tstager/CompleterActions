@@ -34,7 +34,7 @@ Describe 'Completer public types' {
             TypeName   = 'CompleterActions.CompletionMatch'
             Properties = @(
                 'Key', 'RuntimeKey', 'CommandName', 'ParameterName', 'IsNative', 'CompleterType', 'InputText',
-                'CursorPosition', 'CompletionText', 'ListItemText', 'ResultType', 'ToolTip'
+                'CursorPosition', 'CompletionText', 'ListItemText', 'ResultType', 'ToolTip', 'FromTarget'
             )
         }
     ) {

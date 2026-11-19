@@ -116,6 +116,9 @@
                         <Label>ResultType</Label>
                     </TableColumnHeader>
                     <TableColumnHeader>
+                        <Label>FromTarget</Label>
+                    </TableColumnHeader>
+                    <TableColumnHeader>
                         <Label>ToolTip</Label>
                     </TableColumnHeader>
                 </TableHeaders>
@@ -130,6 +133,9 @@
                             </TableColumnItem>
                             <TableColumnItem>
                                 <PropertyName>ResultType</PropertyName>
+                            </TableColumnItem>
+                            <TableColumnItem>
+                                <PropertyName>FromTarget</PropertyName>
                             </TableColumnItem>
                             <TableColumnItem>
                                 <PropertyName>ToolTip</PropertyName>

@@ -840,15 +840,28 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
 
            RuntimeKey: demo
 
-        CompletionText ListItemText ResultType     ToolTip
-        -------------- ------------ ----------     -------
-        alpha          alpha        ParameterValue alpha
+        CompletionText ListItemText ResultType     FromTarget ToolTip
+        -------------- ------------ ----------     ---------- -------
+        alpha          alpha        ParameterValue True       alpha
 
     That is the complete strict-tier script from above, imported, registered,
     and completing `demo a` to `alpha`. Against a real completer the table
     lists every match; for a registered git completer,
     `-InputText 'git che'` returns `checkout`, `cherry`, `cherry-pick`, and
     the other `che` subcommands.
+
+    The table lists every match the engine returned, and `FromTarget` tells
+    whether the target's own completer produced it. A match the engine
+    returned without it, from another completer because the input or the
+    cursor completes a different parameter or command, or from the engine's
+    file-name fallback when the completer returned nothing, shows
+    `FromTarget` as False. `demo R` in a folder that holds `README.md`
+    returns `.\README.md` that way. Assert on the matches whose `FromTarget`
+    is True:
+
+        $matches = Test-CompleterRegistration -CommandName demo -Native `
+            -InputText 'demo a' | Where-Object FromTarget
+        $matches.CompletionText | Should -Be 'alpha'
 
     Registration records pipe in directly, and `-CursorPosition` moves the
     cursor away from the end of the input when the completion depends on it:
@@ -863,9 +876,14 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
     One input text invokes one completer, so each call tests exactly one
     target: the command throws, naming the targets, when an array or a piped
     set of records resolves to more than one. The command also throws when the
-    target has no runtime registration, returns nothing when the completer
-    yields no matches, and never changes any registration or PSReadLine
-    state. Completion runs from the module's
+    target has no runtime registration and returns nothing when the engine
+    yields no matches. For the duration of the completion it puts an
+    observer in front of the target's runtime entry, which puts the original
+    entry back before the completer runs; it changes no registration
+    otherwise and never touches PSReadLine state. Because the completer
+    really runs, testing a `Pending` lazy registration loads it as the first
+    Tab press would, and it becomes `Active`, or `Failed` when the load
+    fails. Completion runs from the module's
     scope, so the commands in `-InputText` must be visible from the global
     scope, as they are in an interactive session.
 

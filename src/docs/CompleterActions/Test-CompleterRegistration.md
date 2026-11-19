@@ -47,13 +47,30 @@ target key alongside `CompletionText`, `ListItemText`, `ResultType`, and
 `ToolTip`, so the same check that used to be done by hand after every
 registration can be scripted and asserted on.
 
+Every match the engine returns is reported, and `FromTarget` tells whether the
+target's own completer produced it. A match with `FromTarget` set to `$false`
+came from somewhere else: another completer, because the input or the cursor
+position completes a different parameter or command, or the engine's own
+fallback completion, such as file names, which the engine offers when the
+target's completer returns nothing. Assert on the matches whose `FromTarget`
+is `$true` to verify the registration itself.
+
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as `Get-Completer` so
 registration records and property-bound values pipe in, but the command throws
 when more than one target resolves in a single call.
 
-The command only reads the completion engine. It does not change any
-registration, and it never touches PSReadLine.
+To see what the target's completer produces, the command puts an observer in
+front of the target's runtime entry for the duration of the completion. The
+observer puts the original entry back before it hands the call on, so the
+completer runs exactly as it does at the prompt, and the command puts it back
+itself when the engine never calls the completer. The command does not
+otherwise change any registration, and it never touches PSReadLine.
+
+Because the completer really runs, testing a `Pending` lazy registration loads
+it as the first tab press would: its script is imported, and the registration,
+with any `Pending` registration of the same script, becomes `Active`, or
+`Failed` when the load fails.
 
 ## EXAMPLES
 
@@ -79,11 +96,14 @@ completing an argument for its parameter.
 ### EXAMPLE 3
 
 ```PowerShell
-$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che'
+$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' |
+    Where-Object FromTarget
 $matches.CompletionText | Should -Contain 'checkout'
 ```
 
-Asserts on the matches inside a Pester test.
+Asserts inside a Pester test on the matches the git completer produced
+itself, so a match the engine supplied without it cannot satisfy the
+assertion.
 
 ## PARAMETERS
 
@@ -259,9 +279,11 @@ A registration key or command and parameter names bound by property name.
 Returns `CompleterActions.CompletionMatch` records, one per completion match,
 with `Key`, `RuntimeKey`, `CommandName`, `ParameterName`, `IsNative`,
 `CompleterType`, `InputText`, `CursorPosition`, `CompletionText`,
-`ListItemText`, `ResultType`, and `ToolTip` properties. `IsNative` lets a
-match pipe back into Get-Completer, Unregister-Completer, and this command. Nothing is returned when the completer yields no
-matches.
+`ListItemText`, `ResultType`, `ToolTip`, and `FromTarget` properties.
+`IsNative` lets a match pipe back into Get-Completer, Unregister-Completer,
+and this command. Nothing is returned when the engine yields no matches.
+Matches the engine returns without the target's completer, such as fallback
+file names, are returned with `FromTarget` set to `$false`.
 
 ## NOTES
 
