@@ -71,3 +71,30 @@ Builds and tests ran in disposable, full-history local clones of the reviewed co
 | Selected WhatIf and PSReadLine cases with portable PowerShell 7.6.9 | 7 passed, 0 failed, 1 skipped. The filter excluded 170 other cases. |
 
 The Windows resolver reported `CanRun=False` for the app-execution alias because its executable header could not be read. It reported `CanRun=True` for the actual PowerShell executable. Source inspection and focused runtime checks also confirmed findings 3, 4, 5, 7, and 8 independently of the suite. Hosted CI, Linux and macOS runtimes, and actual Gallery or GitHub publication were outside this local validation.
+
+## Resolution
+
+All eighteen findings are merged on branch `fix/review-2026-11-18`, one `--no-ff` merge per finding. **Nothing is released yet**: the branch is not merged to `main`, and no version, tag, or publication exists for these fixes. Each finding had an Opus implementer and a two-round adversarial review by Haiku and Sonnet; six packages (findings 1, 3, 7, 9, 12, and 14) took a final fix after round 2 that no reviewer re-checked. The packaged module was regenerated (`6e373a0`). The behaviour changes are listed under `[Unreleased]` in CHANGELOG.md.
+
+| Finding | Status | Merge | Residual |
+| --- | --- | --- | --- |
+| 1 | Fixed with a stated residual | `bc5e393` | The literal-path lookup relies on `GetCommand` resolving a pattern and then a plain path; the importer fails closed when neither finds the resolved file. Final fix not re-reviewed. |
+| 2 | Fixed with a stated residual | `c03e390` | A `global:` definition inside a function or completer body runs at completion time and is still accepted. |
+| 3 | Fixed | `406e9ea` | Final fix (test only) not re-reviewed. |
+| 4 | Fixed with a stated residual | `2413b13` | `Int128`, `UInt128`, `Half`, `Complex`, and `IntPtr` are refused rather than read as numbers. |
+| 5 | Fixed with a stated residual | `515ed34` | Attribution matches by text and records only the first engine call. |
+| 6 | Fixed | `5e46aa7` | |
+| 7 | Fixed with a stated residual | `3e24cfe` | `-ParameterName 'a', 'b'` is still accepted by the grammar and the strict capture, though the real cmdlet cannot bind it. Final fix not re-reviewed. |
+| 8 | Fixed | `679f8c7` | |
+| 9 | Fixed with a stated residual | `ead5d88` | The output `-Path` of `Export-CompleterSet` has the same provider-qualified relative-path issue. Final fix not re-reviewed. |
+| 10 | Fixed with a stated residual | `1218f2e` | Case-sensitive volumes on Windows and macOS are still treated as case-insensitive; the Linux test runs only on Linux. |
+| 11 | Fixed with a stated residual | `01bf66d` | A null character in a manifest's `PrivateData.CompleterSet` still ends `Test-CompleterSet` for that set. |
+| 12 | Fixed | `fbaef6a` | Final fix not re-reviewed. |
+| 13 | Fixed with a stated residual | `d587dbd` | `docs/roadmap-3.0/milestone-2-spec.md` still describes the old stem rule. |
+| 14 | Fixed with a stated residual | `0043b42` | A local `release_check` with no tag push still compares the tag `git describe` picks. Final fix not re-reviewed. |
+| 15 | Fixed with a stated residual | `18b19f4` | The rerun test skips on Windows and was not run against a server that refuses a repeat publish; a rerun on a different SDK fails on a differing DLL. |
+| 16 | Fixed | `c7f9a37` | |
+| 17 | Fixed | `42101cc` | |
+| 18 | Fixed | `cc1c31f` | |
+
+Integration checks on the branch, Windows, pwsh 7.7.0: `Invoke-Build -Task compile` and `-Task build` succeeded, and a second build changed no tracked file. Configured PSScriptAnalyzer on `src`, `tests`, and `tools` reported zero findings. The full Pester suite, with the real PowerShell directory first on PATH, gave **867 passed, 3 failed, 14 skipped**; the three failures are the scaffold `-WhatIf` child-process assertions, which fail identically on `main` (104 passed, 3 failed in that file). The PS_Completers conformance tests passed 322 of 322 against the built package, and strict `Import-CompleterScript` imported all 175 completer scripts (370 records). Linux and macOS, hosted CI, and publication were not exercised.
