@@ -72,6 +72,114 @@ Describe 'Module Manifest Tests' {
         $sourceVersion | Should -BeGreaterOrEqual $highestTagVersion
     }
 
+    Context 'release_check on a commit that carries two tags' {
+        BeforeAll {
+            # An annotated tag for the manifest version and a lightweight tag on the same commit: git describe selects
+            # the annotated one whichever tag the release event is for.
+            $repoRoot = Split-Path -Path $PSScriptRoot -Parent
+            $stagingRoot = Join-Path -Path $TestDrive -ChildPath 'release-check/CompleterActions'
+            New-Item -Path (Join-Path -Path $stagingRoot -ChildPath 'src') -ItemType Directory | Out-Null
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.build.ps1'), (Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1') -Destination $stagingRoot
+            Copy-Item -Path (Join-Path -Path $repoRoot -ChildPath 'src/Private') -Destination (Join-Path -Path $stagingRoot -ChildPath 'src') -Recurse
+
+            $manifest = Import-PowerShellDataFile -Path (Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.psd1')
+            $manifestTag = "v$($manifest.ModuleVersion)"
+            if (-not [string]::IsNullOrWhiteSpace($manifest.PrivateData.PSData.Prerelease))
+            {
+                $manifestTag = "$manifestTag-$($manifest.PrivateData.PSData.Prerelease)"
+            }
+
+            $otherTag = 'v9999.0.0'
+            $gitAvailable = $null -ne (Get-Command -Name 'git' -ErrorAction SilentlyContinue)
+            if ($gitAvailable)
+            {
+                $identity = @('-c', 'user.name=release-check', '-c', 'user.email=release-check@example.invalid')
+                $null = git -C $stagingRoot init --quiet 2>&1
+                $null = git -C $stagingRoot @identity commit --quiet --allow-empty --message 'release check probe' 2>&1
+                $null = git -C $stagingRoot @identity tag --annotate $manifestTag --message 'release check probe' 2>&1
+                $null = git -C $stagingRoot tag $otherTag 2>&1
+            }
+
+            function Invoke-TestReleaseCheck
+            {
+                [CmdletBinding()]
+                param(
+                    [string] $EventTag
+                )
+
+                $savedType = $env:GITHUB_REF_TYPE
+                $savedName = $env:GITHUB_REF_NAME
+                try
+                {
+                    $env:GITHUB_REF_TYPE = $PSBoundParameters.ContainsKey('EventTag') ? 'tag' : 'branch'
+                    $env:GITHUB_REF_NAME = $PSBoundParameters.ContainsKey('EventTag') ? $EventTag : 'main'
+                    $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
+                    $output = @(& pwsh -NoProfile -NoLogo -NonInteractive -Command "Invoke-Build -File '$buildScriptPath' release_check" 2>&1) -join [Environment]::NewLine
+
+                    [pscustomobject] @{
+                        ExitCode = $LASTEXITCODE
+                        Output   = $output
+                    }
+                }
+                finally
+                {
+                    $env:GITHUB_REF_TYPE = $savedType
+                    $env:GITHUB_REF_NAME = $savedName
+                }
+            }
+        }
+
+        BeforeEach {
+            if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
+            {
+                Set-ItResult -Skipped -Because 'InvokeBuild is not available to run release_check'
+            }
+
+            if (-not $gitAvailable)
+            {
+                Set-ItResult -Skipped -Because 'git is not available to tag the probe repository'
+            }
+        }
+
+        It 'fails for a release event tag that differs from the manifest version' {
+            $result = Invoke-TestReleaseCheck -EventTag $otherTag
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '$([regex]::Escape($otherTag))' does not match the source manifest version"
+        }
+
+        It 'fails for a release event tag that differs from the manifest version only in case' {
+            $caseVariantTag = $manifestTag.ToUpperInvariant()
+            $result = Invoke-TestReleaseCheck -EventTag $caseVariantTag
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -MatchExactly "release event tag '$([regex]::Escape($caseVariantTag))' does not match the source manifest version"
+        }
+
+        It 'fails for a release event tag that differs from the manifest version only by a zero-width space' {
+            # A culture-aware comparison ignores U+200B; the child's console encoding may not carry it, so the message is
+            # matched without the tag text.
+            $result = Invoke-TestReleaseCheck -EventTag "$manifestTag$([char] 0x200B)"
+
+            $result.ExitCode | Should -Not -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '.+' does not match the source manifest version"
+        }
+
+        It 'passes for a release event tag that equals the manifest version' {
+            $result = Invoke-TestReleaseCheck -EventTag $manifestTag
+
+            $result.ExitCode | Should -Be 0 -Because $result.Output
+            $result.Output | Should -Match "release event tag '$([regex]::Escape($manifestTag))' matches the source manifest version"
+        }
+
+        It 'compares the HEAD tag outside a tag push' {
+            $result = Invoke-TestReleaseCheck
+
+            $result.ExitCode | Should -Be 0 -Because $result.Output
+            $result.Output | Should -Match "HEAD tag '$([regex]::Escape($manifestTag))' matches the source manifest version"
+        }
+    }
+
     It 'keeps publish metadata populated in the built manifest' {
         $repoRoot = Split-Path -Path $PSScriptRoot -Parent
         $sourceManifestPath = Join-Path -Path $repoRoot -ChildPath 'CompleterActions.psd1'
