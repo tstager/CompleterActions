@@ -132,27 +132,28 @@ public static class StrictGrammar
                 return;
             }
 
-            if (argumentAst is StringConstantExpressionAst)
+            IReadOnlyList<Ast>? elements = argumentAst switch
             {
+                StringConstantExpressionAst => new[] { argumentAst },
+                ArrayLiteralAst arrayLiteralAst => arrayLiteralAst.Elements,
+                ArrayExpressionAst arrayExpressionAst => GetLiteralArrayExpressionElement(arrayExpressionAst),
+                _ => null,
+            };
+
+            if (elements is null || !elements.All(element => element is StringConstantExpressionAst))
+            {
+                AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
                 return;
             }
 
-            IReadOnlyList<Ast>? elements = null;
-            if (argumentAst is ArrayLiteralAst arrayLiteralAst)
+            // PowerShell refuses to bind an empty name, and the importer refuses a blank one.
+            foreach (StringConstantExpressionAst element in elements.Cast<StringConstantExpressionAst>())
             {
-                elements = arrayLiteralAst.Elements;
+                if (string.IsNullOrWhiteSpace(element.Value))
+                {
+                    AddFinding(element.Extent, element.GetType().Name, GrammarMessages.BlankNameMessage(parameterName), GrammarMessages.BlankNameHint(parameterName));
+                }
             }
-            else if (argumentAst is ArrayExpressionAst arrayExpressionAst)
-            {
-                elements = GetLiteralArrayExpressionElement(arrayExpressionAst);
-            }
-
-            if (elements is not null && elements.All(element => element is StringConstantExpressionAst))
-            {
-                return;
-            }
-
-            AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
         }
 
         // Recognizes @('name') and @('name', 'name.exe'). The array expression runs when the script

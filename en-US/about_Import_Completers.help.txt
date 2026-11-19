@@ -519,7 +519,9 @@ THE STRICT GRAMMAR
       redirection there would write a file while the script is imported.
       `Test-CompleterScript` reports it, and `Import-CompleterScript` and
       `Register-Completer -Lazy` refuse the script, even when the
-      redirection writes nothing.
+      redirection writes nothing. Every name must be non-empty:
+      PowerShell cannot bind an empty string, and the importer refuses a
+      blank name, so `Test-CompleterScript` reports `''` and `' '`.
     - Keep `-ScriptBlock` a literal `{ ... }` block, not a variable.
     - Move cache initialization, alias bootstrap, tool discovery, generated
       completion loading, and every other piece of setup into functions that

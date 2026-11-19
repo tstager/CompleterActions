@@ -39,6 +39,10 @@ internal static class GrammarMessages
 
     internal static string LiteralStringValuesHint(string parameterName) => $"Replace the -{parameterName} value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed.";
 
+    internal static string BlankNameMessage(string parameterName) => $"The script uses an empty or blank name for -{parameterName}.";
+
+    internal static string BlankNameHint(string parameterName) => $"Give every -{parameterName} value a real name; PowerShell refuses to bind an empty string, and Import-CompleterScript refuses a blank name.";
+
     // Test-ImportSafeExpressionAst
     internal const string SplattingMessage = "The script uses argument splatting at script scope.";
 

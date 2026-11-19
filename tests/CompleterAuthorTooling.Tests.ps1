@@ -218,6 +218,52 @@ Describe 'Test-CompleterScript' {
         $upperFindings.Count | Should -Be 0
     }
 
+    It 'reports a registration that gives <Name>' -TestCases @(
+        @{
+            Name         = '-CommandName an empty string'
+            Registration = "Register-ArgumentCompleter -CommandName '' -Native -ScriptBlock { 'ok' }"
+            Offending    = "''"
+            Parameter    = 'CommandName'
+        },
+        @{
+            Name         = '-CommandName an array with an empty element'
+            Registration = "Register-ArgumentCompleter -CommandName @('unbound', '') -Native -ScriptBlock { 'ok' }"
+            Offending    = "'')"
+            Parameter    = 'CommandName'
+        },
+        @{
+            Name         = '-ParameterName an empty string'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-UnboundTool' -ParameterName '' -ScriptBlock { 'ok' }"
+            Offending    = "''"
+            Parameter    = 'ParameterName'
+        },
+        @{
+            Name         = '-CommandName a blank string'
+            Registration = "Register-ArgumentCompleter -CommandName ' ' -Native -ScriptBlock { 'ok' }"
+            Offending    = "' '"
+            Parameter    = 'CommandName'
+        }
+    ) {
+        param(
+            [string] $Name,
+            [string] $Registration,
+            [string] $Offending,
+            [string] $Parameter
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath (($Name -replace '[^A-Za-z0-9]+', '-') + '_completer.ps1')
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be 'StringConstantExpressionAst'
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Offending) + 1)
+        $findings[0].Message | Should -Be "The script uses an empty or blank name for -$Parameter."
+        { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw '*does not conform to the strict import grammar*'
+    }
+
     It 'rejects directories and files that are not scripts' {
         { Test-CompleterScript -Path $script:ImportFixtureRoot } | Should -Throw '*is a directory*'
 
