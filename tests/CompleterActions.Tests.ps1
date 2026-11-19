@@ -3383,6 +3383,10 @@ function Register-TestIdentitySameArgument
                 [pscustomobject] @{ CommandName = 'Test-IdentityTool:Name'; IsNative = [pscustomobject] @{ Value = $false } } | Get-Completer
             } | Should -Throw '*type System.Management.Automation.PSCustomObject for IsNative, which is not a Boolean value*'
 
+            {
+                [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; Native = [System.Int128]::Zero } | Get-Completer
+            } | Should -Throw '*type System.Int128 for Native, which is not a Boolean value*' -Because 'a cast to Boolean reads an Int128 zero as True'
+
             Get-TestIdentityState -CompleterType Parameter | Should -BeNullOrEmpty
             Get-TestIdentityState -CompleterType Native | Should -BeNullOrEmpty
 
@@ -3410,6 +3414,16 @@ function Register-TestIdentitySameArgument
                 Register-Completer -PassThru
             $native.CompleterType | Should -Be 'Native'
             $native.Trusted | Should -BeFalse
+
+            $bigParameter = [pscustomobject] @{ CommandName = 'Test-IdentityTool'; ParameterName = 'Name'; Native = 0n; ScriptBlock = { 'from-row' }; Trusted = 1n } |
+                Register-Completer -Force -PassThru
+            $bigParameter.CompleterType | Should -Be 'Parameter' -Because 'a BigInteger zero is False'
+            $bigParameter.Trusted | Should -BeTrue
+
+            $bigNative = [pscustomobject] @{ CommandName = 'Test-IdentityTool:Name'; Native = 1n; ScriptBlock = { 'native-result' }; Trusted = 0n } |
+                Register-Completer -Force -PassThru
+            $bigNative.CompleterType | Should -Be 'Native'
+            $bigNative.Trusted | Should -BeFalse
         }
     }
 }

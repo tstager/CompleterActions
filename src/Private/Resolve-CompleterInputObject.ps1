@@ -77,7 +77,7 @@ function Resolve-CompleterInputObject
                 return $false
             }
 
-            if ($Value -is [bool] -or $Value -is [switch])
+            if ($Value -is [bool] -or $Value -is [switch] -or $Value -is [System.Numerics.BigInteger])
             {
                 return [bool] $Value
             }
