@@ -38,10 +38,12 @@ that can be piped directly to `Register-Completer -InputObject`.
 The command has two tiers. The strict tier is the default: it validates the
 script against a closed grammar before executing it, rejects every unsupported
 construct with the same findings `Test-CompleterScript` reports, and avoids
-mutating the live runtime completer tables during import. The trusted tier,
-selected with `-Trusted`, skips the grammar and dot-sources the script as-is
-inside the same capture module, so use it only for scripts you wrote or
-reviewed. Imported script blocks preserve the temporary module context that
+mutating the live runtime completer tables during import. The script is read
+once and the validated text is the text that runs, so a save after the check
+cannot change what executes. The trusted tier, selected with `-Trusted`, skips
+the grammar and dot-sources the script as-is inside the same capture module, so
+use it only for scripts you wrote or reviewed. Imported script blocks preserve
+the temporary module context that
 contains any helper functions and script-scope state defined by the source
 script under either tier, and they keep the script as their source file, so
 `$PSScriptRoot` and `$PSCommandPath` inside a completer name the script's

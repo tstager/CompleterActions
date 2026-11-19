@@ -137,13 +137,14 @@ HOW IMPORT-COMPLETERSCRIPT WORKS
 
     `Import-CompleterScript` performs four steps for each input file:
 
-    1. Resolve the input path to a single `.ps1` file.
-    2. In the strict tier, parse the file and validate it against the grammar.
-       Any finding stops the import before the script runs. The trusted tier
-       skips this step.
-    3. Execute the script inside a temporary module that shadows
+    1. Resolve the input path to a single `.ps1` file and read it once.
+    2. In the strict tier, parse the text that was read and validate it
+       against the grammar. Any finding stops the import before the script
+       runs. The trusted tier skips this step.
+    3. Execute that same text inside a temporary module that shadows
        `Register-ArgumentCompleter`, so the script can declare its completers
-       without modifying the live runtime tables.
+       without modifying the live runtime tables. The file is not read
+       again, so a save after the check cannot change what runs.
     4. Emit normalized import objects for each resolved target.
 
     A single `Register-ArgumentCompleter` call can produce more than one output

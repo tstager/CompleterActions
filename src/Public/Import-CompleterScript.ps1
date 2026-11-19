@@ -11,9 +11,11 @@ Import-CompleterScript has two tiers. The strict tier is the default: it
 validates the script against a closed grammar before executing it, rejects
 every unsupported construct with the same findings Test-CompleterScript
 reports, and avoids mutating the live runtime completer tables during import.
-The trusted tier, selected with -Trusted, skips the grammar and dot-sources the
-script as-is inside the same capture module, so use it only for scripts you
-wrote or reviewed. Imported ScriptBlock objects keep the temporary module
+The script is read once and the validated text is the text that runs, so a
+save after the check cannot change what executes. The trusted tier, selected
+with -Trusted, skips the grammar and dot-sources the script as-is inside the
+same capture module, so use it only for scripts you wrote or reviewed.
+Imported ScriptBlock objects keep the temporary module
 context that contains helper functions and script-scope state defined by the
 source script under either tier, and they keep the script as their source
 file, so $PSScriptRoot and $PSCommandPath inside a completer name the script's
@@ -107,12 +109,18 @@ function Import-CompleterScript
 
             foreach ($resolvedPath in @(Resolve-CompleterScriptPath @pathParameters))
             {
+                # The script is read once. The grammar validates the contents this
+                # command information holds and the capture module executes the same
+                # object, so a save between the two cannot run unvalidated code.
+                $scriptInfo = $ExecutionContext.InvokeCommand.GetCommand($resolvedPath, [System.Management.Automation.CommandTypes]::ExternalScript)
+
                 if (-not $Trusted)
                 {
-                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -ScriptContents $scriptInfo.ScriptContents
+                    Assert-CompleterScriptConformance -LiteralPath $resolvedPath -ParseResult $parseResult
                 }
 
-                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptInfo
 
                 foreach ($definition in $importSession.Definitions)
                 {

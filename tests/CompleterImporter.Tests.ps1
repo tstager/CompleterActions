@@ -201,6 +201,85 @@ Describe 'Completer script importer public API' {
         @(Test-CompleterRegistration -CommandName 'locationfixture' -Native -InputText $inputScript | ForEach-Object { $_.CompletionText }) | Should -Be @($script:CompleterImporterFixtureRoot, $fixturePath)
     }
 
+    It 'executes the revision the strict grammar validated when the file changes after validation (<Name>)' -TestCases @(
+        @{ Name = 'eager import'; Lazy = $false },
+        @{ Name = 'first-tab load'; Lazy = $true }
+    ) {
+        param(
+            [bool] $Lazy
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'RevisionSwap_completer.ps1'
+        $revisionTemplate = @'
+Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $null = $wordToComplete, $commandAst, $cursorPosition
+
+    foreach ($completionText in @('{0}', $PSScriptRoot, $PSCommandPath))
+    {
+        [System.Management.Automation.CompletionResult]::new($completionText, $completionText, 'ParameterValue', $completionText)
+    }
+}
+'@
+        $revisionOne = $revisionTemplate.Replace('{0}', 'revision-one')
+        $revisionTwo = $revisionTemplate.Replace('{0}', 'revision-two')
+        $expected = @('revision-one', $TestDrive, $scriptPath)
+        $inputScript = 'locationfixture '
+
+        Set-Content -LiteralPath $scriptPath -Value $revisionOne -Encoding utf8
+
+        if ($Lazy)
+        {
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+        }
+
+        # The shim saves the second revision as soon as the grammar has parsed the first, which
+        # is the moment a concurrent save would land between validation and execution.
+        & (Get-Module -Name 'CompleterActions') {
+            param($SwapPath, $SwapContents)
+
+            $script:TestParseFunction = ${function:Get-CompleterScriptParseResult}
+            $script:TestSwapPath = $SwapPath
+            $script:TestSwapContents = $SwapContents
+            $script:TestSwapCount = 0
+
+            function script:Get-CompleterScriptParseResult
+            {
+                param($LiteralPath, $ScriptContents)
+
+                $parseResult = & $script:TestParseFunction @PSBoundParameters
+                Set-Content -LiteralPath $script:TestSwapPath -Value $script:TestSwapContents -Encoding utf8
+                $script:TestSwapCount++
+                $parseResult
+            }
+        } $scriptPath $revisionTwo
+
+        if ($Lazy)
+        {
+            $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+            @($completion.CompletionMatches.CompletionText) | Should -Be $expected
+        }
+        else
+        {
+            $imported = @(Import-CompleterScript -LiteralPath $scriptPath)
+
+            $imported.Count | Should -Be 1
+            $imported[0].ScriptBlock.File | Should -Be $scriptPath
+            @(& $imported[0].ScriptBlock '' $null 0 | ForEach-Object { $_.CompletionText }) | Should -Be $expected
+        }
+
+        & (Get-Module -Name 'CompleterActions') { $script:TestSwapCount } | Should -Be 1 -Because 'the swap must happen between validation and execution'
+        Get-Content -LiteralPath $scriptPath -Raw | Should -Match 'revision-two' -Because 'the file on disk holds the second revision'
+
+        if ($Lazy)
+        {
+            $record = Get-Completer -CommandName 'locationfixture' -Native
+            $record.State | Should -Be 'Active'
+            $record.ScriptBlock.File | Should -Be $scriptPath
+        }
+    }
+
     It 'resolves the types a top-level using namespace statement names inside the imported block (<Name>)' -TestCases @(
         @{ Name = 'strict'; Trusted = $false; Lazy = $false },
         @{ Name = 'trusted'; Trusted = $true; Lazy = $false },
