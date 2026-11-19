@@ -207,20 +207,30 @@ function Test-CompleterRegistration
             # records the target's own output. The observer puts the original
             # entry back before it delegates, so the completer, including a lazy
             # stub that checks it still owns its entry, runs as it would at the
-            # prompt.
+            # prompt. The engine keeps each CompletionResult in the completer's
+            # output collection and turns every other non-null item into one
+            # whose CompletionText is PSObject.ToString() of that item, so the
+            # observer records the same text and hands the collection back as
+            # is; re-emitting item by item would unroll an item that is itself
+            # a collection and change what the engine completes.
             $runtime = Get-CompleterRuntime
             $dictionary = if ($target.IsNative) { $runtime.NativeArgumentCompleters } else { $runtime.CustomArgumentCompleters }
             $runtimeKey = $runtimeRegistration.RuntimeKey
             $completerScriptBlock = $runtimeRegistration.ScriptBlock
-            $targetOutput = [System.Collections.Generic.List[object]]::new()
+            $targetCompletionTexts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
             $observer = {
                 $dictionary[$runtimeKey] = $completerScriptBlock
+                $output = $completerScriptBlock.Invoke($args)
 
-                foreach ($result in $completerScriptBlock.Invoke($args))
+                foreach ($item in $output)
                 {
-                    $targetOutput.Add($result)
-                    $result
+                    if ($null -ne $item)
+                    {
+                        $null = $targetCompletionTexts.Add($(if ($item -is [System.Management.Automation.CompletionResult]) { $item.CompletionText } else { $item.PSObject.ToString() }))
+                    }
                 }
+
+                $output
             }.GetNewClosure()
 
             $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey -Value $observer
@@ -235,20 +245,6 @@ function Test-CompleterRegistration
                 {
                     $null = Set-CompleterRuntimeDictionaryValue -Dictionary $dictionary -Key $runtimeKey -Value $completerScriptBlock
                 }
-            }
-
-            # The engine keeps a CompletionResult a completer emits and turns any
-            # other output into one whose CompletionText is the output's text.
-            $targetCompletionTexts = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-
-            foreach ($output in $targetOutput)
-            {
-                if ($null -eq $output)
-                {
-                    continue
-                }
-
-                $null = $targetCompletionTexts.Add($(if ($output -is [System.Management.Automation.CompletionResult]) { $output.CompletionText } else { $output.ToString() }))
             }
 
             foreach ($completionMatch in @($completion.CompletionMatches))

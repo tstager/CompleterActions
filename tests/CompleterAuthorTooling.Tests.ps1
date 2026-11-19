@@ -360,6 +360,38 @@ Describe 'Test-CompleterRegistration' {
         [object]::ReferenceEquals($originalScriptBlock, $restoredScriptBlock) | Should -BeTrue -Because 'the runtime entry is put back whether or not the engine called the completer'
     }
 
+    It 'completes and credits every output shape of a <Kind> completer as the prompt does' -TestCases @(
+        @{ Kind = 'native'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture ' },
+        @{ Kind = 'parameter'; Target = @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One' }; InputText = 'Test-TwoParameterFixtureTool -One ' }
+    ) {
+        param($Target, $InputText)
+
+        function global:Test-TwoParameterFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $One,
+                [string] $Two
+            )
+        }
+
+        $shapes = {
+            'plain-text'
+            [System.Management.Automation.CompletionResult]::new('result-text', 'result-list', 'ParameterValue', 'result-tip')
+            [pscustomobject] @{ Name = 'object-text' }
+            , @('slot-p', 'slot-q')
+        }
+
+        Register-ArgumentCompleter @Target -ScriptBlock $shapes
+
+        $promptTexts = @((TabExpansion2 -InputScript $InputText -CursorColumn $InputText.Length).CompletionMatches.CompletionText)
+        $matches = @(Test-CompleterRegistration @Target -InputText $InputText)
+
+        $promptTexts | Should -Be @('plain-text', 'result-text', '@{Name=object-text}', 'slot-p slot-q') -Because 'the engine keeps a CompletionResult and uses the text of any other item, without unrolling an item that is a collection'
+        @($matches.CompletionText) | Should -Be $promptTexts -Because 'observing the completer must not change what it completes'
+        @($matches.FromTarget) | Should -Be @($true, $true, $true, $true)
+    }
+
     It 'does not credit the target with the engine file-name fallback when its completer returns nothing' {
         $fallbackRoot = Join-Path -Path $TestDrive -ChildPath 'FallbackRoot'
         $null = New-Item -ItemType Directory -Path $fallbackRoot
