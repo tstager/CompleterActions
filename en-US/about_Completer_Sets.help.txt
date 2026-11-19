@@ -362,7 +362,11 @@ LAZY LOADING, PENDING, AND FAILED
     shows the `Failed` record and its `LoadError`; `-State Pending, Failed`
     selects both. Only the target whose press failed
     moves to `Failed`; the script's other targets stay `Pending` and fail the
-    same way on their own first press. `Reset-Completer` retries the load
+    same way on their own first press. A trusted script that replaced or
+    removed the managed record for its own target before it failed, for
+    example with `Register-Completer -Force` or `Unregister-Completer`, keeps
+    that newer state, and no failure is recorded. `Reset-Completer` retries
+    the load
     without registering anything again: it returns the record to `Pending`,
     and the next tab press loads the script. Registering the script again
     with `-Force`, or importing the set again with `-Force`, also retries it.

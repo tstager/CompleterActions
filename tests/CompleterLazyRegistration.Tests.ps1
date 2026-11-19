@@ -409,6 +409,32 @@ throw 'lazy fixture failure after unregistration'
         Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
     }
 
+    It 'states that a trusted script keeps the newer state of its own target in the <Source>' -TestCases @(
+        @{ Source = 'comment-based help' }
+        @{ Source = 'markdown help' }
+        @{ Source = 'MAML help' }
+        @{ Source = 'about_Completer_Sets topic' }
+    ) {
+        param($Source)
+
+        $docRoot = [System.IO.Path]::Combine($PSScriptRoot, '..', 'src', 'docs', 'CompleterActions')
+        $text = switch ($Source)
+        {
+            'comment-based help' { Get-Help -Name 'Register-Completer' -Full | Out-String -Width 4096 }
+            'markdown help' { Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'Register-Completer.md')) -Raw }
+            'MAML help'
+            {
+                $maml = [xml] (Get-Content -LiteralPath ([System.IO.Path]::Combine($docRoot, 'CompleterActions', 'CompleterActions-Help.xml')) -Raw)
+                $command = $maml.helpItems.command | Where-Object { $_.details.verb -eq 'Register' -and $_.details.noun -eq 'Completer' }
+                @($command.description.para) -join ' '
+            }
+            'about_Completer_Sets topic' { Get-Content -LiteralPath ([System.IO.Path]::Combine($PSScriptRoot, '..', 'en-US', 'about_Completer_Sets.help.txt')) -Raw }
+        }
+        $flatText = $text -replace '`', '' -replace '\s+', ' '
+
+        $flatText | Should -Match ([regex]::Escape('A trusted script that replaced or removed the managed record for its own target before it failed, for example with Register-Completer -Force or Unregister-Completer, keeps that newer state, and no failure is recorded.'))
+    }
+
     It 'loads a script once and keeps it Active when it requests completion for its own target while loading' {
         $null = Register-Completer -LiteralPath $script:ReentrantFixturePath -Lazy -Trusted -CommandName 'Test-LazyTrustedTool' -ParameterName 'Name'
         $stub = Get-TestRuntimeScriptBlock -Key 'test-lazytrustedtool:name'
