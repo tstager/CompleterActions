@@ -7,6 +7,235 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+Fixes for the eighteen findings in `docs/code-review-2026-11-18.md`. The
+behaviour changes they bring are listed under Changed.
+
+### Fixed
+
+- Strict `Import-CompleterScript` runs the revision it validated. The
+  importer parsed the file for the grammar and then had the capture module
+  dot-source the path, which read the file again, so a save between the two
+  reads ran text the grammar never saw, on eager import and on a lazy stub's
+  first-tab load alike. The script is now resolved once and the contents
+  that were parsed are the contents that run, with the script still the
+  source file of errors, `$PSScriptRoot`, and `$PSCommandPath`. Two related
+  defects went with it: a literal path with brackets, such as
+  `[x]\a_completer.ps1`, ran a sibling the brackets matched as a wildcard
+  (`x\a_completer.ps1`) under both tiers, and now runs the file it names,
+  with the importer refusing to run any other file; and a script that was locked or deleted
+  after resolution was parsed as empty and reported a missing
+  `Register-ArgumentCompleter` call, where it now reports the same
+  `The file could not be read` finding `Test-CompleterScript` reports
+  (2026-11-18 review, finding 1).
+- Strict import keeps a script's helpers out of the caller's and the
+  module's function tables. `function global:Name` passed the grammar and
+  defined `Name` in the caller's global scope while the script was
+  dot-sourced, even though its body never ran. Every other helper,
+  unqualified or `script:`, `local:`, or `private:`, and the capture
+  module's own `Register-ArgumentCompleter` shim, were imported into the
+  CompleterActions module scope, so a helper named after a private command
+  of the module replaced it: a script defining `Get-CompleterScriptFinding`
+  turned off the strict gate for every later import, and
+  `Register-ArgumentCompleter` inside the module resolved to the shim. The
+  capture module now exports nothing into the module, under `-Trusted` too,
+  and helpers still resolve at completion time (2026-11-18 review,
+  finding 2).
+- Editing a record a command returns no longer changes the registration.
+  `Get-Completer`, `Register-Completer -PassThru`, `Reset-Completer
+  -PassThru`, `Import-CompleterSet`, and `Unregister-Completer -PassThru`
+  wrote the objects held in the managed table, so setting `State` to
+  `Failed` on a returned record made the next query report `Failed/Managed`
+  and `Conflicted/Discovered` for a live registration, editing `ScriptPath`
+  changed what a lazy load read, and a downstream failure under
+  `Unregister-Completer -PassThru` put the edited record or script block
+  back (2026-11-18 review, finding 3).
+- `IsNative`, `Native`, and `Trusted` on an input object refuse a
+  collection or another kind of object. Every value that was not text was
+  cast to Boolean, so a parameter registration whose `Native` and `Trusted`
+  were `@($false, $false)` registered a native, trusted completer and
+  dropped its `ParameterName` (2026-11-18 review, finding 4).
+- `Test-CompleterRegistration` tells the target's own matches from the
+  rest. It labelled every `TabExpansion2` match with the tested target, so
+  a match from another parameter's completer, when the cursor sat on that
+  parameter, or the engine's file-name fallback, when the target's
+  completer returned nothing, was credited to the target, and an assertion
+  could pass while the completer contributed nothing (2026-11-18 review,
+  finding 5).
+- A failed lazy load keeps a newer registration of its own target. A
+  trusted lazy script that replaced its target with `Register-Completer
+  -Force`, or removed it with `Unregister-Completer`, and then threw had
+  that state overwritten: `Get-Completer` reported the old stub as `Failed`
+  and the live replacement as a `Conflicted` discovered entry, and an
+  unregistered target came back as `Failed`. A failure is now recorded only
+  while the stub's own record still owns the target (2026-11-18 review,
+  finding 6).
+- `Test-CompleterScript` reports `Register-ArgumentCompleter` calls that
+  PowerShell cannot bind. A repeated parameter, such as two `-CommandName`
+  arguments, a value-taking parameter followed directly by another
+  parameter, such as `-CommandName -Native`, and an empty or blank
+  `-CommandName` or `-ParameterName` name, alone or inside a literal array,
+  gave no finding and then failed at import. Parameter names are also
+  compared with the invariant culture, so under tr-TR a repeated
+  `-ScriptBlock`/`-SCRIPTBLOCK` is reported and an upper-case
+  `-SCRIPTBLOCK` alone is no longer refused as missing (2026-11-18 review,
+  finding 7).
+- A script that holds only a `begin`, `process`, `dynamicparam`, or `clean`
+  block no longer stops `Test-CompleterScript`. The grammar recorded the
+  named-block finding and then threw the 2.x binder message, so later paths
+  in the same call were never checked; it now returns the `NamedBlockAst`
+  finding and the missing-registration finding and goes on, and
+  `Import-CompleterScript` refuses such a script with those findings
+  (2026-11-18 review, finding 8).
+- `Export-CompleterSet` resolves a relative `ScriptPath` or `SourcePath`
+  against the PowerShell location. It resolved it against the process
+  working directory, so after `Push-Location` a trusted export referenced
+  a script in another tree and warned that hashing failed, and a strict
+  export failed although the script existed (2026-11-18 review, finding 9).
+- `Export-CompleterSet` keeps two scripts whose names differ only by case
+  apart on Linux. Records were grouped ignoring case on every platform, so
+  `Alpha.ps1` and `alpha.ps1` became one entry: a trusted export listed
+  both targets under the first file, and a strict export failed. Grouping
+  now ignores case on Windows and macOS and is exact on Linux, as the other
+  path comparisons in the module are (2026-11-18 review, finding 10).
+- One malformed `Path` in a set file no longer ends `Import-CompleterSet`
+  or `Test-CompleterSet`. A null character, or on Windows a full path over
+  32767 characters, made path normalization throw before the entry was
+  classified, so `-SkipInvalid` could not skip it and the valid entries
+  after it were never checked. Such an entry is now an `InvalidEntry`
+  (`The Path is not a valid file path: ...`), and the package-layout check
+  of `Test-CompleterSet` no longer fails on it (2026-11-18 review,
+  finding 11).
+- A set file's `Version` must really be 1. `$true` compared equal to 1, so
+  a set with `Version = $true` imported (2026-11-18 review, finding 12).
+- Standalone completers that `New-CompleterScript` generates for different
+  commands no longer share a catalog. `ca-tool` and `ca_tool`, and `tool`,
+  `tool.cmd`, `tool.bat`, `tool.ps1`, and `tool.com`, gave the same stem, so
+  their scripts defined the same `Complete-<Stem>` function and
+  `$script:<Stem>CompletionCatalog` variable, and dot-sourced together
+  every command completed from the first script's table (2026-11-18 review,
+  finding 13).
+- The `release_check` build task checks the tag being published. On a tag
+  push it compared whichever tag `git describe` picked on HEAD, while the
+  workflow publishes under `GITHUB_REF_NAME`, so a second tag on the same
+  commit passed the gate. It now compares `GITHUB_REF_NAME` when
+  `GITHUB_REF_TYPE` is `tag`, and compares ordinally, so a tag that differs
+  in case or by an invisible character such as a zero-width space fails
+  (2026-11-18 review, finding 14).
+- A release rerun after a partial failure can finish. `Publish_build`
+  pushed the package every time, so rerunning the release job after a later
+  step failed tried to publish the same version again, which PSGallery
+  refuses, and never reached the GitHub release. It now looks up the exact
+  version first: when the repository already holds it, it compares every
+  file of the published package with `build/CompleterActions`, apart from
+  the manifest's `Generated on` line, and continues without publishing when
+  they match or fails naming the files that differ (2026-11-18 review,
+  finding 15).
+- The build moves only top-level `using` statements into the package, and
+  only their own text. Any source line that read like a `using` statement
+  was hoisted, so a here-string line `using namespace System.Text` was
+  removed from its function, and other text on a real `using` line moved
+  with it, so a comment block that closed on that line was left open and
+  swallowed the next function (2026-11-18 review, finding 16).
+- The release workflow takes its notes only from the changelog heading
+  whose version matches the tag exactly. The pattern matched a prefix, so a
+  stable `3.0.1` tag would have published the `3.0.1-preview1` section, and
+  `3.0.1` matched a `3.0.10` heading; a tag with no exact heading now gets
+  generated notes (2026-11-18 review, finding 17).
+
+### Changed
+
+- **Strict import refuses `function global:Name`.** A definition the strict
+  grammar lets run at import time, at script scope or inside a guarded
+  `if`, is reported when its name is in the global scope (`The script
+  defines function 'Name' in the global scope.`), so `Test-CompleterScript`
+  reports it and `Import-CompleterScript` refuses the script without
+  `-Trusted`. A `global:` definition inside a function body or a completer
+  script block runs only at completion time and is still accepted. None of
+  the 175 PS_Completers scripts uses one (2026-11-18 review, finding 2).
+- **Helpers of an imported script are no longer visible inside the
+  module.** Neither tier imports the capture module's functions, aliases,
+  or variables into CompleterActions, which only code running inside the
+  module could see before (2026-11-18 review, finding 2).
+- **Returned records are snapshots.** The records the five commands above
+  write are copies, so two calls that describe one registration return two
+  objects, and `-eq` between them is false. The copy is shallow: its
+  `ScriptBlock` and `ImportModule` are the live objects (2026-11-18 review,
+  finding 3).
+- **`IsNative`, `Native`, and `Trusted` take only a scalar.** On an input
+  object they accept null, a Boolean or switch value, a number, including a
+  `BigInteger` such as `0n` or `1n`, where zero is False, and the text
+  `True` or `False`. A collection, even of one element, is refused with
+  `InputObject supplies a collection for <Property>, which takes a single
+  Boolean value.`, and any other type, such as a character, an enum value,
+  `DBNull`, `Int128`, `UInt128`, `Half`, `Complex`, or `IntPtr`, with
+  `InputObject supplies a value of type <Type> for <Property>, which is not
+  a Boolean value.` These were cast before, and the zero of the last five
+  read as True (2026-11-18 review, finding 4).
+- **`Test-CompleterRegistration` reports where each match came from.**
+  `CompletionMatch` has a new `FromTarget` property, shown in the default
+  table, that is `$true` only for matches the target's own completer
+  produced; every match the engine returns is still reported, so filter
+  with `Where-Object FromTarget` to verify the registration itself. To see
+  the target's output the command fronts its runtime entry with an observer
+  for the one completion; the completer runs as it does at the prompt, and
+  output it returns is passed to the engine unchanged. Because the completer
+  really runs, testing a `Pending` lazy registration loads it, as the help
+  now says (2026-11-18 review, finding 5).
+- **`Test-CompleterScript` reports more registrations.** A repeated
+  `Register-ArgumentCompleter` parameter (`The script specifies
+  Register-ArgumentCompleter parameter '-<Name>' more than once.`), a
+  parameter left without its value, and an empty or blank name (`The script
+  uses an empty or blank name for -<Parameter>.`) are now Error findings,
+  so strict import refuses these scripts before running them instead of
+  failing in the binder. A whitespace-only name binds in PowerShell but is
+  reported too, because the importer refuses it (2026-11-18 review,
+  finding 7).
+- **`Export-CompleterSet` path rules.** A relative `ScriptPath` or
+  `SourcePath` follows the PowerShell location and PowerShell drives; a
+  path that resolves to a provider other than the file system is refused;
+  and a provider-qualified path whose part after `::` is not fully
+  qualified, such as `FileSystem::Native.ps1`, is refused, where it wrote
+  a reference to a file in the process working directory before. A fully
+  qualified provider-qualified path still exports (2026-11-18 review,
+  finding 9).
+- **An unresolvable set entry `Path` is an `InvalidEntry`.** A `Path` with
+  a null character, or on Windows a full path over 32767 characters, is
+  skipped under `-SkipInvalid` and reported by `Test-CompleterSet`, where
+  it ended the command with an exception before (2026-11-18 review,
+  finding 11).
+- **A set `Version` is a number or the text `1`.** The version is compared
+  with 1 only when it is text, or a number of one of the integer,
+  floating-point, decimal, or `BigInteger` types; text must be exactly `1`.
+  A Boolean, a character, an array such as `@(1)`, and text that equals `1`
+  only under culture-aware comparison, such as `1` with a zero-width space,
+  or a non-ASCII digit one such as U+0661, are refused. `1`, `1L`, `1.0`,
+  `1d`, `1n`, and `'1'` still import (2026-11-18 review, finding 12).
+- **Generated script identifiers changed for some command names.**
+  `New-CompleterScript` gives a name that has a character other than an
+  ASCII letter or digit, apart from a trailing `.exe`, a stem ending in `_`
+  and eight hex digits of a SHA-256 of the name: `ca-tool` gives
+  `Complete-CaTool_8f74ce7e`, `_a` gives `Complete-A_34fb7160`, and
+  `npm.cmd` gives `Complete-Npm_a04d41f6`. Names of letters and digits, with
+  or without `.exe`, keep their plain stem, so `cargo` and `cargo.exe` still
+  give `Complete-Cargo`. Scripts generated before keep working; regenerating
+  one for such a name changes its function and catalog variable names
+  (2026-11-18 review, finding 13).
+- **The build script has a `-Repository` parameter.** It names the
+  repository `Publish_build` publishes to and looks the version up in, and
+  defaults to `PSGallery` (2026-11-18 review, finding 15).
+
+### Documentation
+
+- The help of `Register-Completer` and `about_Completer_Sets` says that a
+  trusted lazy script that replaced or removed its own target before it
+  failed keeps that newer state and no failure is recorded (2026-11-18
+  review, finding 6).
+- The README's repository quick starts run `Invoke-Build -Task compile`
+  before importing either manifest, because the assembly the manifests load
+  is not tracked; `compile` also copies it into `build/CompleterActions`,
+  so the full `build`, which needs Microsoft.PowerShell.PlatyPS, is not
+  needed there (2026-11-18 review, finding 18).
+
 ## [3.0.1-preview1] - 2026-11-14
 
 Fixes for all eight findings in `docs/code-review-2026-11-10.md`. The
