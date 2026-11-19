@@ -192,6 +192,32 @@ Describe 'Test-CompleterScript' {
         { Import-CompleterScript -LiteralPath $scriptPath } | Should -Throw '*does not conform to the strict import grammar*'
     }
 
+    It 'compares Register-ArgumentCompleter parameter names as PowerShell does under the tr-TR culture' {
+        $repeatPath = Join-Path -Path $TestDrive -ChildPath 'tr-repeat_completer.ps1'
+        $repeat = "Register-ArgumentCompleter -CommandName 'unbound' -Native -ScriptBlock { 'ok' } -SCRIPTBLOCK { 'ok' }"
+        Set-Content -LiteralPath $repeatPath -Value $repeat -Encoding utf8
+        $upperPath = Join-Path -Path $TestDrive -ChildPath 'tr-upper_completer.ps1'
+        Set-Content -LiteralPath $upperPath -Value "Register-ArgumentCompleter -COMMANDNAME 'unbound' -NATIVE -SCRIPTBLOCK { 'ok' }" -Encoding utf8
+
+        $originalCulture = [System.Globalization.CultureInfo]::CurrentCulture
+        try
+        {
+            [System.Globalization.CultureInfo]::CurrentCulture = 'tr-TR'
+            $repeatFindings = @(Test-CompleterScript -LiteralPath $repeatPath)
+            $upperFindings = @(Test-CompleterScript -LiteralPath $upperPath)
+        }
+        finally
+        {
+            [System.Globalization.CultureInfo]::CurrentCulture = $originalCulture
+        }
+
+        $repeatFindings.Count | Should -Be 1
+        $repeatFindings[0].Construct | Should -Be 'CommandParameterAst'
+        $repeatFindings[0].Column | Should -Be ($repeat.IndexOf('-SCRIPTBLOCK') + 1)
+        $repeatFindings[0].Message | Should -Be "The script specifies Register-ArgumentCompleter parameter '-SCRIPTBLOCK' more than once."
+        $upperFindings.Count | Should -Be 0
+    }
+
     It 'rejects directories and files that are not scripts' {
         { Test-CompleterScript -Path $script:ImportFixtureRoot } | Should -Throw '*is a directory*'
 

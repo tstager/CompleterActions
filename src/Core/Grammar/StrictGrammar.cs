@@ -498,9 +498,9 @@ public static class StrictGrammar
             // The parameter whose value the next element must supply, if any.
             CommandParameterAst? pendingParameter = null;
 
-            // The 2.2.0 walk kept these in an [ordered] dictionary, whose keys compare with the
-            // current culture, ignoring case.
-            var seenParameters = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+            // Compared as the parameter binder compares names, so the duplicate and required-parameter
+            // checks agree with PowerShell in every culture.
+            var seenParameters = new HashSet<string>(NameComparer);
 
             foreach (CommandElementAst commandElement in commandAst.CommandElements.Skip(1))
             {
