@@ -195,10 +195,25 @@ task build clean, compile, external_help, {
             $helpLine = $helpStart.StartLineNumber
         }
 
+        $fileLines = @(Get-Content -Path $file.FullName)
+
+        # The parser finds the using statements, so a line inside a string that reads like one stays where it is.
+        $usingLines = [System.Collections.Generic.HashSet[int]]::new()
+
+        foreach ($usingAst in $fileAst.UsingStatements) {
+            $usingText = $fileLines[($usingAst.Extent.StartLineNumber - 1)..($usingAst.Extent.EndLineNumber - 1)] -join [Environment]::NewLine
+
+            if (-not $usingStatements.Contains($usingText)) {
+                $usingStatements.Add($usingText)
+            }
+
+            $usingAst.Extent.StartLineNumber..$usingAst.Extent.EndLineNumber | ForEach-Object { $null = $usingLines.Add($_) }
+        }
+
         $fileBody = [System.Collections.Generic.List[string]]::new()
         $lineNumber = 0
 
-        foreach ($line in Get-Content -Path $file.FullName) {
+        foreach ($line in $fileLines) {
             $lineNumber++
 
             if ($lineNumber -ge $helpLine -and $lineNumber -lt $commandLine) {
@@ -223,11 +238,7 @@ task build clean, compile, external_help, {
                 continue
             }
 
-            if ($line -match '^\s*using\s+(namespace|module|assembly)\b') {
-                if (-not $usingStatements.Contains($line)) {
-                    $usingStatements.Add($line)
-                }
-
+            if ($usingLines.Contains($lineNumber)) {
                 continue
             }
 
