@@ -57,12 +57,19 @@ name: at least one letter or digit, no path separators, spaces, quotes, or
 wildcard characters, no leading `-` or `.`, and no trailing `.` or `-`. A name
 must also keep a letter or digit outside a trailing `.exe`, `.cmd`, `.bat`,
 `.ps1`, or `.com`, because the function names are derived from what is left:
-`_.exe` is refused and `_a` gives `Complete-A`. The target list follows the
-`-CommandName` order, and a name that does not end in `.exe`, `.cmd`, `.bat`,
-`.ps1`, or `.com` is followed by the same name with `.exe` appended, so
-`-CommandName rg` registers `'rg', 'rg.exe'` and `-CommandName npm.cmd`
-registers `'npm.cmd'` alone. Names are de-duplicated case-insensitively,
-keeping the first spelling.
+`_.exe` is refused and `_a` gives `Complete-A_34fb7160`. A name with a
+character other than an ASCII letter or digit, apart from a trailing `.exe`,
+gets `_` and eight hex digits of a hash of that name, so `ca-tool` gives
+`Complete-CaTool_8f74ce7e`, `ca_tool` gives `Complete-CaTool_014e186e`, and
+`npm.cmd` gives `Complete-Npm_a04d41f6`, and scripts dot-sourced into one
+scope keep their own tables. A name of letters and digits, with or without
+`.exe`, keeps its plain stem: `cargo` and `cargo.exe` give `Complete-Cargo`,
+because `-CommandName cargo` registers `cargo.exe` too. The target
+list follows the `-CommandName` order, and a name that does not end in `.exe`,
+`.cmd`, `.bat`, `.ps1`, or `.com` is followed by the same name with `.exe`
+appended, so `-CommandName rg` registers `'rg', 'rg.exe'` and
+`-CommandName npm.cmd` registers `'npm.cmd'` alone. Names are de-duplicated
+case-insensitively, keeping the first spelling.
 
 The subcommand table is seeded in one of three ways:
 

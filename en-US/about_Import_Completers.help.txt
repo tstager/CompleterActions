@@ -460,10 +460,16 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
       `.bat`, `.ps1`, or `.com`, so `-CommandName rg` registers `'rg',
       'rg.exe'` and `-CommandName npm.cmd` registers `'npm.cmd'`.
     - The first name gives the stem of the state variable and the function:
-      `cargo` gives `Cargo`, `cargo-binstall` gives `CargoBinstall`, and
-      `oh-my-posh` gives `OhMyPosh`. The script uses four-space indentation
-      and opening braces on the same line, as completer repositories
-      usually do.
+      `cargo` and `cargo.exe` give `Cargo`, and `7z` gives `7z`. A name with
+      any other character than an ASCII letter or digit, apart from a
+      trailing `.exe`, also gets `_` and eight hex digits of a hash of that
+      name: `oh-my-posh` gives `OhMyPosh_f9e5f36d`, `ca-tool` gives
+      `CaTool_8f74ce7e`, `ca_tool` gives `CaTool_014e186e`, and `npm.cmd`
+      gives `Npm_a04d41f6`, so `tool`, `tool.cmd`, and `tool.bat` get
+      three stems. Scripts
+      dot-sourced from a profile share one scope, so two commands must not
+      share a stem. The script uses four-space indentation and opening
+      braces on the same line, as completer repositories usually do.
 
     The guarantee
 
