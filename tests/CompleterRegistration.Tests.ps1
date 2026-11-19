@@ -1021,6 +1021,18 @@ Describe 'Release workflow' {
             ''
             'Notes for 3.0.1-preview1.'
             ''
+            '## 2.9.10'
+            ''
+            'Notes for 2.9.10.'
+            ''
+            '## 2.9.2-rc1'
+            ''
+            'Notes for 2.9.2-rc1.'
+            ''
+            '## 2.9.1 - 2025-06-01'
+            ''
+            'Notes for 2.9.1.'
+            ''
             '## 2.9.0'
             ''
             'Notes for 2.9.0.'
@@ -1036,6 +1048,10 @@ Describe 'Release workflow' {
         @{ Tag = 'v3.0.1-preview1'; Expected = 'Notes for 3.0.1-preview1.' }
         @{ Tag = 'v3.0.10'; Expected = 'Notes for 3.0.10.' }
         @{ Tag = 'v2.9.0'; Expected = 'Notes for 2.9.0.' }
+        @{ Tag = 'v2.9.1'; Expected = 'Notes for 2.9.1.' }
+        @{ Tag = 'v2.9.10'; Expected = 'Notes for 2.9.10.' }
+        @{ Tag = 'v2.9.2-rc1'; Expected = 'Notes for 2.9.2-rc1.' }
+        @{ Tag = 'v2.9.2'; Expected = $null }
         @{ Tag = 'v3.0.2'; Expected = $null }
         @{ Tag = 'v3.0'; Expected = $null }
     ) {
