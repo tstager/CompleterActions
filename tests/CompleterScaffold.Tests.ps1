@@ -138,10 +138,11 @@ Describe 'Completer script skeleton' {
         @{ Name = '_a'; Stem = 'A_34fb7160' }
         @{ Name = 'DSC'; Stem = 'DSC' }
         @{ Name = '7z'; Stem = '7z' }
-        @{ Name = 'npm.cmd'; Stem = 'Npm' }
-        @{ Name = 'TOOL.BAT'; Stem = 'TOOL' }
-        @{ Name = 'x.ps1'; Stem = 'X' }
-        @{ Name = 'y.com'; Stem = 'Y' }
+        @{ Name = 'npm.cmd'; Stem = 'Npm_a04d41f6' }
+        @{ Name = 'TOOL.BAT'; Stem = 'TOOL_5bf9d4ff' }
+        @{ Name = 'x.ps1'; Stem = 'X_8cc8bc96' }
+        @{ Name = 'y.com'; Stem = 'Y_8746a35c' }
+        @{ Name = 'tool.cmd.exe'; Stem = 'ToolCmd_1e235eff' }
     ) {
         $actual = InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Name = $Name } -ScriptBlock {
             param($Name)
@@ -152,8 +153,8 @@ Describe 'Completer script skeleton' {
         $actual | Should -BeExactly $Stem
     }
 
-    It 'derives a distinct stem, ignoring case, for each name that differs only in punctuation' {
-        $names = 'catool', 'ca-tool', 'ca_tool', 'ca.tool', 'ca+tool', 'c-atool', 'cat-ool', 'g', 'g+', 'g++', 'a', '_a'
+    It 'derives a distinct stem, ignoring case, for each name that differs only in punctuation or suffix' {
+        $names = 'catool', 'ca-tool', 'ca_tool', 'ca.tool', 'ca+tool', 'c-atool', 'cat-ool', 'g', 'g+', 'g++', 'a', '_a', 'tool', 'tool.cmd', 'tool.bat', 'tool.ps1', 'tool.com', 'tool.cmd.exe'
 
         $stems = @(InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Names = $names } -ScriptBlock {
                 param($Names)
@@ -760,33 +761,41 @@ switch ($Case)
         }
     }
 
-    It 'completes each command from its own table when the scripts for ca-tool and ca_tool are both dot-sourced' {
-        $dashPath = Join-Path -Path $script:CaseFolder -ChildPath 'ca-tool_completer.ps1'
-        $underscorePath = Join-Path -Path $script:CaseFolder -ChildPath 'ca_tool_completer.ps1'
-        'Commands:', '  dashonly    Only ca-tool has this' | New-CompleterScript -CommandName 'ca-tool' -Path $dashPath
-        'Commands:', '  underonly   Only ca_tool has this' | New-CompleterScript -CommandName 'ca_tool' -Path $underscorePath
+    It 'completes each command from its own table when the scripts for <Names> are all dot-sourced' -TestCases @(
+        @{ Names = @('ca-tool', 'ca_tool'); Words = @('dashonly', 'underonly') }
+        @{ Names = @('tool', 'tool.cmd', 'tool.bat'); Words = @('exeonly', 'cmdonly', 'batonly') }
+    ) {
+        $paths = for ($index = 0; $index -lt $Names.Count; $index++)
+        {
+            $path = Join-Path -Path $script:CaseFolder -ChildPath ('{0}_completer.ps1' -f ($Names[$index] -replace '\.', '_'))
+            'Commands:', ('  {0}    Only {1} has this' -f $Words[$index], $Names[$index]) | New-CompleterScript -CommandName $Names[$index] -Path $path
+            $path
+        }
 
-        Test-CompleterScript -LiteralPath $dashPath, $underscorePath | Should -BeNullOrEmpty
+        Test-CompleterScript -LiteralPath $paths | Should -BeNullOrEmpty
 
         # A profile dot-sources each script into one scope; a runspace of its own keeps these registrations out of the test session.
         $powershell = [powershell]::Create()
         try
         {
             $null = $powershell.AddScript({
-                    param($DashPath, $UnderscorePath)
+                    param($Paths, $Names)
 
-                    . $DashPath
-                    . $UnderscorePath
-
-                    foreach ($inputText in 'ca-tool ', 'ca_tool ')
+                    foreach ($path in $Paths)
                     {
+                        . $path
+                    }
+
+                    foreach ($name in $Names)
+                    {
+                        $inputText = '{0} ' -f $name
                         (TabExpansion2 -inputScript $inputText -cursorColumn $inputText.Length).CompletionMatches.CompletionText -join '|'
                     }
-                }).AddArgument($dashPath).AddArgument($underscorePath)
+                }).AddArgument([string[]] $paths).AddArgument([string[]] $Names)
             $completions = @($powershell.Invoke())
 
             $powershell.Streams.Error | Should -BeNullOrEmpty
-            $completions | Should -Be @('dashonly', 'underonly')
+            $completions | Should -Be $Words
         }
         finally
         {
