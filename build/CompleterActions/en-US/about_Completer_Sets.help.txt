@@ -194,6 +194,8 @@ VALIDATION BEFORE REGISTRATION
     `Import-CompleterSet` checks every entry before it registers anything:
 
     - the entry is a hashtable with a `Path`
+    - the `Path` is a file path the platform can resolve: it has no null
+      character and, on Windows, its full path is within the length limit
     - the file exists and is a `.ps1` script
     - `Trusted`, when present, is `$true` or `$false`
     - each target has a `CommandName` and either `Native = $true` or a
@@ -351,7 +353,8 @@ LAZY LOADING, PENDING, AND FAILED
     grammar. The first ran when the set was imported or the script was
     registered with `Register-Completer -Lazy`, unless the entry took the
     hash fast path; the second checks the file as it is at the first tab
-    press, so a script edited in between is never run unchecked.
+    press and runs exactly the text it checked, so a script edited in
+    between, or while it loads, is never run unchecked.
 
     If the script fails to load on that first press, the press returns no
     completions, no error reaches the host, and the prompt is never
@@ -362,7 +365,11 @@ LAZY LOADING, PENDING, AND FAILED
     shows the `Failed` record and its `LoadError`; `-State Pending, Failed`
     selects both. Only the target whose press failed
     moves to `Failed`; the script's other targets stay `Pending` and fail the
-    same way on their own first press. `Reset-Completer` retries the load
+    same way on their own first press. A trusted script that replaced or
+    removed the managed record for its own target before it failed, for
+    example with `Register-Completer -Force` or `Unregister-Completer`, keeps
+    that newer state, and no failure is recorded. `Reset-Completer` retries
+    the load
     without registering anything again: it returns the record to `Pending`,
     and the next tab press loads the script. Registering the script again
     with `-Force`, or importing the set again with `-Force`, also retries it.
@@ -415,10 +422,11 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
       existing file. Restore the script or remove the entry, then
       regenerate the set.
     - `InvalidEntry` (Error): any other problem `Import-CompleterSet`
-      reports for the entry itself, such as no `Path`, a `Path` that is not
-      a `.ps1`, a `Trusted` value that is not `$true` or `$false`, a
-      malformed target, or a trusted entry without `Targets`, with import's
-      text word for word. Fix the entry, or regenerate the set.
+      reports for the entry itself, such as no `Path`, a `Path` the platform
+      cannot resolve, a `Path` that is not a `.ps1`, a `Trusted` value that
+      is not `$true` or `$false`, a malformed target, or a trusted entry
+      without `Targets`, with import's text word for word. Fix the entry, or
+      regenerate the set.
     - `UnreadableTargets` (Error): a strict script does not parse, or does
       not name its targets with literal arguments. Run
       `Test-CompleterScript` on the script, or mark the entry trusted and
