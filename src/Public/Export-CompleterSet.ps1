@@ -7,7 +7,9 @@ Groups registration records by the completer script they came from and writes
 a completer set: a .psd1 data file that lists each script once with its trust
 tier and the targets it registers. Import-CompleterSet reads the file back and
 registers everything in it, so a profile that imports a completer repository
-becomes one Import-CompleterSet call.
+becomes one Import-CompleterSet call. Script paths that differ only by letter
+case name one script on Windows and macOS and two scripts on Linux, where they
+can name two files, so each gets an entry of its own there.
 
 Records arrive through -InputObject or the pipeline, typically from
 Get-Completer or Import-CompleterScript. When the command comes after a pipe
@@ -170,7 +172,10 @@ function Export-CompleterSet
                 return
             }
 
-            $entriesByPath = [ordered] @{}
+            # Group by script path the way the file system compares paths, so two
+            # scripts whose names differ only by case stay two entries on Linux.
+            $pathComparer = if ($IsWindows -or $IsMacOS) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+            $entriesByPath = [System.Collections.Specialized.OrderedDictionary]::new($pathComparer)
 
             foreach ($record in $records)
             {

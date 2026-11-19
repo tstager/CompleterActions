@@ -211,6 +211,8 @@ namespace CompleterActionsTests
         @{ CommandName = 'HashFixture.exe'; CompleterType = 'Native' },
         @{ CommandName = 'setfixturealpha'; CompleterType = 'Native' },
         @{ CommandName = 'setfixturealpha.exe'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixturecaseupper'; CompleterType = 'Native' },
+        @{ CommandName = 'setfixturecaselower'; CompleterType = 'Native' },
         @{ CommandName = 'Test-SetFixtureBeta'; ParameterName = 'Name'; CompleterType = 'Parameter' },
         @{ CommandName = 'setfixtureprobe'; CompleterType = 'Native' },
         @{ CommandName = 'setfixtureextra'; CompleterType = 'Native' },
@@ -556,6 +558,65 @@ Describe 'Completer sets' {
             @($trustedEntry.Targets.CommandName) | Should -Be @('Test-TrustedFixtureTool')
 
             ($data.Entries | Where-Object { -not $_.Trusted }).Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
+        }
+
+        It 'keeps two scripts whose names differ only by case as two entries and imports each target from its own script on a case-sensitive file system' {
+            if ($IsWindows -or $IsMacOS)
+            {
+                Set-ItResult -Skipped -Because 'two file names that differ only by case name one file on a case-insensitive file system'
+                return
+            }
+
+            $upperPath = Join-Path -Path $script:SetRoot -ChildPath 'Case_completer.ps1'
+            $lowerPath = Join-Path -Path $script:SetRoot -ChildPath 'case_completer.ps1'
+            Set-Content -LiteralPath $upperPath -Value "Register-ArgumentCompleter -Native -CommandName 'setfixturecaseupper' -ScriptBlock { 'upper' }" -Encoding utf8
+            Set-Content -LiteralPath $lowerPath -Value "Register-ArgumentCompleter -Native -CommandName 'setfixturecaselower' -ScriptBlock { 'lower' }" -Encoding utf8
+
+            @(Import-CompleterScript -LiteralPath $upperPath) + @(Import-CompleterScript -LiteralPath $lowerPath) | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 2 -Because 'the two names identify two files'
+            @($data.Entries.Path) | Should -BeExactly @('Case_completer.ps1', 'case_completer.ps1')
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @('setfixturecaseupper')
+            @($data.Entries[1].Targets.CommandName) | Should -BeExactly @('setfixturecaselower')
+
+            $imported = @(Import-CompleterSet -LiteralPath $script:SetPath)
+
+            @($imported.Key) | Should -BeExactly @('setfixturecaseupper', 'setfixturecaselower')
+            @($imported | ForEach-Object { Split-Path -Path $_.ScriptPath -Leaf }) | Should -BeExactly @('Case_completer.ps1', 'case_completer.ps1')
+
+            foreach ($case in @{ Name = 'setfixturecaseupper'; Result = 'upper' }, @{ Name = 'setfixturecaselower'; Result = 'lower' })
+            {
+                $inputScript = "$($case.Name) "
+                @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @($case.Result)
+            }
+        }
+
+        # Safety guard: export now groups script paths the way the file system compares
+        # them, and on a case-insensitive one two spellings of one file must stay one
+        # entry, so this passes before and after that change; its Linux sibling above
+        # fails before it.
+        It 'groups records for two spellings of one script path into one entry on a case-insensitive file system' {
+            if (-not ($IsWindows -or $IsMacOS))
+            {
+                Set-ItResult -Skipped -Because 'two file names that differ only by case name two files on a case-sensitive file system'
+                return
+            }
+
+            $path = Join-Path -Path $script:SetRoot -ChildPath 'case_completer.ps1'
+            $otherSpelling = Join-Path -Path $script:SetRoot -ChildPath 'CASE_COMPLETER.PS1'
+            Set-Content -LiteralPath $path -Value "Register-ArgumentCompleter -Native -CommandName 'setfixturecaseupper' -ScriptBlock { 'upper' }" -Encoding utf8
+            $records = @(
+                [pscustomobject] @{ CommandName = 'setfixturecaseupper'; IsNative = $true; ScriptPath = $path; Trusted = $true }
+                [pscustomobject] @{ CommandName = 'setfixturecaselower'; IsNative = $true; ScriptPath = $otherSpelling; Trusted = $true }
+            )
+
+            $records | Export-CompleterSet -Path $script:SetPath
+
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            @($data.Entries).Count | Should -Be 1 -Because 'both spellings name one file'
+            $data.Entries[0].Path | Should -BeExactly 'case_completer.ps1' -Because 'the first record names the entry'
+            @($data.Entries[0].Targets.CommandName) | Should -BeExactly @('setfixturecaseupper', 'setfixturecaselower')
         }
 
         It 'reads each strict script once for both its targets and its hash' {
