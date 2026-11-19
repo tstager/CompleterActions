@@ -2222,7 +2222,7 @@ Describe 'Packaged command help' {
         $imported.Marker | Should -BeExactly 'kept' -Because 'the statement above the help of Import-CompleterScript must run when the package is imported'
     }
 
-    It 'hoists only the top-level using statements and keeps a string line that reads like one' {
+    It 'hoists only the top-level using statements and keeps the other text on their lines and a string line that reads like one' {
         if ($null -eq (Get-Module -ListAvailable -Name 'InvokeBuild'))
         {
             Set-ItResult -Skipped -Because 'InvokeBuild is not available to build the packaged module'
@@ -2233,8 +2233,9 @@ Describe 'Packaged command help' {
             Set-ItResult -Skipped -Because 'Microsoft.PowerShell.PlatyPS is not available to build the packaged module'
         }
 
-        # Two files share one using statement, which the package states once, and a here-string holds a line that a
-        # line pattern takes for a using statement.
+        # Several files share one using statement, which the package states once, and a here-string holds a line that a
+        # line pattern takes for a using statement. Two using statements share their line with other text: the end of
+        # a comment block, and a statement after a semicolon. Only the using statement's own text may move.
         $stagingRoot = New-TestBuildStage -Name 'using'
         $privateRoot = Join-Path -Path $stagingRoot -ChildPath 'src/Private'
         $usingLine = 'using namespace System.Text'
@@ -2255,6 +2256,17 @@ Describe 'Packaged command help' {
             $usingLine
             ''
             "function Get-BuildProbeShared { 'shared' }"
+        )
+        Set-Content -LiteralPath (Join-Path -Path $privateRoot -ChildPath 'Get-BuildProbeTail.ps1') -Value @(
+            '<#'
+            '.SYNOPSIS'
+            'probe'
+            "#> $usingLine"
+            "function Get-BuildProbeTail { 'tail' }"
+        )
+        Set-Content -LiteralPath (Join-Path -Path $privateRoot -ChildPath 'Get-BuildProbeSuffix.ps1') -Value @(
+            "$usingLine; `$script:BuildProbeSuffix = 'suffix'"
+            'function Get-BuildProbeSuffix { $script:BuildProbeSuffix }'
         )
 
         $buildScriptPath = Join-Path -Path $stagingRoot -ChildPath 'CompleterActions.build.ps1'
@@ -2281,6 +2293,9 @@ Describe 'Packaged command help' {
                 [pscustomobject] @{
                     Literal = Get-BuildProbeLiteral
                     Builder = Get-BuildProbeBuilder
+                    Shared  = Get-BuildProbeShared
+                    Tail    = Get-BuildProbeTail
+                    Suffix  = Get-BuildProbeSuffix
                 }
             }
         } -args $manifestPath
@@ -2288,6 +2303,9 @@ Describe 'Packaged command help' {
         $LASTEXITCODE | Should -Be 0
         $imported.Literal | Should -BeExactly $usingLine -Because 'the packaged function must return its here-string unchanged'
         $imported.Builder | Should -BeExactly 'built' -Because 'the hoisted using statement must still resolve the short type name'
+        $imported.Shared | Should -BeExactly 'shared'
+        $imported.Tail | Should -BeExactly 'tail' -Because 'the end of a comment block on a using line must stay, or the comment swallows the next function'
+        $imported.Suffix | Should -BeExactly 'suffix' -Because 'a statement after a using statement on its line must stay in the package'
     }
 
     It 'fails the build when a public command is defined more than once' {
