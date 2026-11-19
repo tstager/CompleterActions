@@ -408,6 +408,42 @@ Describe 'Completer sets' {
             $data.Entries[0].Hash | Should -MatchExactly '^SHA256:[0-9A-F]{64}$'
         }
 
+        It 'refuses a provider-qualified script path that is not fully qualified and writes nothing, and keeps a fully qualified one' {
+            $scriptFolder = Join-Path -Path $script:SetRoot -ChildPath 'scripts'
+            New-Item -Path $scriptFolder -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $scriptFolder -ChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $expectedHash = & (Get-Module -Name 'CompleterActions') { param($LiteralPath) Get-CompleterScriptHash -LiteralPath $LiteralPath } $scriptPath
+
+            Push-Location -LiteralPath $scriptFolder
+
+            try
+            {
+                # The engine resolves the part after the qualifier against the process
+                # working directory, so accepting it would name a different script.
+                foreach ($declaredPath in 'Microsoft.PowerShell.Core\FileSystem::Native.ps1', 'FileSystem::Native.ps1')
+                {
+                    {
+                        [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = $declaredPath; Trusted = $true } | Export-CompleterSet -Path $script:SetPath
+                    } | Should -Throw "*The script path '$declaredPath' is provider-qualified but not fully qualified*"
+                }
+
+                Test-Path -LiteralPath $script:SetPath | Should -BeFalse
+
+                [pscustomobject] @{ CommandName = 'importfixture'; IsNative = $true; SourcePath = ('FileSystem::{0}' -f $scriptPath); Trusted = $true } |
+                    Export-CompleterSet -Path $script:SetPath -WarningVariable trustedWarnings -WarningAction SilentlyContinue
+            }
+            finally
+            {
+                Pop-Location
+            }
+
+            @($trustedWarnings).Count | Should -Be 0
+            $data = Import-PowerShellDataFile -LiteralPath $script:SetPath
+            $data.Entries[0].Path | Should -Be 'scripts/Native.ps1'
+            $data.Entries[0].Hash | Should -BeExactly $expectedHash
+        }
+
         It 'refuses a strict subset registration that Import-CompleterSet could not read back and writes nothing' {
             $subset = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru
             $subset.State | Should -Be 'Pending'
@@ -830,6 +866,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
                     'The command cannot see a pipe in front of a function or script block that calls it, so a wrapper must pass its input on, for example as $input | Export-CompleterSet'
                     'A null carries no record and is skipped, so -InputObject $null, like the output of a Get-Completer filter that matches nothing, selects nothing.'
                     'A script path that is not fully qualified is resolved against the current PowerShell location, as Push-Location sets it, and a path that resolves outside the file system is rejected.'
+                    'A provider-qualified path, such as FileSystem::Native.ps1, is rejected unless it is fully qualified.'
                 ))
             {
                 $flatText | Should -Match ([regex]::Escape($expectedText))

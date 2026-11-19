@@ -70,8 +70,9 @@ the script it came from through a ScriptPath or SourcePath property. Records
 without a script path cannot be expressed in a set and are rejected. A script
 path that is not fully qualified is resolved against the current PowerShell
 location, as Push-Location sets it, and a path that resolves outside the file
-system is rejected. A null carries no record and is skipped, so
--InputObject $null, like the output of a Get-Completer filter that matches
+system is rejected. A provider-qualified path, such as FileSystem::Native.ps1,
+is rejected unless it is fully qualified. A null carries no record and is
+skipped, so -InputObject $null, like the output of a Get-Completer filter that matches
 nothing, selects nothing. Trusted, IsNative
 and Native take a Boolean value, a number, where zero is False, or the text
 'True' or 'False' in any letter case, with or without white space around it,
@@ -202,6 +203,15 @@ function Export-CompleterSet
                         if ($provider.ImplementingType -ne [Microsoft.PowerShell.Commands.FileSystemProvider])
                         {
                             throw "The script path '$declaredPath' resolves to '$scriptPath' on the $($provider.Name) provider, not to a file system path."
+                        }
+
+                        # The engine hands the part after a provider qualifier to the
+                        # provider unchanged, so a relative one resolves against the
+                        # process working directory instead of the PowerShell location.
+                        if ($PSCmdlet.SessionState.Path.IsProviderQualified($declaredPath) -and
+                            -not [System.IO.Path]::IsPathFullyQualified($declaredPath.Substring($declaredPath.IndexOf('::') + 2)))
+                        {
+                            throw "The script path '$declaredPath' is provider-qualified but not fully qualified, so PowerShell would resolve it against the process working directory rather than the PowerShell location. Drop the provider qualifier or give a fully qualified path."
                         }
 
                         break
