@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [3.0.1-preview2] - 2026-11-18
+
 Fixes for the eighteen findings in `docs/code-review-2026-11-18.md`. The
 behaviour changes they bring are listed under Changed.
 
@@ -1156,7 +1158,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.0.1-preview1...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.0.1-preview2...HEAD
+[3.0.1-preview2]: https://github.com/tstager/CompleterActions/compare/v3.0.1-preview1...v3.0.1-preview2
 [3.0.1-preview1]: https://github.com/tstager/CompleterActions/compare/v3.0.0...v3.0.1-preview1
 [3.0.0]: https://github.com/tstager/CompleterActions/compare/v2.2.0...v3.0.0
 [3.0.0-rc1]: https://github.com/tstager/CompleterActions/compare/v2.2.0...v3.0.0-rc1
