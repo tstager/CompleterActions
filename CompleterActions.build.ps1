@@ -195,10 +195,33 @@ task build clean, compile, external_help, {
             $helpLine = $helpStart.StartLineNumber
         }
 
+        $fileLines = @(Get-Content -Path $file.FullName)
+
+        # The parser finds the using statements, so a line inside a string that reads like one stays where it is. Only a
+        # statement's own text moves to the top: it is blanked in place, which keeps the columns the declaration line is
+        # cut by, and anything else on its lines, such as the end of a comment, stays. A line left blank is dropped.
+        $usingLines = [System.Collections.Generic.HashSet[int]]::new()
+
+        foreach ($usingAst in $fileAst.UsingStatements) {
+            $extent = $usingAst.Extent
+
+            if (-not $usingStatements.Contains($extent.Text)) {
+                $usingStatements.Add($extent.Text)
+            }
+
+            foreach ($usingLine in $extent.StartLineNumber..$extent.EndLineNumber) {
+                $text = $fileLines[$usingLine - 1]
+                $start = if ($usingLine -eq $extent.StartLineNumber) { $extent.StartColumnNumber - 1 } else { 0 }
+                $end = if ($usingLine -eq $extent.EndLineNumber) { $extent.EndColumnNumber - 1 } else { $text.Length }
+                $fileLines[$usingLine - 1] = $text.Substring(0, $start) + [string]::new(' ', $end - $start) + $text.Substring($end)
+                $null = $usingLines.Add($usingLine)
+            }
+        }
+
         $fileBody = [System.Collections.Generic.List[string]]::new()
         $lineNumber = 0
 
-        foreach ($line in Get-Content -Path $file.FullName) {
+        foreach ($line in $fileLines) {
             $lineNumber++
 
             if ($lineNumber -ge $helpLine -and $lineNumber -lt $commandLine) {
@@ -223,11 +246,7 @@ task build clean, compile, external_help, {
                 continue
             }
 
-            if ($line -match '^\s*using\s+(namespace|module|assembly)\b') {
-                if (-not $usingStatements.Contains($line)) {
-                    $usingStatements.Add($line)
-                }
-
+            if ($usingLines.Contains($lineNumber) -and [string]::IsNullOrWhiteSpace($line)) {
                 continue
             }
 
