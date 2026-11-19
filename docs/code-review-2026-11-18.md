@@ -4,6 +4,8 @@ Reviewed on November 18, 2026 at `ce5feb6da5ce1306f0cf2889db9b3ecbfa548a39` on `
 
 The review identified **18 findings: two P1, twelve P2, and four P3**. Address the two strict-import issues first. For callers that use the module to verify completers in CI, finding 5 also deserves early attention because it can make a broken registration appear to work.
 
+Status: **all eighteen findings fixed, merged to `main` through PR #13 (`8705a1b`), and released in 3.0.1-preview2** (`4b8325c`, tag `v3.0.1-preview2`, 2026-11-18). Stable 3.0.1 follows the preview soak. See Resolution.
+
 ## Findings that affect strict import
 
 Both P1 findings affect the isolation that callers rely on when they import an unfamiliar completer without `-Trusted`. Both follow from the source. The review did not exercise a security bypass.
@@ -74,7 +76,7 @@ The Windows resolver reported `CanRun=False` for the app-execution alias because
 
 ## Resolution
 
-All eighteen findings are merged on branch `fix/review-2026-11-18`, one `--no-ff` merge per finding. **Nothing is released yet**: the branch is not merged to `main`, and no version, tag, or publication exists for these fixes. Each finding had an Opus implementer and a two-round adversarial review by Haiku and Sonnet; six packages (findings 1, 3, 7, 9, 12, and 14) took a final fix after round 2 that no reviewer re-checked. The packaged module was regenerated (`6e373a0`). The behaviour changes are listed under `[Unreleased]` in CHANGELOG.md.
+All eighteen findings were fixed on branch `fix/review-2026-11-18`, one `--no-ff` merge per finding. The branch was merged to `main` through PR #13 (`8705a1b`) on 2026-11-18 after hosted CI passed on all eight jobs, and the fixes were released the same day as 3.0.1-preview2 (release commit `4b8325c`, tag `v3.0.1-preview2`), a prerelease on the PowerShell Gallery and on GitHub. Each finding had an Opus implementer and a two-round adversarial review by Haiku and Sonnet; six packages (findings 1, 3, 7, 9, 12, and 14) took a final fix after round 2 that no reviewer re-checked. The packaged module was regenerated (`6e373a0`). The behaviour changes are listed under `[3.0.1-preview2]` in CHANGELOG.md.
 
 | Finding | Status | Merge | Residual |
 | --- | --- | --- | --- |
@@ -97,6 +99,6 @@ All eighteen findings are merged on branch `fix/review-2026-11-18`, one `--no-ff
 | 17 | Fixed | `42101cc` | |
 | 18 | Fixed | `cc1c31f` | |
 
-Integration checks on the branch, Windows, pwsh 7.7.0: `Invoke-Build -Task compile` and `-Task build` succeeded, and a second build changed no tracked file. Configured PSScriptAnalyzer on `src`, `tests`, and `tools` reported zero findings. The full Pester suite, with the real PowerShell directory first on PATH, gave **867 passed, 3 failed, 14 skipped**; the three failures are the scaffold `-WhatIf` child-process assertions, which fail identically on `main` (104 passed, 3 failed in that file). The PS_Completers conformance tests passed 322 of 322 against the built package, and strict `Import-CompleterScript` imported all 175 completer scripts (370 records). Hosted CI, macOS, and publication were not exercised.
+Integration checks on the branch, Windows, pwsh 7.7.0: `Invoke-Build -Task compile` and `-Task build` succeeded, and a second build changed no tracked file. Configured PSScriptAnalyzer on `src`, `tests`, and `tools` reported zero findings. The full Pester suite, with the real PowerShell directory first on PATH, gave **867 passed, 3 failed, 14 skipped**; the three failures are the scaffold `-WhatIf` child-process assertions, which fail identically on `main` (104 passed, 3 failed in that file). The PS_Completers conformance tests passed 322 of 322 against the built package, and strict `Import-CompleterScript` imported all 175 completer scripts (370 records). Those checks ran before the pull request; hosted CI and the release workflow have since passed. macOS was not exercised.
 
 A final review of the whole branch (Fable, 2026-11-18) accepted it with follow-ups and found no P1 and no regression against `main`. It reproduced findings 1 to 9, 11, 12, 14, and 16 on `main` and showed them closed on the branch, and confirmed that reverting each of the six final fixes fails its test. In a Linux container (pwsh 7.4.2, Pester 5.8.0) the ten test files the fixes touch gave 724 passed, 0 failed, 26 skipped. Its follow-ups: three changelog clauses described defects `main` never had (corrected), the help did not say that returned records are copies (added to `Get-Completer`), the capture module's `ScriptInfo` parameter name can collide with a script's own state variable (open, P3), and command names that differ only by letter case still share a scaffold stem on a case-sensitive file system (open, P3).
