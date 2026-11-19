@@ -829,6 +829,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
                     'Only a call with no pipe before it and no -InputObject, such as the command on its own or as the first command of a pipeline, exports every managed registration that records a ScriptPath.'
                     'The command cannot see a pipe in front of a function or script block that calls it, so a wrapper must pass its input on, for example as $input | Export-CompleterSet'
                     'A null carries no record and is skipped, so -InputObject $null, like the output of a Get-Completer filter that matches nothing, selects nothing.'
+                    'A script path that is not fully qualified is resolved against the current PowerShell location, as Push-Location sets it, and a path that resolves outside the file system is rejected.'
                 ))
             {
                 $flatText | Should -Match ([regex]::Escape($expectedText))
