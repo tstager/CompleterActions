@@ -26,12 +26,13 @@ ImportModule is the capture module Import-CompleterScript ran the script in,
 as Get-CompleterImportModule finds it for the script block, ScriptPath, and
 tier, and it is null for any script block the import did not emit.
 
-IsNative, Native, and Trusted take a Boolean, a number, where zero is false,
-or the text 'True' or 'False' in any casing, with or without white space
-around it, as Export-Csv writes a Boolean, and a null value, or text that is
-empty or only white space, counts as false. Any other text is rejected: a
-cast to Boolean would turn the text 'False' into true and select the other
-kind of target, or the trusted tier.
+IsNative, Native, and Trusted take a Boolean or switch value, a number, where
+zero is false, or the text 'True' or 'False' in any casing, with or without
+white space around it, as Export-Csv writes a Boolean, and a null value, or
+text that is empty or only white space, counts as false. Any other text, a
+collection, or any other kind of object is rejected: a cast to Boolean would
+turn the text 'False', or an array of False values, into true and select the
+other kind of target, or the trusted tier.
 
 .PARAMETER InputObject
 The object to resolve into a completer target.
@@ -71,9 +72,32 @@ function Resolve-CompleterInputObject
                 [object] $Value
             )
 
-            if ($Value -isnot [string])
+            if ($null -eq $Value)
+            {
+                return $false
+            }
+
+            if ($Value -is [bool] -or $Value -is [switch] -or $Value -is [System.Numerics.BigInteger])
             {
                 return [bool] $Value
+            }
+
+            $valueType = $Value.GetType()
+            $typeCode = [type]::GetTypeCode($valueType)
+
+            if (-not $valueType.IsEnum -and $typeCode -ge [System.TypeCode]::SByte -and $typeCode -le [System.TypeCode]::Decimal)
+            {
+                return [bool] $Value
+            }
+
+            if ($Value -isnot [string])
+            {
+                if ($Value -is [System.Collections.IEnumerable])
+                {
+                    throw "InputObject supplies a collection for $PropertyName, which takes a single Boolean value. Use True or False."
+                }
+
+                throw "InputObject supplies a value of type $($valueType.FullName) for $PropertyName, which is not a Boolean value. Use True or False."
             }
 
             if ([string]::IsNullOrWhiteSpace($Value))

@@ -138,12 +138,13 @@ the script it came from through a `ScriptPath` or `SourcePath` property.
 Records without a script path cannot be expressed in a set and are rejected.
 A null carries no record and is skipped, so `-InputObject $null`, like the
 output of a `Get-Completer` filter that matches nothing, selects nothing.
-`Trusted`, `IsNative` and `Native` take a Boolean value, a number, where zero
-is `False`, or the text `True` or `False` in any letter case, with or without
-white space around it, as `Export-Csv` writes a Boolean, so rows read back
-with `Import-Csv` export with the tier and kind they were written with. A null
-value, or text that is empty or only white space, counts as `False`, and any
-other text is rejected.
+`Trusted`, `IsNative` and `Native` take a Boolean or switch value, a number,
+where zero is `False`, or the text `True` or `False` in any letter case, with
+or without white space around it, as `Export-Csv` writes a Boolean, so rows
+read back with `Import-Csv` export with the tier and kind they were written
+with. A null value, or text that is empty or only white space, counts as
+`False`. Any other text, a collection such as an array, even one that holds a
+single value, and any other kind of object are rejected.
 `CommandName`, or `RuntimeKey`, names the target exactly. `Key` and
 `RegistrationKey` are folded to lowercase, so an object that has only one of
 them names the target whose runtime key is that key, apart from letter case,
