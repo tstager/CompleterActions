@@ -237,7 +237,7 @@ function Reset-Completer
 
                         if ($PassThru -and -not $WhatIfPreference)
                         {
-                            $PSCmdlet.WriteObject($managedRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $managedRegistration))
                         }
                     }
                     elseif ($PSCmdlet.ShouldProcess($runtimeKey, 'Reset completer registration'))
@@ -255,7 +255,7 @@ function Reset-Completer
 
                         if ($PassThru)
                         {
-                            $PSCmdlet.WriteObject($storedRegistration)
+                            $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $storedRegistration))
                         }
                     }
                 }

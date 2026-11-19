@@ -288,6 +288,8 @@ function Get-Completer
         }
 
         $endIndex = $startIndex + $itemsToEmit - 1
-        $PSCmdlet.WriteObject($registrations[$startIndex..$endIndex], $true)
+        # Active, Pending, and Failed records are the managed table's own objects,
+        # so the page is copied before it is written.
+        $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $registrations[$startIndex..$endIndex]), $true)
     }
 }
