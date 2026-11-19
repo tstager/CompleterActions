@@ -72,8 +72,10 @@ jobs:
               return
           }
 
+          # The whole heading version must match, so 3.0.1 selects neither 3.0.1-preview1 nor 3.0.10.
           $version = $env:GITHUB_REF_NAME -replace '^v', ''
-          $heading = "^##\s+\[?$([regex]::Escape($version))\]?"
+          $escapedVersion = [regex]::Escape($version)
+          $heading = "^##\s+(\[$escapedVersion\]|$escapedVersion)(\s|$)"
           $section = [System.Collections.Generic.List[string]]::new()
           $capture = $false
 
