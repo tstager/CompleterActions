@@ -406,7 +406,7 @@ function Register-Completer
 
                 if ($PassThru)
                 {
-                    $PSCmdlet.WriteObject($storedRegistration)
+                    $PSCmdlet.WriteObject((Copy-CompleterRegistration -Registration $storedRegistration))
                 }
             }
         }

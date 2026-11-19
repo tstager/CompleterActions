@@ -445,7 +445,7 @@ Register-ArgumentCompleter -CommandName 'lazyoverlap.exe' -Native -ScriptBlock {
         $second = @(Register-Completer -Path $script:NativeFixturePath -Lazy -PassThru)
 
         $second.Count | Should -Be 2
-        [object]::ReferenceEquals($first[0], $second[0]) | Should -BeTrue
+        [object]::ReferenceEquals($first[0].ScriptBlock, $second[0].ScriptBlock) | Should -BeTrue
 
         {
             Register-Completer -Path $script:NativeFixturePath -Lazy -Trusted -CommandName 'importfixture' -Native

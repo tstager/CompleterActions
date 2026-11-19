@@ -1036,10 +1036,30 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
             foreach ($record in $second)
             {
-                [object]::ReferenceEquals($record, ($first | Where-Object -Property Key -EQ -Value $record.Key)) | Should -BeTrue
+                [object]::ReferenceEquals($record.ScriptBlock, ($first | Where-Object -Property Key -EQ -Value $record.Key).ScriptBlock) | Should -BeTrue
             }
 
             @(Get-Completer -State Active, Pending, Failed, Stale).Count | Should -Be 3
+        }
+
+        It 'returns records that can be edited without editing the managed records' {
+            Write-TestCompleterSet -Path $script:SetPath -Entry @(
+                "@{ Path = '$script:NativeFixturePath' }"
+            )
+
+            $imported = @(Import-CompleterSet -Path $script:SetPath)
+            $imported.Count | Should -Be 2
+
+            foreach ($record in $imported)
+            {
+                $record.State = 'Failed'
+                $record.ScriptPath = $script:ParameterFixturePath
+                $record.Trusted = $true
+            }
+
+            $records = @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native)
+            @($records | ForEach-Object { '{0}/{1}/{2}' -f $_.State, $_.Source, $_.Trusted }) | Should -Be @('Pending/Managed/False', 'Pending/Managed/False')
+            @($records.ScriptPath | Select-Object -Unique) | Should -Be @($script:NativeFixturePath)
         }
 
         It 'registers the valid entries and warns about the rest with -SkipInvalid' {
@@ -1184,7 +1204,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             $registered = @(Import-CompleterSet -Path $script:SetPath)
 
             @($registered.Key) | Should -Be @('importfixture', 'importfixture.exe', 'test-importedfixturetool:name', 'test-trustedfixturetool:name')
-            [object]::ReferenceEquals($registered[2], $existing) | Should -BeTrue
+            [object]::ReferenceEquals($registered[2].ScriptBlock, $existing.ScriptBlock) | Should -BeTrue
             @($registered.State | Select-Object -Unique) | Should -Be @('Pending')
             @(Get-Completer -State Active, Pending, Failed, Stale).Count | Should -Be 4
         }
@@ -1528,7 +1548,7 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
 
             for ($index = 1; $index -lt $keys.Count; $index++)
             {
-                [object]::ReferenceEquals($after[$index].Managed, $first[$index]) | Should -BeTrue -Because "'$($keys[$index])' keeps the Pending record of the first import"
+                [object]::ReferenceEquals($after[$index].Managed.ScriptBlock, $first[$index].ScriptBlock) | Should -BeTrue -Because "'$($keys[$index])' keeps the Pending record of the first import"
                 [object]::ReferenceEquals($after[$index].Runtime, $first[$index].ScriptBlock) | Should -BeTrue -Because "'$($keys[$index])' keeps the stub of the first import"
                 $after[$index].Managed.State | Should -Be 'Pending'
             }

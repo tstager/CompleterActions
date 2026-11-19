@@ -1254,7 +1254,8 @@ else
             [System.Management.Automation.CompletionResult]::new('new', 'new', 'ParameterValue', 'new')
         }
 
-        $original = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock -PassThru
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $oldScriptBlock
+        $original = InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' }
 
         & (Get-Module -Name 'CompleterActions') {
             function script:Add-ManagedCompleterRegistration { throw 'forced managed-state failure' }
@@ -1448,7 +1449,7 @@ else
         $registrations = @(Register-Completer -CommandName 'Test-ArrayOne', 'Test-ArrayOne' -ParameterName 'Name', 'Name' -ScriptBlock $scriptBlock -PassThru)
 
         $registrations.Count | Should -Be 2
-        [object]::ReferenceEquals($registrations[0], $registrations[1]) | Should -BeTrue
+        [object]::ReferenceEquals($registrations[0].ScriptBlock, $registrations[1].ScriptBlock) | Should -BeTrue
 
         $state = InModuleScope CompleterActions {
             Get-CompleterActionState
@@ -1473,6 +1474,89 @@ else
         $first.Source | Should -Be 'Managed'
         $first.State | Should -Be 'Active'
         $first.ScriptText | Should -Match 'repeat'
+    }
+
+    It 'returns detached records, so editing a returned record leaves the managed state unchanged' {
+        $scriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('kept', 'kept', 'ParameterValue', 'kept')
+        }
+
+        $registered = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock $scriptBlock -PassThru
+        $registered.State = 'Failed'
+        $registered.ScriptPath = Join-Path -Path $TestDrive -ChildPath 'edited-passthru.ps1'
+
+        $queried = Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name'
+        @($queried | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Active/Managed') -Because 'editing a -PassThru record does not edit the managed record'
+        $queried.ScriptPath | Should -BeNullOrEmpty
+
+        $queried.State = 'Failed'
+        $queried.ScriptPath = Join-Path -Path $TestDrive -ChildPath 'edited-query.ps1'
+        $queried.LoadError = 'edited'
+
+        $requeried = @(Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name')
+        @($requeried | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Active/Managed') -Because 'editing a Get-Completer record does not edit the managed record'
+        $requeried[0].ScriptPath | Should -BeNullOrEmpty
+        $requeried[0].LoadError | Should -BeNullOrEmpty
+
+        $stored = InModuleScope CompleterActions { Find-ManagedCompleterRegistration -CommandName 'Test-ManagedTool' -ParameterName 'Name' }
+        [object]::ReferenceEquals($requeried[0], $stored) | Should -BeFalse
+
+        foreach ($property in [CompleterActions.CompleterRegistration].GetProperties())
+        {
+            [object]::Equals($property.GetValue($requeried[0]), $property.GetValue($stored)) | Should -BeTrue -Because "the returned copy carries the managed record's $($property.Name)"
+        }
+    }
+
+    It 'restores the untouched managed record when a pipeline failure undoes Unregister-Completer -PassThru' {
+        $null = Register-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -ScriptBlock { 'kept' }
+
+        {
+            Unregister-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name' -Confirm:$false -PassThru | ForEach-Object {
+                $_.State = 'Failed'
+                $_.ScriptPath = Join-Path -Path $TestDrive -ChildPath 'edited-unregister.ps1'
+                throw 'downstream failure'
+            }
+        } | Should -Throw '*downstream failure*'
+
+        $records = @(Get-Completer -CommandName 'Test-ManagedTool' -ParameterName 'Name')
+        @($records | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Active/Managed') -Because 'the rollback puts back the managed record, not the edited copy'
+        $records[0].ScriptPath | Should -BeNullOrEmpty
+    }
+
+    It 'restores the untouched runtime completer when a pipeline failure undoes Unregister-Completer -AllowUnmanaged -PassThru' {
+        function Test-RemoveUnmanagedTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $Name
+            )
+        }
+
+        $originalScriptBlock = {
+            param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+
+            [System.Management.Automation.CompletionResult]::new('original', 'original', 'ParameterValue', 'original')
+        }
+
+        Register-ArgumentCompleter -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -ScriptBlock $originalScriptBlock
+
+        {
+            Unregister-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name' -AllowUnmanaged -Confirm:$false -PassThru | ForEach-Object {
+                $_.ScriptBlock = { [System.Management.Automation.CompletionResult]::new('edited', 'edited', 'ParameterValue', 'edited') }
+                $_.ScriptText = 'edited'
+                throw 'downstream failure'
+            }
+        } | Should -Throw '*downstream failure*'
+
+        $records = @(Get-Completer -CommandName 'Test-RemoveUnmanagedTool' -ParameterName 'Name')
+        @($records | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Discovered/Discovered')
+        [object]::ReferenceEquals($records[0].ScriptBlock, $originalScriptBlock) | Should -BeTrue -Because 'the rollback puts back the runtime script block, not the one set on the emitted copy'
+
+        $inputScript = 'Test-RemoveUnmanagedTool -Name '
+        $completion = TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length
+        $completion.CompletionMatches.CompletionText | Should -Be @('original')
     }
 
     It 'treats a managed record as stale after the runtime is overwritten outside the module' {
@@ -2499,7 +2583,7 @@ Describe 'Registration identity' {
             $firstRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
             $secondRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -PassThru
 
-            [object]::ReferenceEquals($secondRecord, $firstRecord) | Should -BeTrue -Because 'two unbound script blocks with the same text are the same completer'
+            [object]::ReferenceEquals($secondRecord.ScriptBlock, $firstRecord.ScriptBlock) | Should -BeTrue -Because 'two unbound script blocks with the same text are the same completer'
             Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'same'")
 
             $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/ImportableNativeCompleter.ps1'
@@ -2511,7 +2595,7 @@ Describe 'Registration identity' {
 
             for ($index = 0; $index -lt $imported.Count; $index++)
             {
-                [object]::ReferenceEquals($reimported[$index], $imported[$index]) | Should -BeTrue -Because 'importing and registering the same script again is a no-op, although each import binds its script blocks to a new module'
+                [object]::ReferenceEquals($reimported[$index].ScriptBlock, $imported[$index].ScriptBlock) | Should -BeTrue -Because 'importing and registering the same script again is a no-op, although each import binds its script blocks to a new module'
             }
 
             @(Get-Completer -CommandName 'importfixture', 'importfixture.exe' -Native | ForEach-Object { [string] $_.State }) | Should -Be @('Active', 'Active')
@@ -2537,7 +2621,7 @@ Describe 'Registration identity' {
             $firstRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $first -PassThru
             $secondRecord = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $second -PassThru
 
-            [object]::ReferenceEquals($secondRecord, $firstRecord) | Should -BeTrue -Because 'a script block with the same text, bound to the same module and defined in the same file, is the same completer'
+            [object]::ReferenceEquals($secondRecord.ScriptBlock, $firstRecord.ScriptBlock) | Should -BeTrue -Because 'a script block with the same text, bound to the same module and defined in the same file, is the same completer'
             Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'same'")
             Get-TestIdentityCompletion | Should -Be @('same')
         }
@@ -2577,8 +2661,8 @@ Describe 'Registration identity' {
             $native = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-result' } -PassThru
 
             $native.CompleterType | Should -Be 'Native'
-            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue
-            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool:Name' -Native), $native) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $parameter.ScriptBlock) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool:Name' -Native).ScriptBlock, $native.ScriptBlock) | Should -BeTrue
             Get-TestIdentityState -CompleterType Parameter | Should -Be @("Parameter/Active/'parameter-result'")
             Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-result'")
             Get-TestIdentityCompletion | Should -Be @('parameter-result')
@@ -2594,13 +2678,13 @@ Describe 'Registration identity' {
             $parameter = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-result' } -PassThru
             $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-first' } -Force
 
-            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue -Because 'a forced native registration must not replace the parameter record'
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $parameter.ScriptBlock) | Should -BeTrue -Because 'a forced native registration must not replace the parameter record'
             Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-first'")
 
             $null = Register-Completer -CommandName 'Test-IdentityTool:Name' -Native -ScriptBlock { 'native-second' } -Force
 
             Get-TestIdentityState -CompleterType Native | Should -Be @("Native/Active/'native-second'")
-            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name'), $parameter) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $parameter.ScriptBlock) | Should -BeTrue
             Get-TestIdentityCompletion | Should -Be @('parameter-result')
 
             $null = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock { 'parameter-second' } -Force
@@ -2689,8 +2773,8 @@ Describe 'Registration identity' {
             $sign = Register-Completer -CommandName $script:KelvinSignName -Native -ScriptBlock { 'sign-result' } -PassThru
 
             $sign.Key | Should -BeExactly $letter.Key -Because 'the two names share the lowercase key, which is why the key is not their identity'
-            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinLetterName -Native), $letter) | Should -BeTrue
-            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinSignName -Native), $sign) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinLetterName -Native).ScriptBlock, $letter.ScriptBlock) | Should -BeTrue
+            [object]::ReferenceEquals((Get-Completer -CommandName $script:KelvinSignName -Native).ScriptBlock, $sign.ScriptBlock) | Should -BeTrue
             Get-TestKelvinState | Should -Be @("letter/Active/'letter-result'", "sign/Active/'sign-result'")
             Get-TestKelvinCompletion -CommandName $script:KelvinLetterName | Should -Be @('letter-result')
             Get-TestKelvinCompletion -CommandName $script:KelvinSignName | Should -Be @('sign-result')
@@ -2870,13 +2954,13 @@ Describe 'Registration identity' {
             $imported = Import-CompleterScript -LiteralPath $path | Register-Completer -PassThru
             $reimported = Import-CompleterScript -LiteralPath $otherSpelling | Register-Completer -PassThru
 
-            [object]::ReferenceEquals($reimported, $imported) | Should -BeTrue -Because 'both spellings name one file'
+            [object]::ReferenceEquals($reimported.ScriptBlock, $imported.ScriptBlock) | Should -BeTrue -Because 'both spellings name one file'
 
             $null = Unregister-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -Confirm:$false
             $lazy = Register-Completer -LiteralPath $path -Lazy -PassThru
             $lazyAgain = Register-Completer -LiteralPath $otherSpelling -Lazy -PassThru
 
-            [object]::ReferenceEquals($lazyAgain, $lazy) | Should -BeTrue
+            [object]::ReferenceEquals($lazyAgain.ScriptBlock, $lazy.ScriptBlock) | Should -BeTrue
         }
     }
 
@@ -2914,7 +2998,7 @@ Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name
             Get-TestIdentityCompletion | Should -Be @('alpha')
 
             $reimported = Import-CompleterScript -LiteralPath $scriptPath -Trusted | Register-Completer -PassThru
-            [object]::ReferenceEquals($reimported, $record) | Should -BeTrue -Because 'importing and registering the same script again is still a no-op'
+            [object]::ReferenceEquals($reimported.ScriptBlock, $record.ScriptBlock) | Should -BeTrue -Because 'importing and registering the same script again is still a no-op'
 
             $forced = $pathClaim | Register-Completer -Force -PassThru
             [object]::ReferenceEquals($forced.ScriptBlock, $closure) | Should -BeTrue
@@ -3010,7 +3094,7 @@ Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name
             $own = @($imported | Register-Completer -Force -PassThru)
             [object]::ReferenceEquals($own[0].ImportModule, $capture) | Should -BeTrue -Because 'the script blocks the import emitted are still its own'
             $lazy = @(Register-Completer -LiteralPath $fixturePath -Lazy -PassThru)
-            [object]::ReferenceEquals($lazy[0], $own[0]) | Should -BeTrue -Because 'the record now holds what the script imported under the same tier'
+            [object]::ReferenceEquals($lazy[0].ScriptBlock, $own[0].ScriptBlock) | Should -BeTrue -Because 'the record now holds what the script imported under the same tier'
         }
 
         # Safety guard: pins the documented treatment of a module that other code creates
@@ -3057,7 +3141,7 @@ Register-ArgumentCompleter -CommandName 'Test-IdentityTool' -ParameterName 'Name
             $imported = Import-CompleterScript -LiteralPath $scriptPath | Register-Completer -Force -PassThru
             $lazy = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
 
-            [object]::ReferenceEquals($lazy, $imported) | Should -BeTrue -Because 'the active record already loaded that script under the same tier'
+            [object]::ReferenceEquals($lazy.ScriptBlock, $imported.ScriptBlock) | Should -BeTrue -Because 'the active record already loaded that script under the same tier'
             $lazy.State | Should -Be 'Active'
             Get-TestIdentityCompletion | Should -Be @('from-file')
         }
@@ -3089,14 +3173,14 @@ function Register-TestIdentityProbeClosure
                 $probe = Import-Module -Name $modulePath -ArgumentList 'alpha' -Force -PassThru
                 $first = Register-TestIdentityProbe
                 [object]::ReferenceEquals($first.ScriptBlock.Module, $probe) | Should -BeTrue
-                [object]::ReferenceEquals((Register-TestIdentityProbe), $first) | Should -BeTrue -Because 'the same module instance registering the same text again is a no-op'
+                [object]::ReferenceEquals((Register-TestIdentityProbe).ScriptBlock, $first.ScriptBlock) | Should -BeTrue -Because 'the same module instance registering the same text again is a no-op'
                 Get-TestIdentityCompletion | Should -Be @('alpha')
 
                 $reimportedProbe = Import-Module -Name $modulePath -ArgumentList 'beta' -Force -PassThru
                 [object]::ReferenceEquals($reimportedProbe, $probe) | Should -BeFalse
                 $second = Register-TestIdentityProbe
 
-                [object]::ReferenceEquals($second, $first) | Should -BeFalse -Because 'the new instance of the module holds its own state'
+                [object]::ReferenceEquals($second.ScriptBlock, $first.ScriptBlock) | Should -BeFalse -Because 'the new instance of the module holds its own state'
                 [object]::ReferenceEquals($second.ScriptBlock.Module, $reimportedProbe) | Should -BeTrue
                 [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $second.ScriptBlock) | Should -BeTrue
                 Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
@@ -3138,12 +3222,12 @@ function Register-TestIdentitySameArgument
                 [object]::ReferenceEquals($reimportedProbe, $probe) | Should -BeFalse
                 $second = Register-TestIdentitySameArgument
 
-                [object]::ReferenceEquals($second, $first) | Should -BeFalse -Because 'the owner ruling has a new instance replace the record, not reuse it, even with the same arguments'
+                [object]::ReferenceEquals($second.ScriptBlock, $first.ScriptBlock) | Should -BeFalse -Because 'the owner ruling has a new instance replace the record, not reuse it, even with the same arguments'
                 [object]::ReferenceEquals($second.ScriptBlock.Module, $reimportedProbe) | Should -BeTrue
                 [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $second.ScriptBlock) | Should -BeTrue -Because 'the runtime block is the new instance''s'
                 Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
                 Get-TestIdentityCompletion | Should -Be @('alpha')
-                [object]::ReferenceEquals((Register-TestIdentitySameArgument), $second) | Should -BeTrue -Because 'the instance that owns the record registering again is a no-op'
+                [object]::ReferenceEquals((Register-TestIdentitySameArgument).ScriptBlock, $second.ScriptBlock) | Should -BeTrue -Because 'the instance that owns the record registering again is a no-op'
             }
             finally
             {
@@ -3177,7 +3261,7 @@ function Register-TestIdentitySameArgument
 
             $replaced = Register-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name' -ScriptBlock $again -PassThru
 
-            [object]::ReferenceEquals($replaced, $record) | Should -BeFalse -Because 'the block of the other instance would run with that instance''s state'
+            [object]::ReferenceEquals($replaced.ScriptBlock, $record.ScriptBlock) | Should -BeFalse -Because 'the block of the other instance would run with that instance''s state'
             [object]::ReferenceEquals((Get-Completer -CommandName 'Test-IdentityTool' -ParameterName 'Name').ScriptBlock, $again) | Should -BeTrue
             Get-TestIdentityState -CompleterType Parameter | Should -Be @('Parameter/Active/$script:value')
             Get-TestIdentityCompletion | Should -Be @('beta')

@@ -341,6 +341,45 @@ Describe 'Reset-Completer' {
         (Get-Completer -CommandName 'resetfixture' -Native).State | Should -Be 'Active'
     }
 
+    It 'keeps the state and reload metadata of the managed record when a returned record is edited' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'reset_completer.ps1'
+        $otherPath = Join-Path -Path $TestDrive -ChildPath 'other_completer.ps1'
+        Write-TestResetScript -Path $scriptPath -CommandName 'resetfixture' -Value 'own-value'
+        Write-TestResetScript -Path $otherPath -CommandName 'resetfixture' -Value 'other-value'
+
+        $pending = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+        $pending.ScriptPath = $otherPath
+        $pending.Trusted = $true
+        $queried = Get-Completer -CommandName 'resetfixture' -Native
+        $queried.ScriptPath | Should -Be $scriptPath -Because 'editing a -PassThru record does not edit the managed record'
+        $queried.ScriptPath = $otherPath
+        $queried.State = 'Failed'
+
+        Invoke-TestResetPress -CommandName 'resetfixture' | Should -Be @('own-value') -Because 'the first tab press loads the script the managed record names'
+        $active = Get-Completer -CommandName 'resetfixture' -Native
+        $active.State | Should -Be 'Active'
+        $active.ScriptPath | Should -Be $scriptPath
+        $active.Trusted | Should -BeFalse
+
+        $reset = Reset-Completer -CommandName 'resetfixture' -Native -PassThru
+        $reset.ScriptPath = $otherPath
+        $reset.State = 'Failed'
+
+        $after = @(Get-Completer -CommandName 'resetfixture' -Native)
+        @($after | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Pending/Managed') -Because 'editing a Reset-Completer -PassThru record does not edit the managed record'
+        $after[0].ScriptPath | Should -Be $scriptPath
+
+        $alreadyPending = Reset-Completer -CommandName 'resetfixture' -Native -PassThru
+        $alreadyPending.State | Should -Be 'Pending' -Because 'resetting a pending record returns it unchanged'
+        $alreadyPending.ScriptPath = $otherPath
+        $alreadyPending.State = 'Failed'
+
+        $stillPending = @(Get-Completer -CommandName 'resetfixture' -Native)
+        @($stillPending | ForEach-Object { '{0}/{1}' -f $_.State, $_.Source }) | Should -Be @('Pending/Managed') -Because 'editing the record Reset-Completer -PassThru returns for an already-pending target does not edit the managed record'
+        $stillPending[0].ScriptPath | Should -Be $scriptPath
+        Invoke-TestResetPress -CommandName 'resetfixture' | Should -Be @('own-value')
+    }
+
     Context 'in a fresh process' {
         BeforeAll {
             $probeScript = @'
@@ -382,12 +421,12 @@ else
     $returned = @(Reset-Completer -CommandName 'resetpending' -Native -PassThru -Confirm -Verbose 4>&1)
     "RETURNED=$(@($returned | Where-Object {{ $_ -is [System.Management.Automation.VerboseRecord] }}).Count) verbose, $(@($returned | Where-Object PSTypeNames -Contains 'CompleterActions.CompleterRegistration').Count) records"
     $returned | Where-Object {{ $_ -is [System.Management.Automation.VerboseRecord] }} | ForEach-Object {{ "VERBOSE=$($_.Message)" }}
-    "SAMEPENDING=$([object]::ReferenceEquals(($returned | Where-Object PSTypeNames -Contains 'CompleterActions.CompleterRegistration'), $pending))"
+    "SAMEPENDING=$([object]::ReferenceEquals(($returned | Where-Object PSTypeNames -Contains 'CompleterActions.CompleterRegistration').ScriptBlock, $pending.ScriptBlock))"
 }}
 
 $after = Get-Completer -CommandName 'resetfixture' -Native
 "AFTER=$($after.State),$((Get-Completer -CommandName 'resetpending' -Native).State)"
-"SAMEACTIVE=$([object]::ReferenceEquals($after, $active))"
+"SAMEACTIVE=$([object]::ReferenceEquals($after.ScriptBlock, $active.ScriptBlock))"
 '@ -f $script:ManifestPath
 
             $script:ResetProbePath = Join-Path -Path $TestDrive -ChildPath 'reset-probe.ps1'
@@ -504,7 +543,8 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
     It 'leaves a Pending record whose script was deleted alone without an error' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'resetfixture.ps1'
         Write-TestResetScript -Path $scriptPath -CommandName 'resetfixture' -Value 'pending-value'
-        $pending = Register-Completer -LiteralPath $scriptPath -Lazy -PassThru
+        $null = Register-Completer -LiteralPath $scriptPath -Lazy
+        $pending = Get-TestManagedRegistration -Key 'resetfixture'
         $stub = Get-TestRuntimeScriptBlock -Key 'resetfixture'
         Remove-Item -LiteralPath $scriptPath
 
@@ -512,7 +552,8 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
 
         $resetErrors | Should -BeNullOrEmpty
         $records.Count | Should -Be 1
-        [object]::ReferenceEquals($records[0], $pending) | Should -BeTrue
+        $records[0].State | Should -Be 'Pending'
+        [object]::ReferenceEquals($records[0].ScriptBlock, $stub) | Should -BeTrue
         [object]::ReferenceEquals((Get-TestManagedRegistration -Key 'resetfixture'), $pending) | Should -BeTrue
         [object]::ReferenceEquals((Get-TestRuntimeScriptBlock -Key 'resetfixture'), $stub) | Should -BeTrue
     }
@@ -523,7 +564,7 @@ $after = Get-Completer -CommandName 'resetfixture' -Native
         $null = Register-Completer -LiteralPath $scriptPath -Lazy
         $null = Invoke-TestResetPress -CommandName 'resetfixture'
 
-        $sibling = Get-Completer -CommandName 'resetfixture.exe' -Native
+        $sibling = Get-TestManagedRegistration -Key 'resetfixture.exe'
         $sibling.State | Should -Be 'Active'
         $siblingBlock = Get-TestRuntimeScriptBlock -Key 'resetfixture.exe'
 
@@ -781,7 +822,9 @@ Register-ArgumentCompleter -CommandName 'Test-ResetIdentityTool' -ParameterName 
 
         @($reset | ForEach-Object { '{0}/{1}' -f $_.CompleterType, $_.State }) | Should -Be @('Parameter/Pending')
         $reset[0].ScriptPath | Should -Be $parameterPath
-        [object]::ReferenceEquals((Get-Completer -CommandName 'Test-ResetIdentityTool:Name' -Native), $native[0]) | Should -BeTrue -Because 'resetting the parameter target must leave the native record and its loaded script block alone'
+        $nativeAfter = Get-Completer -CommandName 'Test-ResetIdentityTool:Name' -Native
+        $nativeAfter.State | Should -Be 'Active' -Because 'resetting the parameter target must leave the native record alone'
+        [object]::ReferenceEquals($nativeAfter.ScriptBlock, $native[0].ScriptBlock) | Should -BeTrue -Because 'resetting the parameter target must leave the native record and its loaded script block alone'
 
         $inputScript = 'Test-ResetIdentityTool -Name '
         @((TabExpansion2 -InputScript $inputScript -CursorColumn $inputScript.Length).CompletionMatches.CompletionText) | Should -Be @('parameter-result')
