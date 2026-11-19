@@ -364,13 +364,16 @@ Describe 'Test-CompleterRegistration' {
         foreach ($cleanupTarget in @(
             @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'Two'; CompleterType = 'Parameter' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
         }
 
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-TwoParameterFixtureTool' -ErrorAction SilentlyContinue
 
         Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1') -Force | Out-Null
 
@@ -390,13 +393,16 @@ Describe 'Test-CompleterRegistration' {
         foreach ($cleanupTarget in @(
             @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name'; CompleterType = 'Parameter' },
             @{ CommandName = 'importfixture'; CompleterType = 'Native' },
-            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' }
+            @{ CommandName = 'importfixture.exe'; CompleterType = 'Native' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One'; CompleterType = 'Parameter' },
+            @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'Two'; CompleterType = 'Parameter' }
         ))
         {
             Invoke-TestRuntimeCompleterCleanup @cleanupTarget
         }
 
         Remove-Item -Path 'Function:\global:Test-ImportedFixtureTool' -ErrorAction SilentlyContinue
+        Remove-Item -Path 'Function:\global:Test-TwoParameterFixtureTool' -ErrorAction SilentlyContinue
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
@@ -414,6 +420,7 @@ Describe 'Test-CompleterRegistration' {
         $matches[0].ListItemText | Should -Be 'imported-alpha'
         $matches[0].ResultType | Should -Be 'ParameterValue'
         $matches[0].ToolTip | Should -Be 'imported-alpha'
+        $matches[0].FromTarget | Should -BeTrue
     }
 
     It 'returns the completion matches for a registered native completer' {
@@ -422,6 +429,7 @@ Describe 'Test-CompleterRegistration' {
         @($matches.CompletionText) | Should -Be @('alpha')
         $matches[0].CompleterType | Should -Be 'Native'
         $matches[0].RuntimeKey | Should -Be 'importfixture'
+        $matches[0].FromTarget | Should -BeTrue
     }
 
     It 'accepts a piped registration record and a key-bearing input object with a native indicator' {
@@ -459,6 +467,92 @@ Describe 'Test-CompleterRegistration' {
 
     It 'returns nothing when the completer yields no matches' {
         @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture zzz') | Should -BeNullOrEmpty
+    }
+
+    It 'does not credit the target with a match another parameter completer produced' {
+        function global:Test-TwoParameterFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $One,
+                [string] $Two
+            )
+        }
+
+        Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -ScriptBlock { 'one-only' }
+        Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'Two' -ScriptBlock { 'two-only' }
+        $originalScriptBlock = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+
+        $mismatched = @(Test-CompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -InputText 'Test-TwoParameterFixtureTool -One x -Two ')
+
+        @($mismatched.CompletionText) | Should -Be @('two-only') -Because 'the engine completes -Two, whose completer the input reaches'
+        $mismatched[0].Key | Should -Be 'test-twoparameterfixturetool:one'
+        $mismatched[0].FromTarget | Should -BeOfType [bool]
+        $mismatched[0].FromTarget | Should -BeFalse
+
+        $matching = @(Test-CompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -InputText 'Test-TwoParameterFixtureTool -One ')
+
+        @($matching.CompletionText) | Should -Be @('one-only')
+        $matching[0].FromTarget | Should -BeTrue
+
+        $restoredScriptBlock = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+        [object]::ReferenceEquals($originalScriptBlock, $restoredScriptBlock) | Should -BeTrue -Because 'the runtime entry is put back whether or not the engine called the completer'
+    }
+
+    It 'completes and credits every output shape of a <Kind> completer as the prompt does' -TestCases @(
+        @{ Kind = 'native'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture ' },
+        @{ Kind = 'parameter'; Target = @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One' }; InputText = 'Test-TwoParameterFixtureTool -One ' }
+    ) {
+        param($Target, $InputText)
+
+        function global:Test-TwoParameterFixtureTool
+        {
+            [CmdletBinding()]
+            param(
+                [string] $One,
+                [string] $Two
+            )
+        }
+
+        $shapes = {
+            'plain-text'
+            [System.Management.Automation.CompletionResult]::new('result-text', 'result-list', 'ParameterValue', 'result-tip')
+            [pscustomobject] @{ Name = 'object-text' }
+            , @('slot-p', 'slot-q')
+        }
+
+        Register-ArgumentCompleter @Target -ScriptBlock $shapes
+
+        $promptTexts = @((TabExpansion2 -InputScript $InputText -CursorColumn $InputText.Length).CompletionMatches.CompletionText)
+        $matches = @(Test-CompleterRegistration @Target -InputText $InputText)
+
+        $promptTexts | Should -Be @('plain-text', 'result-text', '@{Name=object-text}', 'slot-p slot-q') -Because 'the engine keeps a CompletionResult and uses the text of any other item, without unrolling an item that is a collection'
+        @($matches.CompletionText) | Should -Be $promptTexts -Because 'observing the completer must not change what it completes'
+        @($matches.FromTarget) | Should -Be @($true, $true, $true, $true)
+    }
+
+    It 'does not credit the target with the engine file-name fallback when its completer returns nothing' {
+        $fallbackRoot = Join-Path -Path $TestDrive -ChildPath 'FallbackRoot'
+        $null = New-Item -ItemType Directory -Path $fallbackRoot
+        Set-Content -LiteralPath (Join-Path -Path $fallbackRoot -ChildPath 'fallback-marker.txt') -Value 'marker' -Encoding utf8
+
+        Push-Location -LiteralPath $fallbackRoot
+
+        try
+        {
+            $matches = @(Test-CompleterRegistration -CommandName 'importfixture' -Native -InputText 'importfixture fallback')
+        }
+        finally
+        {
+            Pop-Location
+        }
+
+        @($matches.CompletionText) | Should -Be @(Join-Path -Path '.' -ChildPath 'fallback-marker.txt') -Because 'the fixture emits only alpha and beta, so the engine falls back to file names'
+        $matches[0].ResultType | Should -Be 'ProviderItem'
+        $matches[0].Key | Should -Be 'importfixture'
+        $matches[0].FromTarget | Should -BeOfType [bool]
+        $matches[0].FromTarget | Should -BeFalse
+        (Get-Completer -CommandName 'importfixture' -Native).State | Should -Be 'Active'
     }
 
     It 'throws when the target has no runtime registration' {
