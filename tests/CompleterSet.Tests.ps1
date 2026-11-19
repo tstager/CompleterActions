@@ -1702,6 +1702,18 @@ Import-CompleterScript -LiteralPath $FixturePath | Export-CompleterSet -Path $Se
             Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
         }
 
+        It 'rejects a Version of <Literal>, which equals 1 only by coercion' -TestCases @(
+            @{ Literal = '$true' }
+            @{ Literal = '@(1)' }
+            @{ Literal = '@(1, 1)' }
+        ) {
+            Set-Content -LiteralPath $script:SetPath -Value "@{ Version = $Literal; Entries = @( @{ Path = '$script:ParameterFixturePath' } ) }" -Encoding utf8
+
+            { Import-CompleterSet -Path $script:SetPath } | Should -Throw '*must declare Version = 1*'
+
+            Get-Completer -State Active, Pending, Failed, Stale | Should -BeNullOrEmpty
+        }
+
         It 'leaves PSReadLine key handlers unchanged across import, first tab, and export' {
             Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
 

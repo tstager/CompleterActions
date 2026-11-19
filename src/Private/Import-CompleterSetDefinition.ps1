@@ -73,8 +73,13 @@ function Import-CompleterSetDefinition
     }
 
     $data = $dataFile.Data
+    $version = $data['Version']
 
-    if (-not $data.Contains('Version') -or $data['Version'] -ne 1)
+    # -ne converts 1 to the type on its left, so $true would equal it and an
+    # array would be filtered rather than compared: only a number or text is.
+    $isNumberOrText = $version -is [string] -or ($version -is [ValueType] -and $version -isnot [bool])
+
+    if (-not $isNumberOrText -or $version -ne 1)
     {
         throw "Completer set '$($file.FullName)' must declare Version = 1."
     }
