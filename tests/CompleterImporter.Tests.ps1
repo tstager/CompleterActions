@@ -686,6 +686,144 @@ Register-ArgumentCompleter -CommandName 'Test-ImportProbeTool' -ParameterName 'N
         Test-ImportProbeFired -ProbePath $adversarial.ProbePath | Should -BeTrue
     }
 
+    Context 'helper definition scope' {
+        BeforeEach {
+            Remove-Item -LiteralPath 'Function:\Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+        }
+
+        AfterEach {
+            Remove-Item -LiteralPath 'Function:\Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+        }
+
+        It 'rejects a <Name> and leaves the caller''s function table unchanged' -TestCases @(
+            @{
+                Name   = 'global-scoped helper definition'
+                Script = @'
+function global:Test-ImportProbeHelper
+{
+    'helper'
+}
+
+{Registration}
+'@
+            },
+            @{
+                Name   = 'GLOBAL-scoped (upper-case) helper definition'
+                Script = @'
+function GLOBAL:Test-ImportProbeHelper
+{
+    'helper'
+}
+
+{Registration}
+'@
+            },
+            @{
+                Name   = 'global-scoped helper definition inside an if body'
+                Script = @'
+if (-not (Get-Variable -Name 'ImportProbeState' -Scope Script -ErrorAction SilentlyContinue))
+{
+    function global:Test-ImportProbeHelper
+    {
+        'helper'
+    }
+}
+
+{Registration}
+'@
+            }
+        ) {
+            param(
+                [string] $Name,
+                [string] $Script
+            )
+
+            $adversarial = Write-AdversarialImportScript -Name $Name -Script $Script
+
+            $findings = @(Test-CompleterScript -LiteralPath $adversarial.ScriptPath)
+            $findings.Count | Should -Be 1
+            $findings[0].Construct | Should -Be 'FunctionDefinitionAst'
+            $findings[0].Message | Should -BeLike '*defines function ''global:Test-ImportProbeHelper'' in the global scope*'
+
+            {
+                Import-CompleterScript -LiteralPath $adversarial.ScriptPath
+            } | Should -Throw '*defines function ''global:Test-ImportProbeHelper'' in the global scope*'
+
+            Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeFalse
+            Get-Completer -CommandName 'Test-ImportProbeTool' -ParameterName 'Name' | Should -BeNullOrEmpty
+        }
+
+        It 'confirms a global-scoped helper definition reaches the caller''s function table when the script runs without validation' {
+            $adversarial = Write-AdversarialImportScript -Name 'global-scoped helper definition' -Script @'
+function global:Test-ImportProbeHelper
+{
+    'helper'
+}
+
+{Registration}
+'@
+
+            $null = & { . $adversarial.ScriptPath }
+
+            Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeTrue
+        }
+
+        It 'still imports <Name> helpers and keeps them inside the import scope' -TestCases @(
+            @{ Name = 'unqualified'; Qualifier = '' },
+            @{ Name = 'script-scoped'; Qualifier = 'script:' },
+            @{ Name = 'local-scoped'; Qualifier = 'local:' },
+            @{ Name = 'private-scoped'; Qualifier = 'private:' }
+        ) {
+            param(
+                [string] $Name,
+                [string] $Qualifier
+            )
+
+            $supported = Write-AdversarialImportScript -Name "$Name helper definition" -Script (
+                "function $($Qualifier)Test-ImportProbeHelper`n{`n    'helper'`n}`n`n{Registration}"
+            )
+
+            Test-CompleterScript -LiteralPath $supported.ScriptPath | Should -BeNullOrEmpty
+
+            $imported = @(Import-CompleterScript -LiteralPath $supported.ScriptPath)
+
+            $imported.Count | Should -Be 1
+            $imported[0].Key | Should -Be 'test-importprobetool:name'
+            Test-Path -LiteralPath 'Function:\Test-ImportProbeHelper' | Should -BeFalse
+            & (Get-Module -Name 'CompleterActions') {
+                Get-Command -Name 'Test-ImportProbeHelper' -ErrorAction SilentlyContinue
+            } | Should -BeNullOrEmpty
+        }
+
+        It 'keeps helpers and the capture shim from replacing module commands or disabling the strict gate' {
+            $shadowing = Write-AdversarialImportScript -Name 'module command shadowing helpers' -Script @'
+function Get-CompleterScriptFinding
+{
+}
+
+{Registration}
+'@
+            $violating = Write-AdversarialImportScript -Name 'strict violation after shadowing' -Script @'
+Set-Content -LiteralPath '{ProbePath}' -Value 'ran'
+
+{Registration}
+'@
+            $module = Get-Module -Name 'CompleterActions'
+            $findingDefinition = & $module { (Get-Command -Name 'Get-CompleterScriptFinding' -CommandType Function).Definition }
+
+            Test-CompleterScript -LiteralPath $shadowing.ScriptPath | Should -BeNullOrEmpty
+            @(Import-CompleterScript -LiteralPath $shadowing.ScriptPath).Count | Should -Be 1
+
+            & $module { (Get-Command -Name 'Get-CompleterScriptFinding' -CommandType Function).Definition } | Should -BeExactly $findingDefinition
+            & $module { (Get-Command -Name 'Register-ArgumentCompleter').CommandType } | Should -Be 'Cmdlet'
+
+            {
+                Import-CompleterScript -LiteralPath $violating.ScriptPath
+            } | Should -Throw '*does not conform to the strict import grammar*'
+            Test-ImportProbeFired -ProbePath $violating.ProbePath | Should -BeFalse
+        }
+    }
+
     It 'still imports the guarded script-state initialization shape' {
         $fixturePath = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\ImportableNativeCompleter.ps1'
 

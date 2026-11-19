@@ -58,7 +58,8 @@ remain importable through the strict tier without redesign. Run
   `using assembly`; they load code when the script is dot-sourced.
 - Keep script scope limited to:
   - `Set-StrictMode`
-  - function definitions
+  - function definitions without the `global:` qualifier, which would change
+    the caller's function table at import time
   - importer-safe `if` statements
   - script-scope `Register-ArgumentCompleter` calls
 - Do not use top-level assignments, loops, `try`/`catch`, alias bootstrap,

@@ -9,7 +9,10 @@ captured script block is the script's own block rebound to the capture module,
 so helper functions and script state remain available later and the block
 keeps its source file: $PSScriptRoot and $PSCommandPath inside the completer
 name the script's directory and path, as they do when the script is
-dot-sourced.
+dot-sourced. Nothing the script defines is imported out of the capture module:
+New-Module would otherwise import its functions and exported aliases into this
+module, where a helper could replace a private command or the
+Register-ArgumentCompleter cmdlet.
 
 .PARAMETER LiteralPath
 The literal path to the completer script file.
@@ -32,7 +35,7 @@ function Import-CompleterScriptDefinition
 
     try
     {
-        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -ArgumentList $LiteralPath -ScriptBlock {
+        $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -Function @() -ArgumentList $LiteralPath -ScriptBlock {
             param(
                 [Parameter(Mandatory)]
                 [string] $ScriptPath
