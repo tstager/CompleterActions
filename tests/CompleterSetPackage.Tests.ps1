@@ -2630,4 +2630,52 @@ Describe 'Completer authoring and packages leave PSReadLine alone' {
         $before.Count | Should -BeGreaterThan 0
         $after | Should -Be $before
     }
+
+    It 'leaves PSReadLine key handlers unchanged across Update-CompleterSet, Import-CompleterSet -Name -MinimumVersion, New-CompleterScript -Documentation, and Test-CompleterRegistration -TargetOnly' {
+        Import-Module -Name 'PSReadLine' -ErrorAction SilentlyContinue
+
+        if ($null -eq (Get-Module -Name 'PSReadLine'))
+        {
+            Set-ItResult -Skipped -Because 'PSReadLine is not loaded in this session'
+        }
+
+        $before = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $scriptPath = Join-Path -Path $script:PackageRoot -ChildPath 'catool_completer.ps1'
+        $file = New-CompleterScript -CommandName 'catool' -Path $scriptPath -HelpText 'Options:', '  -v, --verbose  Use verbose output' -Documentation -PassThru
+
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.2.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        Add-Content -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'alpha') -Value '# A line the set does not know yet.'
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $updated = @(Test-CompleterSet -Name 'CaFixtureSet' -MinimumVersion '1.1.0' | Update-CompleterSet -PassThru)
+            $records = @(Import-CompleterSet -Name 'CaFixtureSet' -MinimumVersion '1.1.0' -WarningVariable importWarnings -WarningAction SilentlyContinue)
+            $findings = @(Test-CompleterSet -Name 'CaFixtureSet' -MinimumVersion '1.1.0')
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $completionMatches = @(Test-CompleterRegistration -CommandName 'cafixalpha' -Native -InputText 'cafixalpha alpha-t' -TargetOnly)
+
+        $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
+
+        $file.FullName | Should -BeExactly $scriptPath
+        @(Get-Content -LiteralPath ([System.IO.Path]::ChangeExtension($scriptPath, '.md')))[0] | Should -BeExactly '# catool completer'
+        @($updated.FullName) | Should -Be @($setPath)
+        @($importWarnings) | Should -BeNullOrEmpty
+        $records.Count | Should -Be 6
+        @($records | Where-Object { -not $_.ScriptPath.StartsWith($moduleBase) }) | Should -BeNullOrEmpty
+        $findings | Should -BeNullOrEmpty
+        @($completionMatches.CompletionText) | Should -Be @('alpha-two')
+        $before.Count | Should -BeGreaterThan 0
+        $after | Should -Be $before
+    }
 }

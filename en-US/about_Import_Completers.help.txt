@@ -41,8 +41,9 @@ LONG DESCRIPTION
     Three more commands support the workflow around the import:
 
     - `New-CompleterScript` writes a new native completer script that
-      already conforms to the strict grammar, with a subcommand table read
-      from the tool's help. It is the starting point for a new script.
+      already conforms to the strict grammar, with subcommand and option
+      tables read from the tool's help. It is the starting point for a new
+      script.
     - `Test-CompleterScript` runs the strict grammar without executing the
       script and returns every finding as an object with a line number and a
       fix hint. It is the conformance step.
@@ -146,6 +147,14 @@ HOW IMPORT-COMPLETERSCRIPT WORKS
        without modifying the live runtime tables. The file is not read
        again, so a save after the check cannot change what runs.
     4. Emit normalized import objects for each resolved target.
+
+    In step 3 the script runs in a scope that already holds the import's
+    own state, under two names that begin with `__CompleterActions`. Names
+    that begin with `__CompleterActions` are reserved for the module, so do
+    not give a script's own variables such a name. Every other name belongs
+    to the script: a guard around `$script:ScriptInfo` or
+    `$script:CapturedCompleterDefinitions` runs as written, and the
+    completer sees the script's own value.
 
     A single `Register-ArgumentCompleter` call can produce more than one output
     object. For example, a script that registers one native completer for both
@@ -254,8 +263,9 @@ OUTPUT OBJECTS
 SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 
     `New-CompleterScript` writes a new native completer script that already
-    follows the strict grammar, with a table of subcommands read from the
-    tool's help. Start every new script from it, then check the file:
+    follows the strict grammar, with a table of subcommands and a table of
+    options read from the tool's help. Start every new script from it, then
+    check the file:
 
         New-CompleterScript -CommandName cargo `
             -Path .\cargo_completer\cargo_completer.ps1
@@ -266,34 +276,39 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
     with it, it returns the written file, which pipes into
     `Test-CompleterScript` and `Import-CompleterScript`. The folder must exist,
     the path must end in `.ps1`, and an existing file is replaced only with
-    `-Force`. A call that fails leaves nothing at the path.
+    `-Force`. A call that fails leaves nothing at the path, with the one
+    exception that `-Documentation` adds, described under The documentation
+    file below.
 
-    Seeding the table
+    Seeding the tables
 
-    The subcommand table is seeded in one of three ways, one per parameter
-    set:
+    Both tables are seeded from the same help text, which arrives in one of
+    three ways, one per parameter set:
 
     - The probe, which is the default, runs the tool's help and parses it.
       Use it for a console program that prints its help and exits. Without
       `-HelpArgument` the probe passes `--help`. On Windows, when `--help`
-      ran to completion, gave no subcommand, and printed fewer than five
-      non-blank lines, which is what a tool that rejects `--help` prints,
-      `/?` runs once and its result is used; `schtasks`, `reg`, `bcdedit`,
-      and `netsh` behave that way. On Linux and macOS `/?` is never tried.
-      `-HelpArgument` passes one argument of your choice instead, such as
-      `help` or `-h`, and the program runs once.
+      ran to completion, gave no subcommand and no option, and printed
+      fewer than five non-blank lines, which is what a tool that rejects
+      `--help` prints, `/?` runs once and its result is used; `schtasks`,
+      `reg`, `bcdedit`, and `netsh` behave that way. On Linux and macOS `/?`
+      is never tried. `-HelpArgument` passes one argument of your choice
+      instead, such as `help` or `-h`, and the program runs once.
     - `-HelpText` parses help you captured yourself, and nothing runs. Use
-      it for a tool the probe refuses to run, such as a `.cmd` shim or an
-      app execution alias, for help that needs more than one argument, such
-      as `tool help commands`, or whenever you would rather run the tool
-      yourself. Lines piped in are joined before they are parsed:
+      it for a tool the probe refuses to run, such as a `.cmd` shim, for
+      help that needs more than one argument, such as `tool help commands`,
+      or whenever you would rather run the tool yourself. Lines piped in are
+      joined before they are parsed:
 
           winget --help |
               New-CompleterScript -CommandName winget `
                   -Path .\winget_completer\winget_completer.ps1
 
-    - `-NoProbe` runs nothing and writes an empty table. Use it for a tool
-      without subcommands, or when you will write the table by hand.
+    - `-NoProbe` runs nothing and writes two empty tables. Use it when you
+      will write the tables by hand.
+
+    There is no switch that turns option seeding off. The tables are data
+    in the generated file, so delete the rows you do not want.
 
     `-WhatIf` and `-Confirm` name both the file and the program the probe
     would run, and the probe runs only after the call is confirmed.
@@ -305,12 +320,26 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
     alias, a cmdlet, or a PowerShell script of that name. On Windows it then
     reads the file's program header, without starting it, and runs only a
     `.exe` whose header marks a console program. It does not run a GUI
-    program, a `.cmd` or `.bat` shim such as `npm.cmd`, or an app execution
-    alias such as `winget.exe` under `WindowsApps`, whose header cannot be
-    read. On Linux and macOS any resolved application runs, and a script
-    with a shebang runs its own interpreter. When the command is not found
-    as an application, is refused, or fails to start, a warning says why
-    and suggests `-HelpText`, and the script is written with an empty table.
+    program or a `.cmd` or `.bat` shim such as `npm.cmd`.
+
+    An app execution alias, such as `winget.exe` or a Store-installed
+    `pwsh.exe` under `WindowsApps`, is a zero-byte file whose own header
+    cannot be read. For such a file the probe reads its reparse data, which
+    names the program the alias starts, and applies the console rule to
+    that target: the target must be a fully qualified path to an existing
+    `.exe` whose header marks a console program. When it is, the alias
+    itself runs, as your shell would run it, and every message names the
+    alias path; with `-Verbose` a line such as `'<alias path>' is an app
+    execution alias for '<target>'.` follows the resolution line. An alias
+    with no target, or whose target is missing, is not a `.exe`, cannot be
+    read, or is a GUI program, is not run, and the warning names the target.
+    Reading the reparse data needs no elevation, and on Linux and macOS it
+    never happens.
+
+    On Linux and macOS any resolved application runs, and a script with a
+    shebang runs its own interpreter. When the command is not found as an
+    application, is refused, or fails to start, a warning says why and
+    suggests `-HelpText`, and the script is written with empty tables.
 
     The program runs with its one argument and no shell, with standard
     input closed, so a tool that reads input sees the end of it at once,
@@ -364,7 +393,8 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
     commands used in various situations:`, has nine words, and its commands
     are grouped under headings of their own, so the table is empty. An empty
     table is not an error and draws no warning, because it is also the
-    right result for a tool with options only, such as `rg`.
+    right result for a tool with options only, such as `rg`, whose options
+    fill the other table.
 
     A partial table is the case to watch for. `sc --help` on Windows gives
     35 subcommands but misses `qmanagedaccount`, whose line,
@@ -372,6 +402,58 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
     separator. The script still passes every check, and the command writes
     no warning. Compare a seeded table with the tool's help before you rely
     on it, and add what is missing by hand.
+
+    How options are read
+
+    The same text is read a second time for options, by rules of their
+    own; the subcommand rules above do not change:
+
+    - An option line is a line whose first non-blank characters begin an
+      option name: `-` followed by a letter, a digit, `?`, or `.`; `--`
+      followed by a letter or a digit; or `/` followed by a letter, a
+      digit, or `?`.
+    - An option section starts at a heading whose next non-blank line is
+      an option line. A heading has the shape of a commands header, one to
+      six words with an optional colon or written between `<` and `>`, but
+      needs no particular word, so `Options:`, `FLAGS`, `Global Options:`,
+      `OUTPUT MODES:`, and `<Switches>` all start one. A section also starts
+      without a heading at an option line, not under a commands header,
+      that another option line at the same indent follows, which is how GNU
+      tools such as `du` print their options. A section never starts while
+      another is open, so a wrapped description line that looks like a
+      heading starts nothing.
+    - A section with a heading ends before the next non-blank line that is
+      not an option line and is indented no deeper than the heading; one
+      without a heading ends before the next such line indented less than
+      its first row. A blank line does not end a section.
+    - A row is an option line at the section's smallest indent. A long-only
+      option four columns deeper, such as cargo's `--list` under its
+      `-V, --version` row, is a row too, but only when no row at the
+      section indent starts with `--`. A deeper single-dash line is never a
+      row.
+    - A row gives one option per name, in the order written: `-e PATTERN,
+      --regexp=PATTERN` gives `-e` and `--regexp`. An argument placeholder
+      after a name, such as ` <ARG>`, `=VALUE`, `[=VALUE]`, one upper-case
+      or lower-case word, or an attached `{...}` or `[...]` group, is
+      dropped, and a name ends at the first character that cannot be part
+      of it, so `--verbose...` gives `--verbose`. The description is the
+      text after two or more spaces, a tab, or ` : `, or, when the row has
+      none, the next line when it is indented deeper and is not a row. A
+      name that appears twice is kept once, and `-c` and `-C` are two
+      options.
+    - A line under a commands header is never an option, so bcdedit's
+      `/store` lines stay subcommands, while schtasks' `/Create` under
+      `Parameter List:` is an option.
+
+    `rg --help` gives an empty subcommand table and 145 option names from
+    the rows under its seven headings, and nothing from the description
+    lines indented below them. `git --help` gives no option, because git
+    prints its options only in its usage line, and a usage synopsis is
+    never read. The table holds names and descriptions only, so the
+    generated script completes no option value. Two shapes are knowingly
+    read wrong: a one-word description after a single space, as in
+    `-v verbose`, is taken for a placeholder, and a mixed-case placeholder
+    such as `stringArray` is taken for the start of a description.
 
     Residual risks
 
@@ -392,10 +474,10 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 
     The skeleton
 
-    This is the cargo script, with the table cut short:
+    This is the cargo script, with both tables cut short:
 
         # cargo tab completion for PowerShell
-        # Help-seeded native completer: the subcommand table was read from 'cargo --help' when the script was generated.
+        # Help-seeded native completer: the tables were read from 'cargo --help' when the script was generated.
 
         Set-StrictMode -Version 2.0
 
@@ -404,6 +486,10 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
                 Subcommands = @(
                     @{ Name = 'build'; Description = 'Compile the current package' }
                     @{ Name = 'check'; Description = 'Analyze the current package and report errors, but don''t build object files' }
+                )
+                Options = @(
+                    @{ Name = '-V'; Description = 'Print version info and exit' }
+                    @{ Name = '--version'; Description = 'Print version info and exit' }
                 )
             }
         }
@@ -415,7 +501,16 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
                 [int]$cursorPosition
             )
 
-            # Offer subcommands in the first argument position only; extend this function for options and values.
+            # Offer options in any position once the word starts with '-' or '/'.
+            if ($wordToComplete.StartsWith('-') -or $wordToComplete.StartsWith('/')) {
+                foreach ($option in $script:CargoCompletionCatalog.Options) {
+                    if ($option.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        [System.Management.Automation.CompletionResult]::new($option.Name, $option.Name, 'ParameterName', $option.Description)
+                    }
+                }
+            }
+
+            # Offer subcommands in the first argument position only; extend this function for values.
             $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })
             if ($precedingElements.Count -gt 1) {
                 return
@@ -436,23 +531,32 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
 
     Read against the three shapes below:
 
-    - The two comment lines name the command and the source of the table.
-      From `-HelpText` the second reads `... read from help text passed to
-      New-CompleterScript.`, and an empty table gives `# Native completer
-      skeleton: add subcommands to the table and options to
-      Complete-Cargo.` No date, version, or machine path appears, so the
-      same input always gives the same bytes.
+    - The two comment lines name the command and the source of the tables.
+      From `-HelpText` the second reads `... the tables were read from help
+      text passed to New-CompleterScript.`, and two empty tables give
+      `# Native completer skeleton: add subcommands and options to the
+      tables.` No date, version, or machine path appears, so the same input
+      always gives the same bytes.
     - The guarded `$script:CargoCompletionCatalog` block is shape 1: one
-      `$script:` assignment of literals behind a `Get-Variable` guard. Every
-      string is single-quoted, with each quote character doubled, as in
-      `don''t`. An empty table is written `Subcommands = @()`.
-    - `Complete-Cargo` is where shape 2's work goes. It offers the table in
-      the first argument position only, and returning nothing elsewhere
-      lets PowerShell fall back to path completion. Extend it for options
-      and values, and put anything computed, such as tool discovery or a
-      cache filled from live output, in a function it calls lazily. The
-      skeleton has no initializer of its own, because a static table needs
-      none.
+      `$script:` assignment of literals behind a `Get-Variable` guard, with
+      `Subcommands` first and `Options` second, each row in help order.
+      Every string is single-quoted, with each quote character doubled, as
+      in `don''t`. An empty table is written `Subcommands = @()` or
+      `Options = @()`.
+    - `Complete-Cargo` is where shape 2's work goes. Once the word being
+      completed starts with `-` or `/`, it offers the matching options in
+      any argument position, as `ParameterName` results, so `cargo --ver`
+      and `cargo build --ver` both offer `--version`. An empty word offers
+      no option, and a word such as `/usr` that matches no option gets
+      nothing from that branch. Subcommands are offered in the first
+      argument position only, and returning nothing elsewhere lets
+      PowerShell fall back to path completion. Extend it for values, and
+      put anything computed, such as tool discovery or a cache filled from
+      live output, in a function it calls lazily. The skeleton has no
+      initializer of its own, because a static table needs none.
+    - A script that an earlier version wrote has no `Options` table and
+      never reads one, so it keeps working unchanged; regenerate it to get
+      the option table.
     - The last statement is shape 3: one bare script-scope
       `Register-ArgumentCompleter` with `-Native`, a literal `-CommandName`
       list, and a literal `-ScriptBlock`. Each name is written as given and
@@ -468,8 +572,14 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
       gives `Npm_a04d41f6`, so `tool`, `tool.cmd`, and `tool.bat` get
       three stems. Scripts
       dot-sourced from a profile share one scope, so two commands must not
-      share a stem. The script uses four-space indentation and opening
-      braces on the same line, as completer repositories usually do.
+      share a stem. Command names that differ only by case, such as `Tool`
+      and `tool`, share the stem `Tool`, and that is harmless: PowerShell's
+      completer table and its function table both ignore case, so two such
+      commands cannot have separate completers in one session whatever
+      their stems. No generated name begins with `__CompleterActions`,
+      which is reserved, as HOW IMPORT-COMPLETERSCRIPT WORKS says. The
+      script uses four-space indentation and opening braces on the same
+      line, as completer repositories usually do.
 
     The guarantee
 
@@ -486,6 +596,42 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
     Once you edit the script, keeping it inside the grammar is your
     responsibility. Run `Test-CompleterScript` after every change, as the
     BASIC WORKFLOW below does.
+
+    The documentation file
+
+    With `-Documentation` the command also writes a markdown file beside
+    the script, in the same folder with the same base name and the
+    extension `.md`, which is where completer repositories such as
+    PS_Completers keep one per script:
+
+        New-CompleterScript -CommandName rg `
+            -Path .\rg_completer\rg_completer.ps1 -Documentation
+
+    For `rg` the file holds a title, one heading, and one sentence:
+
+        # rg completer
+
+        ## What it completes
+
+        `rg_completer.ps1` registers a native PowerShell completer for `rg` and `rg.exe`.
+
+    The title names the first command name, and the sentence names the
+    script file and every target in registration order. The file is UTF-8
+    without a byte-order mark, with the platform's newline and a final
+    newline, and the same input gives the same bytes. An existing `.md`
+    file fails the call before anything runs unless `-Force` is given,
+    which replaces both files. `-WhatIf` and `-Confirm` describe the action
+    as `Create completer script and documentation`, and `-PassThru` still
+    returns only the script. Without `-Documentation` no `.md` file is
+    read, written, or checked for.
+
+    Both files are written to temporary files first, and the script passes
+    the check of The guarantee before either is moved. The script is moved
+    into place first, then the markdown file. That order makes the one
+    exception to a failed call leaving nothing at the path: when the
+    markdown file cannot be moved, the call fails with
+    `The script '<path>' was written, but its documentation file '<md path>' was not: <reason>`,
+    the script stays at its path, and no temporary file remains.
 
 THE STRICT GRAMMAR
 
@@ -523,9 +669,17 @@ THE STRICT GRAMMAR
       `-ParameterName`, and `-ScriptBlock` with their values: PowerShell
       cannot bind a repeated parameter or one left without its value, so
       `Test-CompleterScript` reports both.
-    - Keep `-CommandName` and `-ParameterName` literal: a literal string, a
-      literal string array, or a literal `@('tool', 'tool.exe')` expression.
-      An array with a redirection or a trailing `&` inside it, such as
+    - Keep `-CommandName` and `-ParameterName` literal. `-CommandName`
+      takes a literal string, a literal string array, or a literal
+      `@('tool', 'tool.exe')` expression. `-ParameterName` takes one literal
+      string, because `Register-ArgumentCompleter` binds a single parameter
+      name: an array of any length, such as `'Name', 'Path'`,
+      `@('Name', 'Path')`, or `@('Name')`, fails to bind when the script is
+      dot-sourced, so `Test-CompleterScript` reports it with `The script
+      passes an array to -ParameterName.` and strict import refuses the
+      script. Register each parameter with its own call.
+      `Import-CompleterScript -Trusted` still imports such a script, with
+      one record per name. An array with a redirection or a trailing `&` inside it, such as
       `@('tool' 2> $null)` or `@('tool' &)`, is not literal, because a
       redirection there would write a file while the script is imported.
       `Test-CompleterScript` reports it, and `Import-CompleterScript` and
@@ -873,11 +1027,15 @@ VERIFYING REGISTRATIONS WITH TEST-COMPLETERREGISTRATION
     file-name fallback when the completer returned nothing, shows
     `FromTarget` as False. `demo R` in a folder that holds `README.md`
     returns `.\README.md` that way. Assert on the matches whose `FromTarget`
-    is True:
+    is True, which `-TargetOnly` returns alone:
 
         $matches = Test-CompleterRegistration -CommandName demo -Native `
-            -InputText 'demo a' | Where-Object FromTarget
+            -InputText 'demo a' -TargetOnly
         $matches.CompletionText | Should -Be 'alpha'
+
+    `-TargetOnly` is equivalent to piping the matches to
+    `Where-Object FromTarget`, and when the target's completer produced
+    none it returns nothing.
 
     Registration records pipe in directly, and `-CursorPosition` moves the
     cursor away from the end of the input when the completion depends on it:
@@ -1012,6 +1170,9 @@ COMMON FINDINGS
     - `VariableExpressionAst` as a `-ScriptBlock`, `-CommandName`, or
       `-ParameterName` value, or as a splatted argument: make the argument a
       literal (shape 3).
+    - `ArrayLiteralAst` or `ArrayExpressionAst` as the `-ParameterName`
+      value: give it one name and register each parameter with its own
+      call (shape 3).
     - `CommandParameterAst` for a parameter other than `-CommandName`,
       `-ParameterName`, `-Native`, or `-ScriptBlock`: drop it (shape 3).
     - `UsingStatementAst` or `ScriptRequirements` for modules or assemblies:

@@ -90,7 +90,10 @@ exactly as Import-CompleterSet -Name finds it: the first $env:PSModulePath
 root that has the module wins, and within it the highest version. The
 manifest is read as data, so nothing in the package runs, and a manifest
 larger than 128 KB fails the call before it is parsed. Each name is taken
-literally, and a name that does not resolve fails the call.
+literally, and a name that does not resolve fails the call. -MinimumVersion or
+-RequiredVersion selects the version for one -Name exactly as they select it
+for Import-CompleterSet, so a profile that pins a version can test the copy it
+pins by the same words.
 
 Every -Path, -LiteralPath, or -Name value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
@@ -164,6 +167,12 @@ PS> Test-CompleterSet -Name PS_Completers
 
 Checks the installed PS_Completers package's set against its scripts and the
 package layout, by the same name the profile's Import-CompleterSet line uses.
+
+.EXAMPLE
+PS> Test-CompleterSet -Name PS_Completers -RequiredVersion 1.3.1
+
+Checks the installed 1.3.1 copy of PS_Completers, even when a later version is
+installed, and fails, naming the installed versions, when 1.3.1 is not.
 #>
 function Test-CompleterSet
 {

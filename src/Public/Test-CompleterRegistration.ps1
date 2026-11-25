@@ -16,7 +16,8 @@ from somewhere else: another completer, because the input or the cursor
 position completes a different parameter or command, or the engine's own
 fallback completion, such as file names, which the engine offers when the
 target's completer returns nothing. Assert on the matches whose FromTarget is
-$true to verify the registration itself.
+$true to verify the registration itself; -TargetOnly writes only those, as
+Where-Object FromTarget would select them.
 
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as Get-Completer so

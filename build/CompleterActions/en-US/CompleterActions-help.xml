@@ -1040,7 +1040,19 @@ set is then imported as `-LiteralPath` imports it, with two rules for packages.
 An entry whose script resolves outside the module folder is an invalid entry. A
 set with trusted entries writes one warning per name that counts them.
 Installing a completer set package and importing it by name is a decision to
-run its scripts: each one runs at its first tab, under its entry's trust tier.</maml:para>
+run its scripts: each one runs at its first tab, under its entry's trust tier.
+
+`-MinimumVersion` or `-RequiredVersion` selects the version instead, for one
+`-Name`, and the two cannot be used together. `-RequiredVersion` takes the
+version equal to it from the first root that holds it. `-MinimumVersion` takes
+the highest version equal to it or above from the first root that holds one,
+so a root whose versions are all lower is passed over and a newer copy in a
+later root is found. With either, an unversioned copy whose manifest's
+`ModuleVersion` reads as a version takes part beside the version folders, and
+the selected version is used even when its set is broken. When the module is
+installed but no root holds a matching version, the call fails and lists the
+installed versions, highest first. Without either parameter the version is
+chosen as described above.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -1365,6 +1377,20 @@ needs, with no path.</maml:para>
         <dev:code />
         <dev:remarks />
       </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 5 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterSet -Name PS_Completers -MinimumVersion 1.3.0
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Registers the set of the highest installed `PS_Completers` that is 1.3.0 or
+later, so the profile line keeps working across upgrades and fails, naming the
+installed versions, when only an older copy is installed.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
     </command:examples>
     <command:relatedLinks>
       <maml:navigationLink>
@@ -1400,11 +1426,12 @@ needs, with no path.</maml:para>
     </command:details>
     <maml:description>
       <maml:para>Writes a native completer script for one or more command names: a guarded,
-literal-only table of subcommands, a `Complete-&lt;Stem&gt;` function that offers
-them in the first argument position, and one bare
-`Register-ArgumentCompleter` call that names every target. The file passes
-`Test-CompleterScript` and imports with `Import-CompleterScript` and
-`Register-Completer -Lazy` before the author edits it.
+literal-only catalog that holds a table of subcommands and a table of options,
+a `Complete-&lt;Stem&gt;` function that offers the options in any argument position
+and the subcommands in the first, and one bare `Register-ArgumentCompleter`
+call that names every target. The file passes `Test-CompleterScript` and
+imports with `Import-CompleterScript` and `Register-Completer -Lazy` before
+the author edits it.
 
 The first `-CommandName` value is the primary name: it names the functions and
 the state variable, and it is the one probed. Every name must be a bare command
@@ -1419,33 +1446,44 @@ gets `_` and eight hex digits of a hash of that name, so `ca-tool` gives
 `npm.cmd` gives `Complete-Npm_a04d41f6`, and scripts dot-sourced into one
 scope keep their own tables. A name of letters and digits, with or without
 `.exe`, keeps its plain stem: `cargo` and `cargo.exe` give `Complete-Cargo`,
-because `-CommandName cargo` registers `cargo.exe` too. The target
+because `-CommandName cargo` registers `cargo.exe` too. Command names that
+differ only by case, such as `Tool` and `tool`, share the stem `Tool`, and
+that is harmless: PowerShell's completer table and its function table both
+ignore case, so two such commands cannot have separate completers in one
+session whatever their stems. No generated name begins with
+`__CompleterActions`: names with that prefix are reserved for the state the
+import keeps in the scope a script runs in, so keep them out of the script's
+own additions too. The target
 list follows the `-CommandName` order, and a name that does not end in `.exe`,
 `.cmd`, `.bat`, `.ps1`, or `.com` is followed by the same name with `.exe`
 appended, so `-CommandName rg` registers `'rg', 'rg.exe'` and
 `-CommandName npm.cmd` registers `'npm.cmd'` alone. Names are de-duplicated
 case-insensitively, keeping the first spelling.
 
-The subcommand table is seeded in one of three ways:
+Both tables are seeded from the same help text, which arrives in one of three
+ways:
 
-- **Probe** (the default) runs the primary name's help and parses its commands
-  section. With `-HelpArgument` the program runs once with that argument.
-  Without it the probe passes `--help`; on Windows, when `--help` ran to
-  completion, gave no subcommand, and printed fewer than five non-blank lines,
-  which is what a tool that rejects `--help` prints, `/?` runs once and its
-  result is used. On Linux and macOS `/?` is never tried.
+- **Probe** (the default) runs the primary name's help and parses it. With
+  `-HelpArgument` the program runs once with that argument. Without it the
+  probe passes `--help`; on Windows, when `--help` ran to completion, gave no
+  subcommand and no option, and printed fewer than five non-blank lines, which
+  is what a tool that rejects `--help` prints, `/?` runs once and its result
+  is used. On Linux and macOS `/?` is never tried.
 - **HelpText** parses help text the author already captured, for a command the
   probe will not run. Lines are accumulated across pipeline input, joined, and
   parsed; nothing is run.
-- **NoProbe** runs nothing and writes an empty table.
+- **NoProbe** runs nothing and writes two empty tables.
+
+No switch turns option seeding off: the tables are data in the generated file,
+and an author who does not want a row deletes it.
 
 The probe runs only an application that `Get-Command` resolves, so a function,
 alias, cmdlet, or script of that name is never run. On Windows it runs only a
-`.exe` whose PE header marks a console program: a GUI program, a `.cmd` or
-`.bat` shim, and an app execution alias are not run, and a warning says why
-and suggests `-HelpText`. The program runs with the one argument, no shell,
-standard input closed, the temporary directory as its working directory, and
-`NO_COLOR=1` added to the environment. One 5-second limit covers the run. A
+`.exe` whose PE header marks a console program: a GUI program and a `.cmd` or
+`.bat` shim are not run, and a warning says why and suggests `-HelpText`. The
+program runs with the one argument, no shell, standard input closed, the
+temporary directory as its working directory, and `NO_COLOR=1` added to the
+environment. One 5-second limit covers the run. A
 program that has not exited by then is stopped, and a program that exits but
 leaves a process holding its output is not waited for; in both cases its
 output is not used and a warning says so. The exit code decides nothing: the
@@ -1455,13 +1493,45 @@ Latin-1 elsewhere), and terminal escape sequences, backspace overstrikes, and
 carriage-return progress lines are removed, for probe output and `-HelpText`
 alike.
 
-The parser looks for a section header such as `Commands:`, `CORE COMMANDS`, or
-`&lt;Commands&gt;`, then reads one entry per line: a name, a separator (a colon,
-two or more dashes, ` - `, two or more spaces, or a tab), and a description.
-Names are kept in help order without duplicates. Control, format, and line
-separator characters in a description become spaces, and an empty description
-becomes the name. Help without a commands section gives an empty table, which
-is not an error and not a warning.
+An app execution alias, such as `winget.exe` under `WindowsApps`, is a
+zero-byte file whose own header cannot be read. For such a file the probe
+reads the target program that the alias's reparse data names, and runs the
+alias when that target is a fully qualified path to an existing `.exe` whose
+header marks a console program. Every message names the alias path, because
+that is the program the shell would start, and `-Verbose` adds a line that
+names the target. An alias with no target, or whose target is missing, not a
+`.exe`, unreadable, or not a console program, is not run, and the warning
+names the target. The reparse data is never read on Linux or macOS.
+
+The subcommand parser looks for a section header such as `Commands:`,
+`CORE COMMANDS`, or `&lt;Commands&gt;`, then reads one entry per line: a name, a
+separator (a colon, two or more dashes, ` - `, two or more spaces, or a tab),
+and a description. Names are kept in help order without duplicates. Control,
+format, and line separator characters in a description become spaces, and an
+empty description becomes the name.
+
+The option parser reads the same text for option sections. A section starts
+at a heading of one to six words, such as `Options:`, `FLAGS`, or
+`&lt;Switches&gt;`, whose next non-blank line begins with an option name, or,
+without a heading, at two option lines at one indent, as GNU tools print
+them; a line under a commands header is never an option. Each row at the
+section's indent gives one option per name, in order, so
+`-e PATTERN, --regexp=PATTERN` gives `-e` and `--regexp`: an argument
+placeholder such as `&lt;ARG&gt;`, `=VALUE`, or `[=VALUE]` is dropped, and the
+description is the text after the names, or the next deeper line when the row
+has none. A name that appears twice is kept once. No option value is seeded,
+and options in a usage synopsis are not read. The rules are listed in full in
+`about_Import_Completers`.
+
+In the script the options table is written after the subcommand table, as
+`Options = @()` when it is empty. Once the word being completed starts with
+`-` or `/`, `Complete-&lt;Stem&gt;` offers the matching options in any argument
+position as `ParameterName` results; an empty word offers none, so file names
+still complete, and a word such as `/usr` that matches no option gets nothing
+from that branch. Line 2 says where the tables came from. Help that gives no
+row of either kind writes two empty tables, which is not an error and not a
+warning. A script written by an earlier version has no options table and keeps
+working unchanged.
 
 Before anything is resolved, probed, or written, every `-CommandName` value,
 `-HelpArgument`, and the `-Path` are checked: `-HelpArgument` must not contain
@@ -1479,9 +1549,18 @@ The file is UTF-8 without a byte-order mark, with the platform newline and a
 final newline, and it holds no date, version, or machine path, so the same
 input always gives the same bytes.
 
+With `-Documentation` the command also writes a markdown file beside the
+script, with the same base name and the extension `.md`: a `# &lt;name&gt; completer`
+title, a `## What it completes` heading, and one sentence that names the script
+and every target. Both files are written to temporary files, and the script
+passes its check before either is moved; the script is moved first.
+
 Every failure is a terminating error that begins
 `Failed to create completer script.`, and a failed call leaves nothing at the
-path.</maml:para>
+path, with one exception: with `-Documentation`, when the markdown file cannot
+be moved into place after the script was, the call fails with
+`The script '&lt;path&gt;' was written, but its documentation file '&lt;md path&gt;' was not: &lt;reason&gt;`,
+the script stays, and no temporary file remains.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -1744,7 +1823,7 @@ input, joined with LF, cleaned, and parsed; nothing is run.
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>NoProbe</maml:name>
         <maml:description>
-          <maml:para>Runs nothing and writes an empty subcommand table.</maml:para>
+          <maml:para>Runs nothing and writes empty subcommand and option tables.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -1813,8 +1892,8 @@ descendant whose parent has exited is no longer in the process tree the probe
 stops, so it can outlive the probe. `-NoProbe` and `-HelpText` avoid all of
 them.
 
-A partial table passes `Test-CompleterScript`, so compare a seeded table with
-the tool's help before relying on it. The generated script is a start: once
+A partial table passes `Test-CompleterScript`, so compare the seeded tables
+with the tool's help before relying on them. The generated script is a start: once
 the author edits it, keeping it conforming is the author's responsibility, and
 `Test-CompleterScript` checks it again. The strict grammar is described in
 `about_Import_Completers`.</maml:para>
@@ -1855,6 +1934,19 @@ New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -F
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Writes an empty skeleton without running anything, replacing an existing file.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 4 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+New-CompleterScript -CommandName rg -Path .\rg_completer\rg_completer.ps1 -Documentation
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Writes the rg script and `rg_completer.md` beside it, whose sentence names
+`rg_completer.ps1` and its targets `rg` and `rg.exe`.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -2965,7 +3057,8 @@ came from somewhere else: another completer, because the input or the cursor
 position completes a different parameter or command, or the engine's own
 fallback completion, such as file names, which the engine offers when the
 target's completer returns nothing. Assert on the matches whose `FromTarget`
-is `$true` to verify the registration itself.
+is `$true` to verify the registration itself; `-TargetOnly` writes only those,
+as `Where-Object FromTarget` would select them.
 
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as `Get-Completer` so
@@ -3555,7 +3648,10 @@ exactly as `Import-CompleterSet -Name` finds it: the first `$env:PSModulePath`
 root that has the module wins, and within it the highest version. The manifest
 is read as data, so nothing in the package runs, and a manifest larger than
 128 KB fails the call before it is parsed. Each name is taken literally, and a
-name that does not resolve fails the call.
+name that does not resolve fails the call. `-MinimumVersion` or
+`-RequiredVersion` selects the version for one `-Name` exactly as they select
+it for `Import-CompleterSet`, so a profile that pins a version can test the
+copy it pins by the same words.
 
 Every `-Path`, `-LiteralPath`, or `-Name` value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
@@ -3791,6 +3887,19 @@ Test-CompleterSet -Name PS_Completers
           <maml:para>&#x80;</maml:para>
           <maml:para>Checks the installed `PS_Completers` package's set against its scripts and the
 package layout, by the same name the profile's `Import-CompleterSet` line uses.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 4 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterSet -Name PS_Completers -RequiredVersion 1.3.1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Checks the installed 1.3.1 copy of `PS_Completers`, even when a later version
+is installed, and fails, naming the installed versions, when 1.3.1 is not.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />

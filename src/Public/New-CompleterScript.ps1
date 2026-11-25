@@ -4,8 +4,9 @@ Writes a completer script skeleton for a native command that passes Test-Complet
 
 .DESCRIPTION
 Writes a native completer script for one or more command names: a guarded,
-literal-only table of subcommands, a Complete-<Stem> function that offers them
-in the first argument position, and one bare Register-ArgumentCompleter call
+literal-only catalog that holds a table of subcommands and a table of options,
+a Complete-<Stem> function that offers the options in any argument position
+and the subcommands in the first, and one bare Register-ArgumentCompleter call
 that names every target. The file passes Test-CompleterScript and imports with
 Import-CompleterScript and Register-Completer -Lazy before the author edits it.
 
@@ -13,24 +14,39 @@ The first -CommandName value is the primary name: it names the functions and
 the state variable, and it is the one probed. Every name must be a bare command
 name. The target list follows the -CommandName order, and a name that does not
 end in .exe, .cmd, .bat, .ps1, or .com is followed by the same name with .exe
-appended, so -CommandName rg registers 'rg' and 'rg.exe'.
+appended, so -CommandName rg registers 'rg' and 'rg.exe'. Command names that
+differ only by case, such as Tool and tool, share the stem Tool, and that is
+harmless: PowerShell's completer table and its function table both ignore
+case, so two such commands cannot have separate completers in one session
+whatever their stems. No generated name begins with __CompleterActions: names
+with that prefix are reserved for the state the import keeps in the scope a
+script runs in, so keep them out of the script's own additions too.
 
-The subcommand table is seeded in one of three ways. By default the command
-runs the primary name's help and parses its commands section. -HelpText parses
-help text the author already captured and runs nothing. -NoProbe runs nothing
-and writes an empty table.
+Both tables are seeded from the same help text. By default the command runs
+the primary name's help and parses it. -HelpText parses help text the author
+already captured and runs nothing. -NoProbe runs nothing and writes two empty
+tables. The subcommand table comes from a commands section; the option table
+comes from option sections, under a heading such as Options: or FLAGS, or
+without one, as GNU tools print them, one row per option name, with argument
+placeholders dropped and no value seeded. Once the word being completed starts
+with - or /, the generated function offers the matching options in any
+argument position. No switch turns option seeding off.
 
 The probe runs only an application that Get-Command resolves; a function,
 alias, cmdlet, or script of that name is never run. On Windows it runs only
-a .exe whose PE header marks a console program, so GUI programs, shims such as
-npm.cmd, and app execution aliases are refused with a warning. The program
-runs with the help argument alone, standard input closed, the temporary
-directory as its working directory, and NO_COLOR set, under a 5-second limit.
-Without -HelpArgument the probe passes --help; on Windows, when --help ran to
-completion, gave no subcommand, and printed fewer than five non-blank lines,
-/? runs once and its result is used. A run that does not exit in time, or that
-leaves a process holding its output, is stopped and its output is not used.
--WhatIf and -Confirm name the program before anything runs.
+a .exe whose PE header marks a console program, so GUI programs and shims such
+as npm.cmd are refused with a warning. An app execution alias, whose own
+header cannot be read, runs when the target its reparse data names is an
+existing console .exe; messages name the alias path, and an alias whose
+target is not such a program is refused with a warning that names the target.
+The program runs with the help argument alone, standard input closed, the
+temporary directory as its working directory, and NO_COLOR set, under a
+5-second limit. Without -HelpArgument the probe passes --help; on Windows,
+when --help ran to completion, gave no subcommand and no option, and printed
+fewer than five non-blank lines, /? runs once and its result is used. A run
+that does not exit in time, or that leaves a process holding its output, is
+stopped and its output is not used. -WhatIf and -Confirm name the program
+before anything runs.
 
 Before anything is resolved, probed, or written, every -CommandName value,
 -HelpArgument, and the -Path are checked: a name must keep a letter or digit
@@ -41,10 +57,16 @@ script is written to a temporary file beside the target, checked with the
 strict grammar Test-CompleterScript applies, and moved into place only when it
 conforms and registers exactly the target list; otherwise nothing is written.
 The file is UTF-8 without a byte-order mark, with the platform newline and a
-final newline.
+final newline. With -Documentation a markdown file is written beside it, and
+the script passes its check before either file is moved; the script is moved
+first.
 
 Every failure is a terminating error that begins 'Failed to create completer
-script.', and a failed call leaves nothing at the path.
+script.', and a failed call leaves nothing at the path, with one exception:
+with -Documentation, when the markdown file cannot be moved into place after
+the script was, the call fails with "The script '<path>' was written, but its
+documentation file '<md path>' was not: <reason>", the script stays, and no
+temporary file remains.
 
 .PARAMETER CommandName
 The native command names. The first is the primary name: it names the
@@ -65,7 +87,7 @@ input, joined with LF, cleaned, and parsed; nothing is run.
 winget --help | New-CompleterScript winget .\winget_completer.ps1 binds here.
 
 .PARAMETER NoProbe
-Runs nothing and writes an empty subcommand table.
+Runs nothing and writes empty subcommand and option tables.
 
 .PARAMETER Documentation
 Also writes a markdown file beside the script, with the same folder and base
@@ -110,6 +132,12 @@ run.
 PS> New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -Force
 
 Writes an empty skeleton without running anything, replacing an existing file.
+
+.EXAMPLE
+PS> New-CompleterScript -CommandName rg -Path .\rg_completer\rg_completer.ps1 -Documentation
+
+Writes the rg script and rg_completer.md beside it, whose sentence names
+rg_completer.ps1 and its targets rg and rg.exe.
 #>
 function New-CompleterScript
 {

@@ -7,6 +7,127 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+The authoring second pass, additive on the 3.x line, with six defect fixes
+folded in. The module exports twelve functions and no alias, and the core
+assembly keeps `AssemblyVersion` 3.0.0.0. Four of the changes alter what
+happens to input that 3.0.1 accepted; they are listed under Changed.
+
+### Added
+
+- **`Update-CompleterSet`.** Rewrites the `Hash` of each completer set entry
+  whose script changed, or whose `Hash` is malformed, and leaves the rest of
+  the set file as it is: its encoding, byte-order mark, line endings,
+  comments, and layout. It takes set files by `-Path`, `-LiteralPath`, or
+  the findings `Test-CompleterSet` pipes to it, reads and writes each set
+  once, and writes through a temporary file and a replacing move. An entry
+  that `Test-CompleterSet` reports with an `Error`, such as a
+  `TargetMismatch` or a `DuplicateTarget`, is left as it is with a warning,
+  because a matching `Hash` would make import register its stale `Targets`
+  unchecked; a trusted entry is updated with a warning. It never adds an
+  entry or a `Hash`, warns about entries without one and about scripts the
+  set does not list, supports `-WhatIf`, and returns the written files with
+  `-PassThru`.
+- **Option tables in `New-CompleterScript`.** The help text that seeds the
+  subcommand table now seeds an option table too, from the probe,
+  `-HelpText`, or pipeline input. Option sections are found under a heading
+  such as `Options:`, `FLAGS`, or `<Switches>`, or without one, as GNU tools
+  print them, and each row gives one option per name with its argument
+  placeholder dropped. No option value is seeded, options in a usage
+  synopsis are not read, and there is no switch that turns the table off.
+- **`New-CompleterScript -Documentation`.** Also writes a markdown file
+  beside the script, with the same base name and the extension `.md`: a
+  `# <name> completer` title, a `## What it completes` heading, and one
+  sentence that names the script and every target. An existing `.md` file
+  fails the call unless `-Force` is given, and the script is moved into
+  place before the markdown file.
+- **Version selection for `-Name`.** `Import-CompleterSet -Name` and
+  `Test-CompleterSet -Name` take `-MinimumVersion` or `-RequiredVersion`,
+  for one name, to select an installed completer set package by version,
+  across `$env:PSModulePath` roots as `Import-Module` selects one. A version
+  that no root holds fails the call and lists the installed versions.
+- **`Test-CompleterRegistration -TargetOnly`.** Writes only the matches
+  whose `FromTarget` is `$true`, as piping them to `Where-Object
+  FromTarget` would (2026-11-18 review, finding 5).
+- **App execution aliases in the help probe.** On Windows, a `.exe` whose
+  header cannot be read is checked for an app execution alias. When the
+  target the alias names is an existing console `.exe`, the alias runs, so
+  a Store-installed tool such as `winget` is probed; otherwise the warning
+  names the target and says why it was not run. This is the first Windows
+  API call in the compiled core, and it is never made on Linux or macOS.
+
+### Changed
+
+- **Strict grammar refuses an array for `-ParameterName`.** A literal array
+  or an `@( )` array of any length given to `-ParameterName` is an Error
+  finding, `The script passes an array to -ParameterName.`, because
+  `Register-ArgumentCompleter` binds a single parameter name and the script
+  fails when it is dot-sourced by itself. Strict import therefore refuses a
+  script that 3.0.1 imported; `-Trusted` still imports it, one record per
+  name. The hint for a non-literal `-ParameterName` value no longer suggests
+  an array. An array for `-CommandName` is unchanged (2026-11-18 review,
+  finding 7).
+- **`Export-CompleterSet -Path` follows the input path rules.** A path that
+  resolves to a provider other than the file system, and a
+  provider-qualified path that is not fully qualified, are refused before
+  anything is written. The first failed with a misleading text before, and
+  the second wrote the file under the PowerShell location while computing
+  every entry `Path` against the process working directory (2026-11-18
+  review, finding 9).
+- **A completer script's own `$ScriptInfo` or `$CapturedCompleterDefinitions`
+  is no longer shadowed during import.** The import's own state in the
+  capture scope is now `$__CompleterActionsScriptInfo` and
+  `$script:__CompleterActionsCapturedDefinitions`, so a script that keeps
+  its state under either old name imports and its completer sees its own
+  value. Names that begin with `__CompleterActions` are reserved.
+- **Scripts `New-CompleterScript` generates carry an option table, a second
+  completion branch, and new comment lines.** The catalog gains an
+  `Options` table after `Subcommands`, and the function offers options in
+  any argument position once the word starts with `-` or `/`. Line 2 reads
+  `# Help-seeded native completer: the tables were read from ...`, or
+  `# Native completer skeleton: add subcommands and options to the
+  tables.` when both tables are empty. The probe's verbose line and the
+  final `Wrote` line also count options, and the Windows `/?` fallback runs
+  only when `--help` gave neither a subcommand nor an option. Scripts
+  generated earlier keep working unchanged.
+
+### Fixed
+
+- **A bad path in `PrivateData.CompleterSet` no longer surfaces as a raw
+  .NET exception.** `Test-CompleterSet -Path` and `-LiteralPath` report one
+  `PackageLayout` Error for each neighbouring manifest whose declaration is
+  not a valid file path, and go on to the set's other findings, so a valid
+  set no longer fails its test because of a bad neighbour.
+  `Import-CompleterSet -Name` and `Test-CompleterSet -Name` fail with the
+  existing declaration error. The declaration is shown with control
+  characters replaced and cut to 256 characters (2026-11-18 review,
+  finding 11).
+- The tests that hand the bare name `pwsh` to the help probe, or start a
+  child that does, use the `pwsh` running the suite, so the suite gives the
+  same result on a machine whose first `pwsh` on `PATH` is the Microsoft
+  Store alias as on CI.
+- A push to main that changes only `docs/**` or `CHANGELOG.md` starts no CI
+  run, as a pull request with only those changes already did.
+
+### Documentation
+
+- The help of `New-CompleterScript`, `Import-CompleterSet`,
+  `Test-CompleterSet`, `Test-CompleterRegistration`, and
+  `Import-CompleterScript` describes the new parameters and behaviour, and
+  `Update-CompleterSet` has a page of its own. The README's command table
+  and command list name all twelve commands.
+- `about_Completer_Sets` gains FIXING DRIFT WITH UPDATE-COMPLETERSET and
+  describes version selection under COMPLETER SETS AS MODULES.
+  `about_Import_Completers` describes option seeding, the skeleton's new
+  shape, `-Documentation`, app execution aliases, the `-ParameterName`
+  array rule, `-TargetOnly`, and the reserved `__CompleterActions` names.
+- `about_Import_Completers` and the `New-CompleterScript` help say that
+  command names that differ only by case, such as `Tool` and `tool`, share
+  a stem, which is harmless because PowerShell's completer and function
+  tables ignore case.
+- `docs/roadmap-3.0/milestone-2-spec.md` gives the stem rule 3.0.1 shipped,
+  with the hash suffix, and says when it was corrected (2026-11-18 review,
+  finding 13).
+
 ## [3.0.1] - 2026-11-24
 
 The stable 3.0.1 release. Same code as 3.0.1-preview2, promoted after the
