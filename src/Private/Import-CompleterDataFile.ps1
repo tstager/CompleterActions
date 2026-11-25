@@ -32,64 +32,112 @@ repeats it in 4 bytes 70 seconds (about 33,000), and a file of nothing but
 closing parentheses or closing braces, one error per byte, 129 and 171
 seconds. A set that Export-CompleterSet writes has no syntax errors.
 
+-Text parses and evaluates text that is already decoded, such as a set that
+Update-CompleterSet has rewritten in memory, the same way and with the same
+error texts, except that a text without a hashtable is named as text. It reads
+nothing and applies no size limit, so OverLimit is always $false.
+
 .PARAMETER LiteralPath
 The full path of the data file.
+
+.PARAMETER Text
+The decoded text of a data file, parsed instead of a file.
 
 .PARAMETER SkipLimitCheck
 Skips the evaluator's hashtable size check, as Import-PowerShellDataFile
 -SkipLimitCheck does. The default limits of 500 keys and 5000 syntax nodes
 apply otherwise.
 
+.PARAMETER IncludeSource
+Adds what was read to the result, so a caller that rewrites the file can
+reproduce it: Bytes, the bytes read; Text, their decoded text, the text the
+parse positions point into; Encoding, the encoding that decoded them; and
+HasPreamble, whether the bytes start with that encoding's byte-order mark,
+which the text does not contain.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns OverLimit, which is $true when the file holds more than the limit,
 Data, the hashtable the file holds, and Ast, the parse of the bytes read.
-Data and Ast are $null when OverLimit is $true.
+Data and Ast are $null when OverLimit is $true. With -IncludeSource the record
+also carries Bytes, Text, Encoding, and HasPreamble; Text, Encoding, and
+HasPreamble are $null when OverLimit is $true.
 #>
 function Import-CompleterDataFile
 {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'LiteralPath')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)]
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
         [ValidateNotNullOrEmpty()]
         [string] $LiteralPath,
 
+        [Parameter(Mandatory, ParameterSetName = 'Text')]
+        [AllowEmptyString()]
+        [string] $Text,
+
         [Parameter()]
-        [switch] $SkipLimitCheck
+        [switch] $SkipLimitCheck,
+
+        [Parameter(ParameterSetName = 'LiteralPath')]
+        [switch] $IncludeSource
     )
 
-    try
-    {
-        $stream = [System.IO.File]::OpenRead($LiteralPath)
+    $encoding = $null
+    $hasPreamble = $null
 
+    if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+    {
         try
         {
-            $bytes = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1)
+            $stream = [System.IO.File]::OpenRead($LiteralPath)
+
+            try
+            {
+                $bytes = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1)
+            }
+            finally
+            {
+                $stream.Dispose()
+            }
         }
-        finally
+        catch [System.Management.Automation.MethodInvocationException]
         {
-            $stream.Dispose()
+            throw $_.Exception.InnerException
         }
-    }
-    catch [System.Management.Automation.MethodInvocationException]
-    {
-        throw $_.Exception.InnerException
+
+        if ($bytes.Length -gt $script:CompleterSetMaxFileBytes)
+        {
+            $result = [pscustomobject] [ordered] @{ OverLimit = $true; Data = $null; Ast = $null }
+
+            if ($IncludeSource)
+            {
+                $result | Add-Member -NotePropertyMembers ([ordered] @{ Bytes = $bytes; Text = $null; Encoding = $null; HasPreamble = $null })
+            }
+
+            return $result
+        }
+
+        $reader = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false))
+        $Text = $reader.ReadToEnd()
+        # The reader names the encoding a byte-order mark selected only after it has read.
+        $encoding = $reader.CurrentEncoding
+        $preamble = $encoding.GetPreamble()
+        $hasPreamble = $preamble.Length -gt 0 -and $bytes.Length -ge $preamble.Length -and [System.Linq.Enumerable]::SequenceEqual([byte[]] $preamble, [byte[]] $bytes[0..($preamble.Length - 1)])
     }
 
-    if ($bytes.Length -gt $script:CompleterSetMaxFileBytes)
-    {
-        return [pscustomobject] [ordered] @{ OverLimit = $true; Data = $null; Ast = $null }
-    }
-
-    $text = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false)).ReadToEnd()
     $parseErrors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $LiteralPath, [ref] $null, [ref] $parseErrors)
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, $LiteralPath, [ref] $null, [ref] $parseErrors)
     # A parser that gives up on input nested too deeply returns no AST, only its error.
     $hashtable = if ($parseErrors.Count -eq 0) { $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false) }
 
     if ($null -eq $hashtable)
     {
+        if ($PSCmdlet.ParameterSetName -eq 'Text')
+        {
+            throw 'The text could not be parsed as a PowerShell Data File.'
+        }
+
         throw "The file '$LiteralPath' could not be parsed as a PowerShell Data File."
     }
 
@@ -102,5 +150,12 @@ function Import-CompleterDataFile
         throw $_.Exception.InnerException
     }
 
-    [pscustomobject] [ordered] @{ OverLimit = $false; Data = $data; Ast = $ast }
+    $result = [pscustomobject] [ordered] @{ OverLimit = $false; Data = $data; Ast = $ast }
+
+    if ($IncludeSource)
+    {
+        $result | Add-Member -NotePropertyMembers ([ordered] @{ Bytes = $bytes; Text = $Text; Encoding = $encoding; HasPreamble = $hasPreamble })
+    }
+
+    $result
 }

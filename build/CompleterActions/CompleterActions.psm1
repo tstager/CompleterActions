@@ -283,7 +283,7 @@ function Export-CompleterSet
 
             if ($byteCount -gt $script:CompleterSetMaxFileBytes)
             {
-                throw "The set would be $byteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
+                throw (Get-CompleterSetOverLimitMessage -ByteCount $byteCount)
             }
 
             if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
@@ -1878,6 +1878,273 @@ function Unregister-Completer
         finally
         {
             $resolvedTargets = @()
+        }
+    }
+}
+
+<#
+.EXTERNALHELP CompleterActions-help.xml
+#>
+function Update-CompleterSet
+{
+    [CmdletBinding(SupportsShouldProcess, DefaultParameterSetName = 'Path', ConfirmImpact = 'Medium')]
+    [OutputType([System.IO.FileInfo])]
+    param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName = 'Path', ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Alias('FullName')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Path,
+
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath', ValueFromPipelineByPropertyName)]
+        [Alias('PSPath')]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $LiteralPath,
+
+        [Parameter(Mandatory, ParameterSetName = 'InputObject', ValueFromPipeline)]
+        [CompleterActions.CompleterScriptFinding[]] $InputObject,
+
+        [Parameter()]
+        [ValidateNotNullOrEmpty()]
+        [string] $Filter = '*_completer.ps1',
+
+        [Parameter()]
+        [switch] $PassThru
+    )
+
+    begin
+    {
+        $pathComparer = if ($IsWindows -or $IsMacOS) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+        $seenSetPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+        $setPaths = [System.Collections.Generic.List[string]]::new()
+    }
+
+    process
+    {
+        try
+        {
+            $resolvedPaths = @(
+                if ($PSCmdlet.ParameterSetName -eq 'InputObject')
+                {
+                    foreach ($finding in $InputObject)
+                    {
+                        (Get-Item -LiteralPath $finding.Path -ErrorAction Stop).FullName
+                    }
+                }
+                elseif ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+                {
+                    foreach ($literalPathItem in $LiteralPath)
+                    {
+                        (Get-Item -LiteralPath $literalPathItem -ErrorAction Stop).FullName
+                    }
+                }
+                else
+                {
+                    foreach ($pathItem in $Path)
+                    {
+                        Resolve-Path -Path $pathItem -ErrorAction Stop | Select-Object -ExpandProperty ProviderPath
+                    }
+                }
+            )
+        }
+        catch
+        {
+            throw "Failed to update completer set. $($_.Exception.Message)"
+        }
+
+        foreach ($resolvedPath in $resolvedPaths)
+        {
+            if ($seenSetPaths.Add($resolvedPath))
+            {
+                $setPaths.Add($resolvedPath)
+            }
+        }
+    }
+
+    end
+    {
+        # The bytes a text encodes to, byte-order mark first.
+        $getBytes = {
+            param([string] $Text, [System.Text.Encoding] $Encoding, [byte[]] $Preamble)
+
+            $body = $Encoding.GetBytes($Text)
+            $bytes = [byte[]]::new($Preamble.Length + $body.Length)
+            $Preamble.CopyTo($bytes, 0)
+            $body.CopyTo($bytes, $Preamble.Length)
+            , $bytes
+        }
+
+        # A value as text with its type, its keys sorted and each text prefixed
+        # with its length, so two reads of the same data give the same text and
+        # different data cannot.
+        $getDataText = $null
+        $getDataText = {
+            param($Value)
+
+            if ($null -eq $Value)
+            {
+                '$null'
+            }
+            elseif ($Value -is [System.Collections.IDictionary])
+            {
+                '@{' + (@(foreach ($key in @($Value.Keys | Sort-Object)) { (& $getDataText $key) + '=' + (& $getDataText $Value[$key]) }) -join ';') + '}'
+            }
+            elseif ($Value -is [System.Collections.IList])
+            {
+                '@(' + (@(foreach ($item in $Value) { & $getDataText $item }) -join ',') + ')'
+            }
+            else
+            {
+                $valueText = [string] $Value
+                '[{0}]{1}:{2}' -f $Value.GetType().FullName, $valueText.Length, $valueText
+            }
+        }
+
+        try
+        {
+            foreach ($setPath in $setPaths)
+            {
+                $setDefinition = Import-CompleterSetDefinition -LiteralPath $setPath -IncludeSource
+                $setFile = $setDefinition.Path
+                $states = @(Get-CompleterSetEntryState -SetDefinition $setDefinition -Filter $Filter)
+                $entryStates = @($states | Where-Object { $_.PSObject.TypeNames[0] -eq 'CompleterActions.CompleterSetEntryState' })
+                $unlistedScripts = @($states | Where-Object { $_.PSObject.TypeNames[0] -eq 'CompleterActions.CompleterSetUnlistedScript' })
+                $updates = [System.Collections.Generic.List[object]]::new()
+                $withoutHashCount = 0
+
+                foreach ($state in $entryStates)
+                {
+                    $entry = $state.Entry
+                    $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $($entry.Index)" } else { "Entry $($entry.Index) ('$($entry.DeclaredPath)')" }
+
+                    if ($state.RawEntry -isnot [System.Collections.IDictionary])
+                    {
+                        continue
+                    }
+
+                    if (-not $state.RawEntry.Contains('Hash'))
+                    {
+                        $withoutHashCount++
+                        continue
+                    }
+
+                    # The kinds Test-CompleterSet reports as Errors, in its order.
+                    $errorProblem = @(
+                        foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
+                        {
+                            $entry.Problems | Where-Object { $_.Kind -eq $kind }
+                        }
+
+                        $state.DuplicateTargetProblems
+                    ) | Select-Object -First 1
+
+                    if ($null -ne $errorProblem)
+                    {
+                        Write-Warning -Message "$entryLabel of '$setFile' was not updated: $($errorProblem.Message) Regenerate the set with Export-CompleterSet."
+                        continue
+                    }
+
+                    # Test-CompleterSet reports neither InvalidHash nor HashMismatch for these.
+                    if ($null -eq $entry.ActualHash -or ((Test-CompleterSetHashFormat -Value $entry.DeclaredHash) -and $entry.ActualHash -ieq [string] $entry.DeclaredHash))
+                    {
+                        continue
+                    }
+
+                    if ($entry.Trusted)
+                    {
+                        Write-Warning -Message "$entryLabel of '$setFile' is trusted, so its Targets were not checked against the script."
+                    }
+
+                    $updates.Add([pscustomobject] [ordered] @{
+                            State  = $state
+                            Extent = $state.Extent.HashExtent
+                            Text   = "'$($entry.ActualHash)'"
+                        })
+                }
+
+                if ($withoutHashCount -gt 0)
+                {
+                    Write-Warning -Message "Entries of '$setFile' without a Hash were not updated: $withoutHashCount. Regenerate the set with Export-CompleterSet to add them."
+                }
+
+                foreach ($unlistedScript in $unlistedScripts)
+                {
+                    Write-Warning -Message "$($unlistedScript.Message) Add it with Export-CompleterSet."
+                }
+
+                if ($updates.Count -eq 0)
+                {
+                    Write-Verbose -Message "Updated 0 of $($entryStates.Count) entries in '$setFile'."
+                    continue
+                }
+
+                $encoding = $setDefinition.Encoding
+                $preamble = [byte[]]::new(0)
+
+                if ($setDefinition.HasPreamble)
+                {
+                    $preamble = $encoding.GetPreamble()
+                }
+
+                if (-not [System.Linq.Enumerable]::SequenceEqual([byte[]] (& $getBytes $setDefinition.Text $encoding $preamble), [byte[]] $setDefinition.Bytes))
+                {
+                    throw "'$setFile' cannot be rewritten without changing bytes outside its Hash values, because its text does not round-trip in its encoding. Regenerate the set with Export-CompleterSet."
+                }
+
+                $newText = Set-CompleterSetHashText -Text $setDefinition.Text -Replacement $updates.ToArray()
+
+                # The entries as read, with the new Hash values, are what the new text must give back.
+                foreach ($update in $updates)
+                {
+                    $update.State.RawEntry['Hash'] = $update.State.Entry.ActualHash
+                }
+
+                $expectedEntries = @($setDefinition.Entries | ForEach-Object { & $getDataText $_ })
+
+                try
+                {
+                    $newEntries = @((Import-CompleterDataFile -Text $newText -SkipLimitCheck).Data['Entries'] | Where-Object { $null -ne $_ } | ForEach-Object { & $getDataText $_ })
+                    $isEquivalent = [System.Linq.Enumerable]::SequenceEqual([string[]] $newEntries, [string[]] $expectedEntries)
+                }
+                catch
+                {
+                    $isEquivalent = $false
+                }
+
+                if (-not $isEquivalent)
+                {
+                    throw 'Update-CompleterSet did not produce an equivalent set, so nothing was written. This is a defect in CompleterActions; report it at https://github.com/tstager/CompleterActions/issues.'
+                }
+
+                $newBytes = & $getBytes $newText $encoding $preamble
+
+                if ($newBytes.Length -gt $script:CompleterSetMaxFileBytes)
+                {
+                    throw (Get-CompleterSetOverLimitMessage -ByteCount $newBytes.Length)
+                }
+
+                if (-not $PSCmdlet.ShouldProcess($setFile, "Update $($updates.Count) Hash values"))
+                {
+                    continue
+                }
+
+                $writtenFile = Save-CompleterSetFile -Bytes $newBytes -LiteralPath $setFile
+
+                foreach ($update in $updates)
+                {
+                    Write-Verbose -Message "Updated the Hash of entry $($update.State.Entry.Index) ('$($update.State.Entry.DeclaredPath)') in '$setFile'."
+                }
+
+                Write-Verbose -Message "Updated $($updates.Count) of $($entryStates.Count) entries in '$setFile'."
+
+                if ($PassThru)
+                {
+                    $writtenFile
+                }
+            }
+        }
+        catch
+        {
+            throw "Failed to update completer set. $($_.Exception.Message)"
         }
     }
 }
@@ -4633,15 +4900,142 @@ function Get-CompleterSetEntryExtent
 }
 <#
 .SYNOPSIS
+Verifies every entry of one completer set and finds the scripts it does not list.
+
+.DESCRIPTION
+The per-entry work Test-CompleterSet and Update-CompleterSet share, so both
+judge a set alike. Each entry goes through Resolve-CompleterSetEntry -Verify,
+the static phase of an import with the fast path turned off, so a strict
+script is parsed once and its current hash and targets come from that one
+parse. A trusted script is never parsed; its hash is read from the file.
+
+The duplicate-target check follows import's claiming rule without the session:
+entries are walked in set order, an entry with no problem claims its targets,
+and a later entry that lists a claimed target gets import's duplicate text as
+a DuplicateTarget problem. An entry with a problem, such as a malformed
+target, still lists its targets for the check, as import does.
+
+Last, every file under the set's directory that matches -Filter and that no
+entry lists, hidden files included, is an unlisted script, compared
+case-insensitively on Windows and case-sensitively elsewhere. A folder that
+cannot be read stops the scan with a terminating error.
+
+Each record is written as soon as it is made, so a caller in the same
+pipeline handles every entry before the scan for unlisted scripts starts.
+Every position comes from the parse in SetDefinition, so the set file is not
+read again. Nothing here reads or writes the session's registrations or runs a
+script.
+
+.PARAMETER SetDefinition
+The CompleterActions.CompleterSetDefinition that Import-CompleterSetDefinition
+returned for the set.
+
+.PARAMETER Filter
+The file-name pattern of the unlisted-script scan.
+
+.OUTPUTS
+CompleterActions.CompleterSetEntryState
+CompleterActions.CompleterSetUnlistedScript
+Returns one CompleterActions.CompleterSetEntryState per entry in set order,
+with Entry, the record Resolve-CompleterSetEntry -Verify returned, RawEntry,
+the entry as the set holds it, DuplicateTargetProblems, the entry's
+DuplicateTarget problems as Kind and Message hashtables, and Extent, the
+entry's positions from Get-CompleterSetEntryExtent. Then one
+CompleterActions.CompleterSetUnlistedScript per unlisted script, sorted by
+path, with Path, Message, the UnlistedScript text, and Extent, the position of
+the set's Entries key.
+#>
+function Get-CompleterSetEntryState
+{
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject] $SetDefinition,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Filter
+    )
+
+    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
+    $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
+    $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
+    $claimedTargets = @{}
+    $entryIndex = 0
+
+    foreach ($rawEntry in $SetDefinition.Entries)
+    {
+        $entryIndex++
+        $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
+        $duplicateTargetProblems = [System.Collections.Generic.List[hashtable]]::new()
+
+        if ($null -ne $entry.Path)
+        {
+            $null = $listedPaths.Add($entry.Path)
+        }
+
+        # $entry.Targets is the list import checks, so an entry with a problem,
+        # such as a malformed target, can still report a duplicate.
+        $entryTargets = @($entry.Targets)
+        $targetIdentities = @($entryTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
+
+        for ($targetIndex = 0; $targetIndex -lt $entryTargets.Count; $targetIndex++)
+        {
+            $targetIdentity = $targetIdentities[$targetIndex]
+
+            if ($claimedTargets.Contains($targetIdentity))
+            {
+                $duplicateTargetProblems.Add(@{ Kind = 'DuplicateTarget'; Message = "Target '$($entryTargets[$targetIndex].RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." })
+            }
+        }
+
+        if ($entry.Problems.Count -eq 0 -and $duplicateTargetProblems.Count -eq 0)
+        {
+            foreach ($targetIdentity in $targetIdentities)
+            {
+                $claimedTargets[$targetIdentity] = $entryIndex
+            }
+        }
+
+        [pscustomobject] [ordered] @{
+            PSTypeName              = 'CompleterActions.CompleterSetEntryState'
+            Entry                   = $entry
+            RawEntry                = $rawEntry
+            DuplicateTargetProblems = $duplicateTargetProblems.ToArray()
+            Extent                  = $extents.Entries[$entryIndex - 1]
+        }
+    }
+
+    $unlistedScripts = @(
+        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
+            Where-Object { -not $listedPaths.Contains($_.FullName) } |
+            Sort-Object -Property FullName
+    )
+
+    foreach ($unlistedScript in $unlistedScripts)
+    {
+        [pscustomobject] [ordered] @{
+            PSTypeName = 'CompleterActions.CompleterSetUnlistedScript'
+            Path       = $unlistedScript.FullName
+            Message    = "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it."
+            Extent     = $extents.EntriesExtent
+        }
+    }
+}
+<#
+.SYNOPSIS
 Checks one completer set against the scripts on disk and returns its drift findings.
 
 .DESCRIPTION
 Runs the checks shared with Import-CompleterSet for every entry of a set that
 Import-CompleterSetDefinition has read, and adds the checks only a drift
-report needs. Each entry goes through Resolve-CompleterSetEntry -Verify, the
-static phase of an import with the fast path turned off, so a strict script
-is parsed once and its current hash and targets come from that one parse. A
-trusted script is never parsed; its hash is read from the file.
+report needs. Get-CompleterSetEntryState does the per-entry work, which
+Update-CompleterSet shares: each entry goes through Resolve-CompleterSetEntry
+-Verify, the static phase of an import with the fast path turned off, so a
+strict script is parsed once and its current hash and targets come from that
+one parse. A trusted script is never parsed; its hash is read from the file.
 
 The static phase's problems become MissingScript, InvalidEntry,
 UnreadableTargets, and TargetMismatch findings with import's problem text.
@@ -4657,6 +5051,9 @@ case-sensitively elsewhere.
 With Package, the set is a package set, and Get-CompleterSetPackageFinding
 adds its PackageLayout findings after every entry's findings and before the
 UnlistedScript findings. Without it the findings are exactly the plain set's.
+Each finding is written as its entry is checked, so the findings of every
+entry, and the PackageLayout findings, are written before a folder that cannot
+be read stops the scan for unlisted scripts.
 
 Every position comes from the parse in SetDefinition, so the set file is not
 read again. Nothing here reads or writes the session's registrations or runs a
@@ -4708,103 +5105,105 @@ function Get-CompleterSetFinding
     $hints['DuplicateTarget'] = $hints['TargetMismatch']
 
     $setPath = $SetDefinition.Path
-    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
-    $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
-    $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
-    $claimedTargets = @{}
+    $entryCount = @($SetDefinition.Entries).Count
     $resolvedEntries = [System.Collections.Generic.List[object]]::new()
-    $entryIndex = 0
 
-    foreach ($rawEntry in $SetDefinition.Entries)
-    {
-        $entryIndex++
-        $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
-        $resolvedEntries.Add($entry)
-        $entryExtent = $extents.Entries[$entryIndex - 1]
-        $findings = [System.Collections.Generic.List[object]]::new()
+    # The states arrive as each entry is checked, so this block writes an entry's
+    # findings, and after the last entry the PackageLayout findings, before the
+    # scan for unlisted scripts starts.
+    Get-CompleterSetEntryState -SetDefinition $SetDefinition -Filter $Filter | ForEach-Object {
+        $state = $_
 
-        if ($null -ne $entry.Path)
+        if ($state.PSObject.TypeNames[0] -eq 'CompleterActions.CompleterSetUnlistedScript')
         {
-            $null = $listedPaths.Add($entry.Path)
+            New-CompleterScriptFinding -Path $setPath -Extent $state.Extent -Construct 'UnlistedScript' -Severity Warning -Message $state.Message -Hint $regenerateHint
         }
-
-        $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $entryIndex" } else { "Entry $entryIndex ('$($entry.DeclaredPath)')" }
-        $entryStart = $entryExtent.Extent
-        $pathStart = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryStart }
-        $hashStart = if ($null -ne $entryExtent.HashExtent) { $entryExtent.HashExtent } else { $entryStart }
-        $targetsStart = if ($null -ne $entryExtent.TargetsExtent) { $entryExtent.TargetsExtent } else { $entryStart }
-        $problemExtents = @{
-            MissingScript     = $pathStart
-            InvalidEntry      = $entryStart
-            UnreadableTargets = $pathStart
-            TargetMismatch    = $targetsStart
-        }
-
-        foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
+        else
         {
-            foreach ($problem in @($entry.Problems | Where-Object { $_.Kind -eq $kind }))
+            $entry = $state.Entry
+            $rawEntry = $state.RawEntry
+            $entryIndex = $entry.Index
+            $entryExtent = $state.Extent
+            $findings = [System.Collections.Generic.List[object]]::new()
+
+            $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $entryIndex" } else { "Entry $entryIndex ('$($entry.DeclaredPath)')" }
+            $entryStart = $entryExtent.Extent
+            $pathStart = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryStart }
+            $hashStart = if ($null -ne $entryExtent.HashExtent) { $entryExtent.HashExtent } else { $entryStart }
+            $targetsStart = if ($null -ne $entryExtent.TargetsExtent) { $entryExtent.TargetsExtent } else { $entryStart }
+            $problemExtents = @{
+                MissingScript     = $pathStart
+                InvalidEntry      = $entryStart
+                UnreadableTargets = $pathStart
+                TargetMismatch    = $targetsStart
+            }
+
+            foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
             {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $problemExtents[$kind] -Construct $kind -Message "${entryLabel}: $($problem.Message)" -Hint $hints[$kind]))
+                foreach ($problem in @($entry.Problems | Where-Object { $_.Kind -eq $kind }))
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $problemExtents[$kind] -Construct $kind -Message "${entryLabel}: $($problem.Message)" -Hint $hints[$kind]))
+                }
+            }
+
+            foreach ($problem in $state.DuplicateTargetProblems)
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: $($problem.Message)" -Hint $hints['DuplicateTarget']))
+            }
+
+            if ($rawEntry -is [System.Collections.IDictionary])
+            {
+                if (-not $rawEntry.Contains('Hash'))
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $entryStart -Construct 'MissingHash' -Severity Warning -Message "${entryLabel}: The entry has no Hash, so a change to its script cannot be detected." -Hint $regenerateHint))
+                }
+                elseif (-not (Test-CompleterSetHashFormat -Value $entry.DeclaredHash))
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'InvalidHash' -Severity Warning -Message "${entryLabel}: The Hash '$($entry.DeclaredHash)' is not 'SHA256:' followed by 64 hexadecimal digits, so it is ignored." -Hint $regenerateHint))
+                }
+                elseif ($null -ne $entry.ActualHash -and $entry.ActualHash -ne [string] $entry.DeclaredHash)
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'HashMismatch' -Severity Warning -Message "${entryLabel}: The script has changed since the set was written. Declared: $($entry.DeclaredHash). Script: $($entry.ActualHash)." -Hint $regenerateHint))
+                }
+            }
+
+            $findings
+            $resolvedEntries.Add($entry)
+
+            if ($resolvedEntries.Count -eq $entryCount -and $null -ne $Package)
+            {
+                Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
             }
         }
-
-        # $entry.Targets is the list import checks, so an entry with an Error
-        # finding, such as a malformed target, can still report a duplicate.
-        $entryTargets = @($entry.Targets)
-        $targetIdentities = @($entryTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
-
-        for ($targetIndex = 0; $targetIndex -lt $entryTargets.Count; $targetIndex++)
-        {
-            $targetIdentity = $targetIdentities[$targetIndex]
-
-            if ($claimedTargets.Contains($targetIdentity))
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($entryTargets[$targetIndex].RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." -Hint $hints['DuplicateTarget']))
-            }
-        }
-
-        if ($findings.Count -eq 0)
-        {
-            foreach ($targetIdentity in $targetIdentities)
-            {
-                $claimedTargets[$targetIdentity] = $entryIndex
-            }
-        }
-
-        if ($rawEntry -is [System.Collections.IDictionary])
-        {
-            if (-not $rawEntry.Contains('Hash'))
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $entryStart -Construct 'MissingHash' -Severity Warning -Message "${entryLabel}: The entry has no Hash, so a change to its script cannot be detected." -Hint $regenerateHint))
-            }
-            elseif (-not (Test-CompleterSetHashFormat -Value $entry.DeclaredHash))
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'InvalidHash' -Severity Warning -Message "${entryLabel}: The Hash '$($entry.DeclaredHash)' is not 'SHA256:' followed by 64 hexadecimal digits, so it is ignored." -Hint $regenerateHint))
-            }
-            elseif ($null -ne $entry.ActualHash -and $entry.ActualHash -ne [string] $entry.DeclaredHash)
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'HashMismatch' -Severity Warning -Message "${entryLabel}: The script has changed since the set was written. Declared: $($entry.DeclaredHash). Script: $($entry.ActualHash)." -Hint $regenerateHint))
-            }
-        }
-
-        $findings
     }
+}
+<#
+.SYNOPSIS
+Words the refusal of a completer set that would be written over the size limit.
 
-    if ($null -ne $Package)
-    {
-        Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
-    }
+.DESCRIPTION
+Returns the one text Export-CompleterSet and Update-CompleterSet give when the
+set they would write is larger than $script:CompleterSetMaxFileBytes, the
+limit Import-CompleterSet and Test-CompleterSet read up to, so both commands
+word it alike.
 
-    $unlistedScripts = @(
-        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
-            Where-Object { -not $listedPaths.Contains($_.FullName) } |
-            Sort-Object -Property FullName
+.PARAMETER ByteCount
+The size in bytes of the set that would be written.
+
+.OUTPUTS
+System.String
+#>
+function Get-CompleterSetOverLimitMessage
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateRange(0, [long]::MaxValue)]
+        [long] $ByteCount
     )
 
-    foreach ($unlistedScript in $unlistedScripts)
-    {
-        New-CompleterScriptFinding -Path $setPath -Extent $extents.EntriesExtent -Construct 'UnlistedScript' -Severity Warning -Message "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it." -Hint $regenerateHint
-    }
+    "The set would be $ByteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
 }
 <#
 .SYNOPSIS
@@ -5286,64 +5685,112 @@ repeats it in 4 bytes 70 seconds (about 33,000), and a file of nothing but
 closing parentheses or closing braces, one error per byte, 129 and 171
 seconds. A set that Export-CompleterSet writes has no syntax errors.
 
+-Text parses and evaluates text that is already decoded, such as a set that
+Update-CompleterSet has rewritten in memory, the same way and with the same
+error texts, except that a text without a hashtable is named as text. It reads
+nothing and applies no size limit, so OverLimit is always $false.
+
 .PARAMETER LiteralPath
 The full path of the data file.
+
+.PARAMETER Text
+The decoded text of a data file, parsed instead of a file.
 
 .PARAMETER SkipLimitCheck
 Skips the evaluator's hashtable size check, as Import-PowerShellDataFile
 -SkipLimitCheck does. The default limits of 500 keys and 5000 syntax nodes
 apply otherwise.
 
+.PARAMETER IncludeSource
+Adds what was read to the result, so a caller that rewrites the file can
+reproduce it: Bytes, the bytes read; Text, their decoded text, the text the
+parse positions point into; Encoding, the encoding that decoded them; and
+HasPreamble, whether the bytes start with that encoding's byte-order mark,
+which the text does not contain.
+
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns OverLimit, which is $true when the file holds more than the limit,
 Data, the hashtable the file holds, and Ast, the parse of the bytes read.
-Data and Ast are $null when OverLimit is $true.
+Data and Ast are $null when OverLimit is $true. With -IncludeSource the record
+also carries Bytes, Text, Encoding, and HasPreamble; Text, Encoding, and
+HasPreamble are $null when OverLimit is $true.
 #>
 function Import-CompleterDataFile
 {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'LiteralPath')]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory)]
+        [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
         [ValidateNotNullOrEmpty()]
         [string] $LiteralPath,
 
+        [Parameter(Mandatory, ParameterSetName = 'Text')]
+        [AllowEmptyString()]
+        [string] $Text,
+
         [Parameter()]
-        [switch] $SkipLimitCheck
+        [switch] $SkipLimitCheck,
+
+        [Parameter(ParameterSetName = 'LiteralPath')]
+        [switch] $IncludeSource
     )
 
-    try
-    {
-        $stream = [System.IO.File]::OpenRead($LiteralPath)
+    $encoding = $null
+    $hasPreamble = $null
 
+    if ($PSCmdlet.ParameterSetName -eq 'LiteralPath')
+    {
         try
         {
-            $bytes = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1)
+            $stream = [System.IO.File]::OpenRead($LiteralPath)
+
+            try
+            {
+                $bytes = [System.IO.BinaryReader]::new($stream).ReadBytes($script:CompleterSetMaxFileBytes + 1)
+            }
+            finally
+            {
+                $stream.Dispose()
+            }
         }
-        finally
+        catch [System.Management.Automation.MethodInvocationException]
         {
-            $stream.Dispose()
+            throw $_.Exception.InnerException
         }
-    }
-    catch [System.Management.Automation.MethodInvocationException]
-    {
-        throw $_.Exception.InnerException
+
+        if ($bytes.Length -gt $script:CompleterSetMaxFileBytes)
+        {
+            $result = [pscustomobject] [ordered] @{ OverLimit = $true; Data = $null; Ast = $null }
+
+            if ($IncludeSource)
+            {
+                $result | Add-Member -NotePropertyMembers ([ordered] @{ Bytes = $bytes; Text = $null; Encoding = $null; HasPreamble = $null })
+            }
+
+            return $result
+        }
+
+        $reader = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false))
+        $Text = $reader.ReadToEnd()
+        # The reader names the encoding a byte-order mark selected only after it has read.
+        $encoding = $reader.CurrentEncoding
+        $preamble = $encoding.GetPreamble()
+        $hasPreamble = $preamble.Length -gt 0 -and $bytes.Length -ge $preamble.Length -and [System.Linq.Enumerable]::SequenceEqual([byte[]] $preamble, [byte[]] $bytes[0..($preamble.Length - 1)])
     }
 
-    if ($bytes.Length -gt $script:CompleterSetMaxFileBytes)
-    {
-        return [pscustomobject] [ordered] @{ OverLimit = $true; Data = $null; Ast = $null }
-    }
-
-    $text = [System.IO.StreamReader]::new([System.IO.MemoryStream]::new($bytes), [System.Text.UTF8Encoding]::new($false)).ReadToEnd()
     $parseErrors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, $LiteralPath, [ref] $null, [ref] $parseErrors)
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Text, $LiteralPath, [ref] $null, [ref] $parseErrors)
     # A parser that gives up on input nested too deeply returns no AST, only its error.
     $hashtable = if ($parseErrors.Count -eq 0) { $ast.Find({ param($node) $node -is [System.Management.Automation.Language.HashtableAst] }, $false) }
 
     if ($null -eq $hashtable)
     {
+        if ($PSCmdlet.ParameterSetName -eq 'Text')
+        {
+            throw 'The text could not be parsed as a PowerShell Data File.'
+        }
+
         throw "The file '$LiteralPath' could not be parsed as a PowerShell Data File."
     }
 
@@ -5356,7 +5803,14 @@ function Import-CompleterDataFile
         throw $_.Exception.InnerException
     }
 
-    [pscustomobject] [ordered] @{ OverLimit = $false; Data = $data; Ast = $ast }
+    $result = [pscustomobject] [ordered] @{ OverLimit = $false; Data = $data; Ast = $ast }
+
+    if ($IncludeSource)
+    {
+        $result | Add-Member -NotePropertyMembers ([ordered] @{ Bytes = $bytes; Text = $Text; Encoding = $encoding; HasPreamble = $hasPreamble })
+    }
+
+    $result
 }
 <#
 .SYNOPSIS
@@ -5518,11 +5972,18 @@ measurements.
 .PARAMETER LiteralPath
 The literal path to the completer set file.
 
+.PARAMETER IncludeSource
+Adds the bytes that were read, their decoded text, the encoding, and whether
+the bytes start with its byte-order mark, as Import-CompleterDataFile
+-IncludeSource returns them, so Update-CompleterSet rewrites the file from the
+one read its checks were made on.
+
 .OUTPUTS
 CompleterActions.CompleterSetDefinition
 Returns one record with Path and Directory, the set file's full path and
 folder, Version, Entries, the set's non-null entries in order, and Ast, the
-parse of the bytes that were read.
+parse of the bytes that were read. With -IncludeSource the record also carries
+Bytes, Text, Encoding, and HasPreamble.
 #>
 function Import-CompleterSetDefinition
 {
@@ -5531,7 +5992,10 @@ function Import-CompleterSetDefinition
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [switch] $IncludeSource
     )
 
     $file = Get-Item -LiteralPath $LiteralPath -ErrorAction Stop
@@ -5546,7 +6010,7 @@ function Import-CompleterSetDefinition
         throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
     }
 
-    $dataFile = Import-CompleterDataFile -LiteralPath $file.FullName -SkipLimitCheck
+    $dataFile = Import-CompleterDataFile -LiteralPath $file.FullName -SkipLimitCheck -IncludeSource:$IncludeSource
 
     if ($dataFile.OverLimit)
     {
@@ -5589,7 +6053,7 @@ function Import-CompleterSetDefinition
         throw "Completer set '$($file.FullName)' has no Entries."
     }
 
-    [pscustomobject] [ordered] @{
+    $definition = [pscustomobject] [ordered] @{
         PSTypeName = 'CompleterActions.CompleterSetDefinition'
         Path       = $file.FullName
         Directory  = $file.DirectoryName
@@ -5597,6 +6061,18 @@ function Import-CompleterSetDefinition
         Entries    = $entries
         Ast        = $dataFile.Ast
     }
+
+    if ($IncludeSource)
+    {
+        $definition | Add-Member -NotePropertyMembers ([ordered] @{
+                Bytes       = $dataFile.Bytes
+                Text        = $dataFile.Text
+                Encoding    = $dataFile.Encoding
+                HasPreamble = $dataFile.HasPreamble
+            })
+    }
+
+    $definition
 }
 <#
 .SYNOPSIS
@@ -8813,6 +9289,68 @@ function Save-CompleterScriptFile
 }
 <#
 .SYNOPSIS
+Replaces a completer set file with new bytes in one step.
+
+.DESCRIPTION
+Writes the bytes to '<path>.<8 hex>.tmp' beside the set and moves that file
+over the set with File.Move, replacing it, so a reader sees either the old set
+or the new one and never part of either. The temporary file never survives
+the call.
+
+A set reached through a symbolic link is written at the link's final target,
+with the temporary file beside that target, so the link is kept and the move
+stays on the target's volume.
+
+.PARAMETER Bytes
+The complete new content of the set file, byte-order mark included.
+
+.PARAMETER LiteralPath
+The full path of the set file to replace.
+
+.OUTPUTS
+System.IO.FileInfo
+Returns the set file at LiteralPath, the link itself when it is one.
+#>
+function Save-CompleterSetFile
+{
+    [CmdletBinding()]
+    [OutputType([System.IO.FileInfo])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [byte[]] $Bytes,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    $temporaryPath = $null
+
+    try
+    {
+        $linkTarget = [System.IO.File]::ResolveLinkTarget($LiteralPath, $true)
+        $destinationPath = if ($null -eq $linkTarget) { $LiteralPath } else { $linkTarget.FullName }
+        $temporaryPath = '{0}.{1}.tmp' -f $destinationPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+        [System.IO.File]::WriteAllBytes($temporaryPath, $Bytes)
+        [System.IO.File]::Move($temporaryPath, $destinationPath, $true)
+    }
+    catch [System.Management.Automation.MethodInvocationException]
+    {
+        throw $_.Exception.InnerException
+    }
+    finally
+    {
+        if ([System.IO.File]::Exists($temporaryPath))
+        {
+            [System.IO.File]::Delete($temporaryPath)
+        }
+    }
+
+    [System.IO.FileInfo]::new($LiteralPath)
+}
+<#
+.SYNOPSIS
 Sets a value in a runtime completer dictionary by key.
 #>
 function Set-CompleterRuntimeDictionaryValue
@@ -8842,6 +9380,54 @@ function Set-CompleterRuntimeDictionaryValue
     $Dictionary[$Key] = $Value
 
     return $Dictionary[$Key]
+}
+<#
+.SYNOPSIS
+Splices new Hash values into the text of a completer set.
+
+.DESCRIPTION
+Replaces each given extent of the set's text with its new text and returns the
+result, working from the last offset to the first so that every earlier
+offset still points where the parse put it. Nothing outside a replaced extent
+changes: no line is split or joined there, so the file keeps its line endings,
+and a Hash that shares its line with other keys keeps its neighbours. The
+extents are the Hash value extents of the parse of this same text, which
+Get-CompleterSetEntryExtent reports; they never overlap. Nothing is read or
+written.
+
+.PARAMETER Text
+The decoded text of the set, the text the extents point into.
+
+.PARAMETER Replacement
+One record per value to replace, with Extent, the value's extent in Text, and
+Text, what replaces it.
+
+.OUTPUTS
+System.String
+#>
+function Set-CompleterSetHashText
+{
+    [CmdletBinding()]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This private helper only returns new text and changes no state.')]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Text,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNull()]
+        [psobject[]] $Replacement
+    )
+
+    $builder = [System.Text.StringBuilder]::new($Text)
+
+    foreach ($item in @($Replacement | Sort-Object -Property { $_.Extent.StartOffset } -Descending))
+    {
+        $null = $builder.Remove($item.Extent.StartOffset, $item.Extent.EndOffset - $item.Extent.StartOffset).Insert($item.Extent.StartOffset, $item.Text)
+    }
+
+    $builder.ToString()
 }
 <#
 .SYNOPSIS

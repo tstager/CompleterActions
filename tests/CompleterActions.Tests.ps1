@@ -1728,7 +1728,7 @@ Describe 'Removed surface' {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
-    It 'exports exactly the eleven functions and no alias' {
+    It 'exports exactly the twelve functions and no alias' {
         $expected = @(
             'Export-CompleterSet',
             'Get-Completer',
@@ -1740,7 +1740,8 @@ Describe 'Removed surface' {
             'Test-CompleterRegistration',
             'Test-CompleterScript',
             'Test-CompleterSet',
-            'Unregister-Completer'
+            'Unregister-Completer',
+            'Update-CompleterSet'
         )
         $manifestData = Import-PowerShellDataFile -Path $script:RemovedSurfaceManifestPath
         $commands = @(Get-Command -Module 'CompleterActions')
@@ -1748,7 +1749,7 @@ Describe 'Removed surface' {
         @($manifestData.FunctionsToExport) | Should -Be $expected
         $manifestData.ContainsKey('AliasesToExport') | Should -BeTrue
         @($manifestData.AliasesToExport).Count | Should -Be 0
-        $commands.Count | Should -Be 11
+        $commands.Count | Should -Be 12
         @($commands | Where-Object CommandType -ne 'Function') | Should -BeNullOrEmpty
         @($commands.Name | Sort-Object) | Should -Be @($manifestData.FunctionsToExport)
     }

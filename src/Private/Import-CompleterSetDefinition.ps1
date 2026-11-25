@@ -37,11 +37,18 @@ measurements.
 .PARAMETER LiteralPath
 The literal path to the completer set file.
 
+.PARAMETER IncludeSource
+Adds the bytes that were read, their decoded text, the encoding, and whether
+the bytes start with its byte-order mark, as Import-CompleterDataFile
+-IncludeSource returns them, so Update-CompleterSet rewrites the file from the
+one read its checks were made on.
+
 .OUTPUTS
 CompleterActions.CompleterSetDefinition
 Returns one record with Path and Directory, the set file's full path and
 folder, Version, Entries, the set's non-null entries in order, and Ast, the
-parse of the bytes that were read.
+parse of the bytes that were read. With -IncludeSource the record also carries
+Bytes, Text, Encoding, and HasPreamble.
 #>
 function Import-CompleterSetDefinition
 {
@@ -50,7 +57,10 @@ function Import-CompleterSetDefinition
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $LiteralPath
+        [string] $LiteralPath,
+
+        [Parameter()]
+        [switch] $IncludeSource
     )
 
     $file = Get-Item -LiteralPath $LiteralPath -ErrorAction Stop
@@ -65,7 +75,7 @@ function Import-CompleterSetDefinition
         throw "Completer sets must be .psd1 files. Received '$LiteralPath'."
     }
 
-    $dataFile = Import-CompleterDataFile -LiteralPath $file.FullName -SkipLimitCheck
+    $dataFile = Import-CompleterDataFile -LiteralPath $file.FullName -SkipLimitCheck -IncludeSource:$IncludeSource
 
     if ($dataFile.OverLimit)
     {
@@ -108,7 +118,7 @@ function Import-CompleterSetDefinition
         throw "Completer set '$($file.FullName)' has no Entries."
     }
 
-    [pscustomobject] [ordered] @{
+    $definition = [pscustomobject] [ordered] @{
         PSTypeName = 'CompleterActions.CompleterSetDefinition'
         Path       = $file.FullName
         Directory  = $file.DirectoryName
@@ -116,4 +126,16 @@ function Import-CompleterSetDefinition
         Entries    = $entries
         Ast        = $dataFile.Ast
     }
+
+    if ($IncludeSource)
+    {
+        $definition | Add-Member -NotePropertyMembers ([ordered] @{
+                Bytes       = $dataFile.Bytes
+                Text        = $dataFile.Text
+                Encoding    = $dataFile.Encoding
+                HasPreamble = $dataFile.HasPreamble
+            })
+    }
+
+    $definition
 }

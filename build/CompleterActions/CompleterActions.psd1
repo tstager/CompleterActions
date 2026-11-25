@@ -73,7 +73,8 @@ FormatsToProcess = 'CompleterActions.Format.ps1xml'
 FunctionsToExport = 'Export-CompleterSet', 'Get-Completer', 'Import-CompleterScript', 
                'Import-CompleterSet', 'New-CompleterScript', 'Register-Completer', 
                'Reset-Completer', 'Test-CompleterRegistration', 
-               'Test-CompleterScript', 'Test-CompleterSet', 'Unregister-Completer'
+               'Test-CompleterScript', 'Test-CompleterSet', 'Unregister-Completer', 
+               'Update-CompleterSet'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()

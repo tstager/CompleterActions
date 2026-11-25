@@ -5,10 +5,11 @@ Checks one completer set against the scripts on disk and returns its drift findi
 .DESCRIPTION
 Runs the checks shared with Import-CompleterSet for every entry of a set that
 Import-CompleterSetDefinition has read, and adds the checks only a drift
-report needs. Each entry goes through Resolve-CompleterSetEntry -Verify, the
-static phase of an import with the fast path turned off, so a strict script
-is parsed once and its current hash and targets come from that one parse. A
-trusted script is never parsed; its hash is read from the file.
+report needs. Get-CompleterSetEntryState does the per-entry work, which
+Update-CompleterSet shares: each entry goes through Resolve-CompleterSetEntry
+-Verify, the static phase of an import with the fast path turned off, so a
+strict script is parsed once and its current hash and targets come from that
+one parse. A trusted script is never parsed; its hash is read from the file.
 
 The static phase's problems become MissingScript, InvalidEntry,
 UnreadableTargets, and TargetMismatch findings with import's problem text.
@@ -24,6 +25,9 @@ case-sensitively elsewhere.
 With Package, the set is a package set, and Get-CompleterSetPackageFinding
 adds its PackageLayout findings after every entry's findings and before the
 UnlistedScript findings. Without it the findings are exactly the plain set's.
+Each finding is written as its entry is checked, so the findings of every
+entry, and the PackageLayout findings, are written before a folder that cannot
+be read stops the scan for unlisted scripts.
 
 Every position comes from the parse in SetDefinition, so the set file is not
 read again. Nothing here reads or writes the session's registrations or runs a
@@ -75,101 +79,75 @@ function Get-CompleterSetFinding
     $hints['DuplicateTarget'] = $hints['TargetMismatch']
 
     $setPath = $SetDefinition.Path
-    $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
-    $pathComparer = if ($IsWindows) { [System.StringComparer]::OrdinalIgnoreCase } else { [System.StringComparer]::Ordinal }
-    $listedPaths = [System.Collections.Generic.HashSet[string]]::new($pathComparer)
-    $claimedTargets = @{}
+    $entryCount = @($SetDefinition.Entries).Count
     $resolvedEntries = [System.Collections.Generic.List[object]]::new()
-    $entryIndex = 0
 
-    foreach ($rawEntry in $SetDefinition.Entries)
-    {
-        $entryIndex++
-        $entry = Resolve-CompleterSetEntry -Entry $rawEntry -Index $entryIndex -SetDirectory $SetDefinition.Directory -Verify
-        $resolvedEntries.Add($entry)
-        $entryExtent = $extents.Entries[$entryIndex - 1]
-        $findings = [System.Collections.Generic.List[object]]::new()
+    # The states arrive as each entry is checked, so this block writes an entry's
+    # findings, and after the last entry the PackageLayout findings, before the
+    # scan for unlisted scripts starts.
+    Get-CompleterSetEntryState -SetDefinition $SetDefinition -Filter $Filter | ForEach-Object {
+        $state = $_
 
-        if ($null -ne $entry.Path)
+        if ($state.PSObject.TypeNames[0] -eq 'CompleterActions.CompleterSetUnlistedScript')
         {
-            $null = $listedPaths.Add($entry.Path)
+            New-CompleterScriptFinding -Path $setPath -Extent $state.Extent -Construct 'UnlistedScript' -Severity Warning -Message $state.Message -Hint $regenerateHint
         }
-
-        $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $entryIndex" } else { "Entry $entryIndex ('$($entry.DeclaredPath)')" }
-        $entryStart = $entryExtent.Extent
-        $pathStart = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryStart }
-        $hashStart = if ($null -ne $entryExtent.HashExtent) { $entryExtent.HashExtent } else { $entryStart }
-        $targetsStart = if ($null -ne $entryExtent.TargetsExtent) { $entryExtent.TargetsExtent } else { $entryStart }
-        $problemExtents = @{
-            MissingScript     = $pathStart
-            InvalidEntry      = $entryStart
-            UnreadableTargets = $pathStart
-            TargetMismatch    = $targetsStart
-        }
-
-        foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
+        else
         {
-            foreach ($problem in @($entry.Problems | Where-Object { $_.Kind -eq $kind }))
+            $entry = $state.Entry
+            $rawEntry = $state.RawEntry
+            $entryIndex = $entry.Index
+            $entryExtent = $state.Extent
+            $findings = [System.Collections.Generic.List[object]]::new()
+
+            $entryLabel = if ([string]::IsNullOrWhiteSpace($entry.DeclaredPath)) { "Entry $entryIndex" } else { "Entry $entryIndex ('$($entry.DeclaredPath)')" }
+            $entryStart = $entryExtent.Extent
+            $pathStart = if ($null -ne $entryExtent.PathExtent) { $entryExtent.PathExtent } else { $entryStart }
+            $hashStart = if ($null -ne $entryExtent.HashExtent) { $entryExtent.HashExtent } else { $entryStart }
+            $targetsStart = if ($null -ne $entryExtent.TargetsExtent) { $entryExtent.TargetsExtent } else { $entryStart }
+            $problemExtents = @{
+                MissingScript     = $pathStart
+                InvalidEntry      = $entryStart
+                UnreadableTargets = $pathStart
+                TargetMismatch    = $targetsStart
+            }
+
+            foreach ($kind in 'MissingScript', 'InvalidEntry', 'UnreadableTargets', 'TargetMismatch')
             {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $problemExtents[$kind] -Construct $kind -Message "${entryLabel}: $($problem.Message)" -Hint $hints[$kind]))
+                foreach ($problem in @($entry.Problems | Where-Object { $_.Kind -eq $kind }))
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $problemExtents[$kind] -Construct $kind -Message "${entryLabel}: $($problem.Message)" -Hint $hints[$kind]))
+                }
+            }
+
+            foreach ($problem in $state.DuplicateTargetProblems)
+            {
+                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: $($problem.Message)" -Hint $hints['DuplicateTarget']))
+            }
+
+            if ($rawEntry -is [System.Collections.IDictionary])
+            {
+                if (-not $rawEntry.Contains('Hash'))
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $entryStart -Construct 'MissingHash' -Severity Warning -Message "${entryLabel}: The entry has no Hash, so a change to its script cannot be detected." -Hint $regenerateHint))
+                }
+                elseif (-not (Test-CompleterSetHashFormat -Value $entry.DeclaredHash))
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'InvalidHash' -Severity Warning -Message "${entryLabel}: The Hash '$($entry.DeclaredHash)' is not 'SHA256:' followed by 64 hexadecimal digits, so it is ignored." -Hint $regenerateHint))
+                }
+                elseif ($null -ne $entry.ActualHash -and $entry.ActualHash -ne [string] $entry.DeclaredHash)
+                {
+                    $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'HashMismatch' -Severity Warning -Message "${entryLabel}: The script has changed since the set was written. Declared: $($entry.DeclaredHash). Script: $($entry.ActualHash)." -Hint $regenerateHint))
+                }
+            }
+
+            $findings
+            $resolvedEntries.Add($entry)
+
+            if ($resolvedEntries.Count -eq $entryCount -and $null -ne $Package)
+            {
+                Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
             }
         }
-
-        # $entry.Targets is the list import checks, so an entry with an Error
-        # finding, such as a malformed target, can still report a duplicate.
-        $entryTargets = @($entry.Targets)
-        $targetIdentities = @($entryTargets | ForEach-Object { Get-CompleterTargetIdentity -Target $_ })
-
-        for ($targetIndex = 0; $targetIndex -lt $entryTargets.Count; $targetIndex++)
-        {
-            $targetIdentity = $targetIdentities[$targetIndex]
-
-            if ($claimedTargets.Contains($targetIdentity))
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $targetsStart -Construct 'DuplicateTarget' -Message "${entryLabel}: Target '$($entryTargets[$targetIndex].RuntimeKey)' is also listed by entry $($claimedTargets[$targetIdentity])." -Hint $hints['DuplicateTarget']))
-            }
-        }
-
-        if ($findings.Count -eq 0)
-        {
-            foreach ($targetIdentity in $targetIdentities)
-            {
-                $claimedTargets[$targetIdentity] = $entryIndex
-            }
-        }
-
-        if ($rawEntry -is [System.Collections.IDictionary])
-        {
-            if (-not $rawEntry.Contains('Hash'))
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $entryStart -Construct 'MissingHash' -Severity Warning -Message "${entryLabel}: The entry has no Hash, so a change to its script cannot be detected." -Hint $regenerateHint))
-            }
-            elseif (-not (Test-CompleterSetHashFormat -Value $entry.DeclaredHash))
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'InvalidHash' -Severity Warning -Message "${entryLabel}: The Hash '$($entry.DeclaredHash)' is not 'SHA256:' followed by 64 hexadecimal digits, so it is ignored." -Hint $regenerateHint))
-            }
-            elseif ($null -ne $entry.ActualHash -and $entry.ActualHash -ne [string] $entry.DeclaredHash)
-            {
-                $findings.Add((New-CompleterScriptFinding -Path $setPath -Extent $hashStart -Construct 'HashMismatch' -Severity Warning -Message "${entryLabel}: The script has changed since the set was written. Declared: $($entry.DeclaredHash). Script: $($entry.ActualHash)." -Hint $regenerateHint))
-            }
-        }
-
-        $findings
-    }
-
-    if ($null -ne $Package)
-    {
-        Get-CompleterSetPackageFinding -SetDefinition $SetDefinition -Package $Package -Entry $resolvedEntries.ToArray()
-    }
-
-    $unlistedScripts = @(
-        Get-ChildItem -LiteralPath $SetDefinition.Directory -Filter $Filter -File -Recurse -Force -ErrorAction Stop |
-            Where-Object { -not $listedPaths.Contains($_.FullName) } |
-            Sort-Object -Property FullName
-    )
-
-    foreach ($unlistedScript in $unlistedScripts)
-    {
-        New-CompleterScriptFinding -Path $setPath -Extent $extents.EntriesExtent -Construct 'UnlistedScript' -Severity Warning -Message "The script '$($unlistedScript.FullName)' matches '$Filter', but no entry of the set lists it." -Hint $regenerateHint
     }
 }
