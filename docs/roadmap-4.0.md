@@ -108,3 +108,5 @@ None are locked. Each is written the way the 2.0 and 3.0 decisions were, so acce
 4. **The verified import stays the default.** 3.0 decisions 1 and 8 put the hash in the set file and the grammar at import. Any cheaper import is a per-call opt-in that changes nothing for a profile that does not ask for it. Affects: milestone 2, Import-CompleterSet.
 5. **Generator-produced completers register in the trusted tier.** The strict grammar exists for hand-written scripts in a set. A script a tool emits for itself is the tool's contract, and holding it to the grammar would reject most of them for no gain. Affects: milestone 2, Register-Completer.
 6. **4.0.0 ships as a release candidate before it ships as stable.** Carried from 3.0 decision 6 and 2.0 decision 6 without change. Affects: milestone 3, release order.
+
+<!-- ci skip probe -->
