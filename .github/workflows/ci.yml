@@ -1,10 +1,15 @@
 name: CI
 
 on:
+  # A push to main or a pull request that changes only these files runs
+  # nothing; keep the two lists the same. README.md and src/docs are not
+  # listed: the tests read both, and src/docs ships as help. release.yml runs
+  # the suite itself on every v* tag.
   push:
     branches: [main]
-  # A pull request that changes only these files runs nothing. README.md and
-  # src/docs are not listed: the tests read both, and src/docs ships as help.
+    paths-ignore:
+      - 'docs/**'
+      - 'CHANGELOG.md'
   pull_request:
     paths-ignore:
       - 'docs/**'
