@@ -21,8 +21,12 @@ Manifests are read by Import-CompleterDataFile, as data only, so nothing in
 the package runs, and under the set file limit, so a manifest larger than
 128 KB is refused before it is parsed. PrivateData.CompleterSet must name
 a .psd1 file in a folder directly below ModuleBase, with / or \ as the
-separator, and the file must exist. A failure throws the bare reason; the
-caller adds its own prefix.
+separator, and the file must exist. A declaration that is not a valid file
+path, because it holds a null character or is longer than the platform allows,
+fails with the invalid-declaration text, the value shown through
+ConvertTo-CompleterPrintableText; the error for a set file that does not exist
+shows its path the same way. A failure throws the bare reason; the caller adds
+its own prefix.
 
 .PARAMETER Name
 The module name, taken literally.
@@ -211,14 +215,23 @@ function Resolve-CompleterSetModule
 
     if (-not $isValidDeclaration)
     {
-        throw "The module '$moduleName' $version declares the completer set '$declaredSet', which must be a .psd1 file in a folder directly below '$moduleBase'."
+        throw "The module '$moduleName' $version declares the completer set '$(ConvertTo-CompleterPrintableText -Value ([string] $declaredSet))', which must be a .psd1 file in a folder directly below '$moduleBase'."
     }
 
-    $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+    try
+    {
+        $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+    }
+    catch [System.IO.PathTooLongException], [System.ArgumentException]
+    {
+        # A null character, or a path longer than the platform allows, names no
+        # file. The value can hold control characters, so it is made printable.
+        throw "The module '$moduleName' $version declares the completer set '$(ConvertTo-CompleterPrintableText -Value $declaredSet)', which must be a .psd1 file in a folder directly below '$moduleBase'."
+    }
 
     if (-not [System.IO.File]::Exists($setPath))
     {
-        throw "The completer set '$setPath' declared by the module '$moduleName' $version does not exist."
+        throw "The completer set '$(ConvertTo-CompleterPrintableText -Value $setPath)' declared by the module '$moduleName' $version does not exist."
     }
 
     [pscustomobject] [ordered] @{

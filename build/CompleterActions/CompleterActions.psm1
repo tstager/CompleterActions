@@ -20,7 +20,24 @@ function Export-CompleterSet
 
     begin
     {
-        $outputPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
+        # The output path follows the two rules of a script path in the records.
+        # The engine hands the part after a provider qualifier to the provider
+        # unchanged, so a relative one would be written under the PowerShell
+        # location while every entry Path is computed against the process working
+        # directory.
+        $provider = $null
+        $outputPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path, [ref] $provider, [ref] $null)
+
+        if ($provider.ImplementingType -ne [Microsoft.PowerShell.Commands.FileSystemProvider])
+        {
+            throw "The output path '$Path' resolves to '$outputPath' on the $($provider.Name) provider, not to a file system path."
+        }
+
+        if ($PSCmdlet.SessionState.Path.IsProviderQualified($Path) -and
+            -not [System.IO.Path]::IsPathFullyQualified($Path.Substring($Path.IndexOf('::') + 2)))
+        {
+            throw "The output path '$Path' is provider-qualified but not fully qualified, so PowerShell would resolve it against the process working directory rather than the PowerShell location. Drop the provider qualifier or give a fully qualified path."
+        }
 
         if ([System.IO.Path]::GetExtension($outputPath) -ne '.psd1')
         {
@@ -2565,6 +2582,45 @@ function ConvertTo-CompleterCleanHelpText
 }
 <#
 .SYNOPSIS
+Makes a value from a file printable for an error message or a finding.
+
+.DESCRIPTION
+Replaces each control character, every character of the Unicode category Cc
+such as a null character or a line break, with U+FFFD, and cuts a value longer
+than 256 characters to its first 256, followed by '...'. A cut that would
+leave the first half of a surrogate pair at the end is made one character
+earlier. A value of 256 characters or fewer without a control character comes
+back unchanged.
+
+.PARAMETER Value
+The text to make printable.
+
+.OUTPUTS
+System.String
+#>
+function ConvertTo-CompleterPrintableText
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [AllowEmptyString()]
+        [string] $Value
+    )
+
+    $maximumLength = 256
+    $text = $Value
+
+    if ($text.Length -gt $maximumLength)
+    {
+        $length = if ([char]::IsHighSurrogate($text[$maximumLength - 1])) { $maximumLength - 1 } else { $maximumLength }
+        $text = $text.Substring(0, $length) + '...'
+    }
+
+    [regex]::Replace($text, '\p{Cc}', [string] [char] 0xFFFD)
+}
+<#
+.SYNOPSIS
 Derives the stem that names a generated completer script's state and function.
 
 .DESCRIPTION
@@ -4384,6 +4440,14 @@ data does not declare the set, and a folder that cannot be listed holds no
 manifest. Paths are compared case-insensitively on Windows and macOS and
 case-sensitively on Linux.
 
+A declaration that is not a valid file path, because it holds a null
+character or, on Windows, is longer than the platform allows, is recorded as a
+declaration problem, and the search goes on. Every candidate is read, also
+after the manifest is found, so each such manifest in the folder is recorded,
+in ordinal order of file name. The reason is 'it is longer than the platform
+allows' or the underlying message, as Resolve-CompleterSetEntry words an
+entry's Path.
+
 Nothing is imported or run: Import-CompleterDataFile reads each candidate as
 data only, under the set file limit, so a .psd1 larger than 128 KB is not
 parsed and does not declare the set.
@@ -4397,8 +4461,11 @@ The record Resolve-CompleterSetModule returned for the set.
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns Name, ManifestPath, ModuleBase (the folder that holds the manifest),
-and Manifest (the manifest's data), or nothing when no manifest declares the
-set.
+Manifest (the manifest's data), and DeclarationProblems, one record with
+ManifestPath and Reason per manifest whose declaration is not a valid file
+path, empty with Module. When no manifest declares the set but a declaration
+problem was recorded, Name, ManifestPath, ModuleBase, and Manifest are null.
+Returns nothing when no manifest declares the set and none was recorded.
 #>
 function Get-CompleterSetPackage
 {
@@ -4416,10 +4483,11 @@ function Get-CompleterSetPackage
     if ($null -ne $Module)
     {
         return [pscustomobject] [ordered] @{
-            Name         = $Module.Name
-            ManifestPath = $Module.ManifestPath
-            ModuleBase   = $Module.ModuleBase
-            Manifest     = $Module.Manifest
+            Name                = $Module.Name
+            ManifestPath        = $Module.ManifestPath
+            ModuleBase          = $Module.ModuleBase
+            Manifest            = $Module.Manifest
+            DeclarationProblems = @()
         }
     }
 
@@ -4450,6 +4518,8 @@ function Get-CompleterSetPackage
 
     [System.Array]::Sort($fileNames, [System.StringComparer]::Ordinal)
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $package = $null
+    $declarationProblems = [System.Collections.Generic.List[psobject]]::new()
 
     foreach ($fileName in $fileNames)
     {
@@ -4473,32 +4543,84 @@ function Get-CompleterSetPackage
         $privateData = $manifest['PrivateData']
         $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
 
-        if ($declaredSet -isnot [string] -or [string]::IsNullOrWhiteSpace($declaredSet) -or [System.IO.Path]::IsPathRooted($declaredSet))
+        if ($declaredSet -isnot [string] -or [string]::IsNullOrWhiteSpace($declaredSet))
         {
             continue
         }
 
-        $declaredSetPath = [System.IO.Path]::GetFullPath($declaredSet.Replace('\', '/'), $moduleBase)
-
-        if ([string]::Equals($declaredSetPath, $SetPath, $pathComparison))
+        # A bad declaration in one manifest must not hide the set's own manifest
+        # or another bad one, so it is recorded and the search goes on.
+        try
         {
-            return [pscustomobject] [ordered] @{
-                Name         = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
-                ManifestPath = $manifestPath
-                ModuleBase   = $moduleBase
-                Manifest     = $manifest
+            $declaredSetPath = [System.IO.Path]::GetFullPath($declaredSet.Replace('\', '/'), $moduleBase)
+        }
+        catch [System.IO.PathTooLongException]
+        {
+            # Its message repeats the whole path, so the reason is worded as the
+            # entry rule words it.
+            $declarationProblems.Add([pscustomobject] [ordered] @{ ManifestPath = $manifestPath; Reason = 'it is longer than the platform allows' })
+            continue
+        }
+        catch [System.ArgumentException]
+        {
+            $declarationProblems.Add([pscustomobject] [ordered] @{ ManifestPath = $manifestPath; Reason = $_.Exception.GetBaseException().Message })
+            continue
+        }
+
+        # A rooted declaration that is a valid path does not declare a set in the
+        # package, so it is checked after the bad ones are recorded.
+        if ([System.IO.Path]::IsPathRooted($declaredSet))
+        {
+            continue
+        }
+
+        if ($null -eq $package -and [string]::Equals($declaredSetPath, $SetPath, $pathComparison))
+        {
+            $package = [pscustomobject] [ordered] @{
+                Name                = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                ManifestPath        = $manifestPath
+                ModuleBase          = $moduleBase
+                Manifest            = $manifest
+                DeclarationProblems = $null
             }
         }
     }
+
+    if ($null -eq $package)
+    {
+        if ($declarationProblems.Count -eq 0)
+        {
+            return
+        }
+
+        # No manifest declares the set, so only the bad declarations are reported.
+        $package = [pscustomobject] [ordered] @{
+            Name                = $null
+            ManifestPath        = $null
+            ModuleBase          = $null
+            Manifest            = $null
+            DeclarationProblems = $null
+        }
+    }
+
+    $package.DeclarationProblems = $declarationProblems.ToArray()
+    $package
 }
 <#
 .SYNOPSIS
 Checks a package set against the package layout and returns its PackageLayout findings.
 
 .DESCRIPTION
-Runs the four package-layout checks for a completer set whose module
-manifest Get-CompleterSetPackage found, in this order:
+Reports the declaration problems Get-CompleterSetPackage recorded, then runs
+the four package-layout checks for a completer set whose module manifest it
+found, in this order:
 
+- Error, per declaration problem in the order recorded: a manifest in the
+  folder above the set declares a completer set path that is not a valid file
+  path. The message names the manifest by its full path, made printable by
+  ConvertTo-CompleterPrintableText, and gives the reason. The finding points
+  at line 1, column 1 of the set. These rows are written even when no
+  manifest declares the set, and then they are the only rows.
 - Error, per entry in set order: the entry's Path is fully qualified, or it
   resolves outside the module folder. The folder is compared with a trailing
   separator, case-insensitively on Windows and macOS and case-sensitively on
@@ -4556,13 +4678,26 @@ function Get-CompleterSetPackageFinding
     )
 
     $setPath = $SetDefinition.Path
+    # The parse of the whole set starts at line 1, column 1.
+    $extentOne = $SetDefinition.Ast.Extent
+
+    foreach ($declarationProblem in $Package.DeclarationProblems)
+    {
+        $printableManifestPath = ConvertTo-CompleterPrintableText -Value $declarationProblem.ManifestPath
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The module manifest '$printableManifestPath' declares a completer set path that is not a valid file path: $(([string] $declarationProblem.Reason).TrimEnd('.'))." -Hint "Make PrivateData.CompleterSet in '$printableManifestPath' the path of its set file relative to the manifest's folder, such as 'completers/completers.psd1'."
+    }
+
+    # Without a manifest that declares the set there is no package to check.
+    if ($null -eq $Package.ManifestPath)
+    {
+        return
+    }
+
     $moduleBase = $Package.ModuleBase
     $manifestPath = $Package.ManifestPath
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
     $moduleBasePrefix = $moduleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
-    # The parse of the whole set starts at line 1, column 1.
-    $extentOne = $SetDefinition.Ast.Extent
 
     foreach ($setEntry in $Entry)
     {
@@ -7537,8 +7672,12 @@ Manifests are read by Import-CompleterDataFile, as data only, so nothing in
 the package runs, and under the set file limit, so a manifest larger than
 128 KB is refused before it is parsed. PrivateData.CompleterSet must name
 a .psd1 file in a folder directly below ModuleBase, with / or \ as the
-separator, and the file must exist. A failure throws the bare reason; the
-caller adds its own prefix.
+separator, and the file must exist. A declaration that is not a valid file
+path, because it holds a null character or is longer than the platform allows,
+fails with the invalid-declaration text, the value shown through
+ConvertTo-CompleterPrintableText; the error for a set file that does not exist
+shows its path the same way. A failure throws the bare reason; the caller adds
+its own prefix.
 
 .PARAMETER Name
 The module name, taken literally.
@@ -7727,14 +7866,23 @@ function Resolve-CompleterSetModule
 
     if (-not $isValidDeclaration)
     {
-        throw "The module '$moduleName' $version declares the completer set '$declaredSet', which must be a .psd1 file in a folder directly below '$moduleBase'."
+        throw "The module '$moduleName' $version declares the completer set '$(ConvertTo-CompleterPrintableText -Value ([string] $declaredSet))', which must be a .psd1 file in a folder directly below '$moduleBase'."
     }
 
-    $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+    try
+    {
+        $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+    }
+    catch [System.IO.PathTooLongException], [System.ArgumentException]
+    {
+        # A null character, or a path longer than the platform allows, names no
+        # file. The value can hold control characters, so it is made printable.
+        throw "The module '$moduleName' $version declares the completer set '$(ConvertTo-CompleterPrintableText -Value $declaredSet)', which must be a .psd1 file in a folder directly below '$moduleBase'."
+    }
 
     if (-not [System.IO.File]::Exists($setPath))
     {
-        throw "The completer set '$setPath' declared by the module '$moduleName' $version does not exist."
+        throw "The completer set '$(ConvertTo-CompleterPrintableText -Value $setPath)' declared by the module '$moduleName' $version does not exist."
     }
 
     [pscustomobject] [ordered] @{

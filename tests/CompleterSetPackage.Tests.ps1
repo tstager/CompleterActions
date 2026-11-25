@@ -232,6 +232,54 @@ BeforeAll {
         @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.Key -like 'cafix*' })
     }
 
+    # A PrivateData.CompleterSet value that is not a valid file path: one with a
+    # null character, and one 40000 characters long, which only Windows refuses,
+    # each relative or rooted. Value is the declaration, Literal the text that
+    # writes it into a manifest.
+    function Get-TestBadDeclaration
+    {
+        param(
+            [Parameter(Mandatory)]
+            [ValidateSet('NullCharacter', 'OverLong', 'RootedNullCharacter', 'RootedOverLong')]
+            [string] $Kind
+        )
+
+        switch ($Kind)
+        {
+            'NullCharacter' { return [pscustomobject] @{ Value = "completers/com`0pleters.psd1"; Literal = '"completers/com`0pleters.psd1"' } }
+            'RootedNullCharacter' { return [pscustomobject] @{ Value = "/completers/com`0pleters.psd1"; Literal = '"/completers/com`0pleters.psd1"' } }
+        }
+
+        $prefix = if ($Kind -eq 'RootedOverLong') { '/completers/' } else { 'completers/' }
+        $value = $prefix + ('a' * (40000 - $prefix.Length - '.psd1'.Length)) + '.psd1'
+        [pscustomobject] @{ Value = $value; Literal = "'$value'" }
+    }
+
+    # Replaces the set declaration New-TestCompleterSetPackage wrote into a manifest.
+    function Set-TestManifestDeclaration
+    {
+        [CmdletBinding(SupportsShouldProcess)]
+        param(
+            [Parameter(Mandatory)]
+            [string] $ManifestPath,
+
+            [Parameter(Mandatory)]
+            [string] $Literal
+        )
+
+        $manifestText = Get-Content -LiteralPath $ManifestPath -Raw
+
+        if (-not $manifestText.Contains("CompleterSet = 'completers/completers.psd1'"))
+        {
+            throw "The manifest '$ManifestPath' does not declare 'completers/completers.psd1'."
+        }
+
+        if ($PSCmdlet.ShouldProcess($ManifestPath, 'Replace the set declaration'))
+        {
+            Set-Content -LiteralPath $ManifestPath -Value $manifestText.Replace("CompleterSet = 'completers/completers.psd1'", "CompleterSet = $Literal") -Encoding utf8 -NoNewline
+        }
+    }
+
     $script:ModuleManifestPath = [System.IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildPath '../CompleterActions.psd1'))
     $script:PackageFixtureRoot = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/CompleterSetPackage'
     $script:PackageCleanupTargets = @(
@@ -475,6 +523,116 @@ Describe 'Import-CompleterSet -Name' {
         }
 
         $thrown.Exception.Message | Should -BeExactly "Failed to import completer set. $expected"
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'fails Import-CompleterSet -Name and Test-CompleterSet -Name with a printable declaration error for a CompleterSet <Case>' -TestCases @(
+        @{ Case = 'with a null character'; Kind = 'NullCharacter' }
+        @{ Case = '40000 characters long'; Kind = 'OverLong' }
+        @{ Case = 'with a null character two folders deep'; Kind = 'NullCharacterNested' }
+        @{ Case = '40000 characters long two folders deep'; Kind = 'OverLongNested' }
+        @{ Case = '40000 characters long directly in ModuleBase'; Kind = 'OverLongUnfoldered' }
+    ) {
+        param($Case, $Kind)
+
+        $null = $Case
+
+        if ($Kind -eq 'OverLong' -and -not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'an over-long path raises no exception on this platform'
+            return
+        }
+
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $declaration = switch ($Kind)
+        {
+            'NullCharacterNested' { [pscustomobject] @{ Value = "a/b/com`0pleters.psd1"; Literal = '"a/b/com`0pleters.psd1"' } }
+            'OverLongNested' { $value = 'a/' + ('b' * (40000 - 'a/'.Length - '/c.psd1'.Length)) + '/c.psd1'; [pscustomobject] @{ Value = $value; Literal = "'$value'" } }
+            'OverLongUnfoldered' { $value = ('a' * (40000 - '.psd1'.Length)) + '.psd1'; [pscustomobject] @{ Value = $value; Literal = "'$value'" } }
+            default { Get-TestBadDeclaration -Kind $Kind }
+        }
+        Set-TestManifestDeclaration -ManifestPath (Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psd1') -Literal $declaration.Literal
+        $printable = switch ($Kind)
+        {
+            'NullCharacter' { "completers/com$([char] 0xFFFD)pleters.psd1" }
+            'NullCharacterNested' { "a/b/com$([char] 0xFFFD)pleters.psd1" }
+            default { $declaration.Value.Substring(0, 256) + '...' }
+        }
+        $expected = "The module 'CaFixtureSet' 1.0.0 declares the completer set '$printable', which must be a .psd1 file in a folder directly below '$moduleBase'."
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $importThrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+            $testThrown = { Test-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $importThrown.Exception.Message | Should -BeExactly "Failed to import completer set. $expected"
+        $testThrown.Exception.Message | Should -BeExactly "Failed to test completer set. $expected"
+
+        foreach ($message in $importThrown.Exception.Message, $testThrown.Exception.Message)
+        {
+            @($message.ToCharArray() | Where-Object { [char]::IsControl($_) }).Count | Should -Be 0
+            $message.Length | Should -BeLessThan 1000
+        }
+
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'fails -Name with a printable does-not-exist text for a 40000-character CompleterSet where an over-long path raises no exception' -Skip:$IsWindows {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $declaration = Get-TestBadDeclaration -Kind 'OverLong'
+        Set-TestManifestDeclaration -ManifestPath (Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psd1') -Literal $declaration.Literal
+        $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, 'completers', $declaration.Value.Substring('completers/'.Length)))
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $importThrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+            $testThrown = { Test-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $expected = "The completer set '$($setPath.Substring(0, 256))...' declared by the module 'CaFixtureSet' 1.0.0 does not exist."
+        $importThrown.Exception.Message | Should -BeExactly "Failed to import completer set. $expected"
+        $testThrown.Exception.Message | Should -BeExactly "Failed to test completer set. $expected"
+        $importThrown.Exception.Message.Length | Should -BeLessThan 1000
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'fails -Name with a printable does-not-exist text for a CompleterSet with a tab that names a missing file' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        Set-TestManifestDeclaration -ManifestPath (Join-Path -Path $moduleBase -ChildPath 'CaFixtureSet.psd1') -Literal '"completers/a`tb.psd1"'
+        $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, 'completers', "a`tb.psd1"))
+        $setPath.Length | Should -BeLessOrEqual 256
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $importThrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+            $testThrown = { Test-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $expected = "The completer set '$($setPath.Replace("`t", [string] [char] 0xFFFD))' declared by the module 'CaFixtureSet' 1.0.0 does not exist."
+        $importThrown.Exception.Message | Should -BeExactly "Failed to import completer set. $expected"
+        $testThrown.Exception.Message | Should -BeExactly "Failed to test completer set. $expected"
         Get-TestPackageRegistration | Should -BeNullOrEmpty
     }
 
@@ -1179,6 +1337,56 @@ Describe 'Test-CompleterSet package checks' {
             "$SetPath|1|1|Warning|PackageLayout|The module manifest '$ManifestPath' does not require CompleterActions 2.2.0 or later, so installing the package does not install Import-CompleterSet -Name.|Add @{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' } to RequiredModules in '$ManifestPath'."
         }
 
+        function Get-TestDeclarationFinding
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $SetPath,
+
+                [Parameter(Mandatory)]
+                [string] $ManifestPath,
+
+                [Parameter(Mandatory)]
+                [ValidateSet('NullCharacter', 'OverLong', 'RootedNullCharacter', 'RootedOverLong')]
+                [string] $Kind
+            )
+
+            # The null-character reason is the platform's own message, as the entry rule gives it.
+            $reason = if ($Kind -like '*OverLong')
+            {
+                'it is longer than the platform allows'
+            }
+            else
+            {
+                try
+                {
+                    $null = [System.IO.Path]::GetFullPath("completers/com`0pleters.psd1", [System.IO.Path]::GetDirectoryName($ManifestPath))
+                    throw 'GetFullPath accepted a null character.'
+                }
+                catch [System.ArgumentException]
+                {
+                    $_.Exception.GetBaseException().Message.TrimEnd('.')
+                }
+            }
+
+            "$SetPath|1|1|Error|PackageLayout|The module manifest '$ManifestPath' declares a completer set path that is not a valid file path: $reason.|Make PrivateData.CompleterSet in '$ManifestPath' the path of its set file relative to the manifest's folder, such as 'completers/completers.psd1'."
+        }
+
+        function Write-TestBadManifest
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $ManifestPath,
+
+                [Parameter(Mandatory)]
+                [ValidateSet('NullCharacter', 'OverLong', 'RootedNullCharacter', 'RootedOverLong')]
+                [string] $Kind
+            )
+
+            Set-Content -LiteralPath $ManifestPath -Value "@{ ModuleVersion = '1.0.0'; PrivateData = @{ CompleterSet = $((Get-TestBadDeclaration -Kind $Kind).Literal) } }" -Encoding utf8
+            $ManifestPath
+        }
+
         function Set-TestQualifiedEntryPath
         {
             [CmdletBinding(SupportsShouldProcess)]
@@ -1488,6 +1696,136 @@ finally
 
         @($errors.Construct) | Should -Be @('InvalidEntry')
         $errors[0].Message | Should -BeLike '*: The Path is not a valid file path: *'
+    }
+
+    It 'reports one PackageLayout error for its manifest whose CompleterSet <Case>, and the set''s other findings' -TestCases @(
+        @{ Case = 'has a null character'; Kind = 'NullCharacter' }
+        @{ Case = 'is 40000 characters long'; Kind = 'OverLong' }
+        @{ Case = 'is rooted and has a null character'; Kind = 'RootedNullCharacter' }
+        @{ Case = 'is rooted and 40000 characters long'; Kind = 'RootedOverLong' }
+    ) {
+        param($Case, $Kind)
+
+        $null = $Case
+
+        if ($Kind -like '*OverLong' -and -not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'an over-long path raises no exception on this platform'
+            return
+        }
+
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        Add-Content -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'beta') -Value '# changed after the set was written' -Encoding utf8
+        Copy-Item -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $moduleBase -Fixture 'gamma') -Destination ([System.IO.Path]::Combine($moduleBase, 'completers', 'cafixextra_completer.ps1'))
+        Set-TestManifestDeclaration -ManifestPath $manifestPath -Literal (Get-TestBadDeclaration -Kind $Kind).Literal
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath)
+
+        @($findings | ForEach-Object { '{0} {1}' -f $_.Construct, $_.Severity }) | Should -Be @(
+            'HashMismatch Warning'
+            'PackageLayout Error'
+            'UnlistedScript Warning'
+        )
+        $findings[0].Message | Should -Match '^Entry 2 '
+        $findings[1] | Format-TestFinding | Should -BeExactly (Get-TestDeclarationFinding -SetPath $setPath -ManifestPath $manifestPath -Kind $Kind)
+        $findings[2].Message | Should -Match 'cafixextra_completer\.ps1'
+    }
+
+    It 'reports a PackageLayout error for each of two manifests whose CompleterSet <Case> beside the real one, and the real package''s rows' -TestCases @(
+        @{ Case = 'has a null character'; Kind = 'NullCharacter' }
+        @{ Case = 'is 40000 characters long'; Kind = 'OverLong' }
+    ) {
+        param($Case, $Kind)
+
+        $null = $Case
+
+        if ($Kind -eq 'OverLong' -and -not $IsWindows)
+        {
+            Set-ItResult -Skipped -Because 'an over-long path raises no exception on this platform'
+            return
+        }
+
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0' -RequiredModules @()
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $manifestPath = [System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')
+        $qualifiedPath = Set-TestQualifiedEntryPath -ModuleBase $moduleBase -Fixture 'beta'
+        # One sorts before the real manifest and one after it, so the search reads past both.
+        $badPaths = @(
+            Write-TestBadManifest -ManifestPath ([System.IO.Path]::Combine($moduleBase, 'AAA.psd1')) -Kind $Kind
+            Write-TestBadManifest -ManifestPath ([System.IO.Path]::Combine($moduleBase, 'zzz.psd1')) -Kind $Kind
+        )
+
+        $findings = @(Test-CompleterSet -LiteralPath $setPath | Format-TestFinding)
+
+        $findings | Should -Be @(
+            Get-TestDeclarationFinding -SetPath $setPath -ManifestPath $badPaths[0] -Kind $Kind
+            Get-TestDeclarationFinding -SetPath $setPath -ManifestPath $badPaths[1] -Kind $Kind
+            Get-TestOutsideFinding -SetPath $setPath -Index 2 -DeclaredPath $qualifiedPath
+            Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'AAA.psd1' -ManifestName 'CaFixtureSet.psd1'
+            Get-TestExtraManifestFinding -SetPath $setPath -ModuleBase $moduleBase -FileName 'zzz.psd1' -ManifestName 'CaFixtureSet.psd1'
+            Get-TestRequiredModulesFinding -SetPath $setPath -ManifestPath $manifestPath
+        )
+    }
+
+    It 'shows a manifest path over 256 characters cut to 256 and ... in its PackageLayout error' {
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $badPath = Write-TestBadManifest -ManifestPath ([System.IO.Path]::Combine($moduleBase, ('A' * 240) + '.psd1')) -Kind 'NullCharacter'
+        $badPath.Length | Should -BeGreaterThan 256
+
+        $declarationFindings = @(Test-CompleterSet -LiteralPath $setPath | Where-Object -Property Message -Like -Value '*declares a completer set path that is not a valid file path*' | Format-TestFinding)
+
+        $expected = (Get-TestDeclarationFinding -SetPath $setPath -ManifestPath $badPath -Kind 'NullCharacter').Replace("'$badPath'", "'$($badPath.Substring(0, 256))...'")
+        $declarationFindings | Should -Be @($expected)
+    }
+
+    It 'imports through -LiteralPath beside manifests whose CompleterSet <Case> as without them' -TestCases @(
+        @{ Case = 'has a null character'; Kind = 'NullCharacter' }
+        @{ Case = 'is 40000 characters long'; Kind = 'OverLong' }
+    ) {
+        param($Case, $Kind)
+
+        $null = $Case
+        $moduleBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '1.0.0'
+        $setPath = [System.IO.Path]::Combine($moduleBase, 'completers', 'completers.psd1')
+        $describe = { param($Record) '{0}|{1}|{2}' -f $Record.Key, $Record.ScriptPath, $Record.State }
+
+        try
+        {
+            $expected = @(Import-CompleterSet -LiteralPath $setPath | ForEach-Object { & $describe $_ })
+            Get-TestPackageRegistration | Unregister-Completer -Confirm:$false
+            Set-TestManifestDeclaration -ManifestPath ([System.IO.Path]::Combine($moduleBase, 'CaFixtureSet.psd1')) -Literal (Get-TestBadDeclaration -Kind $Kind).Literal
+            $null = Write-TestBadManifest -ManifestPath ([System.IO.Path]::Combine($moduleBase, 'AAA.psd1')) -Kind $Kind
+
+            $imported = @(Import-CompleterSet -LiteralPath $setPath -ErrorVariable importErrors -ErrorAction Continue | ForEach-Object { & $describe $_ })
+        }
+        finally
+        {
+            Get-TestPackageRegistration | Unregister-Completer -Confirm:$false
+        }
+
+        $expected.Count | Should -Be 6
+        $imported | Should -Be $expected
+        $importErrors | Should -BeNullOrEmpty
+    }
+
+    It 'makes a value printable: <Case>' -TestCases @(
+        @{ Case = 'control characters become U+FFFD'; Value = "a`0b`tc`r`nd$([char] 0x7F)e$([char] 0x85)f"; Expected = "a$([char] 0xFFFD)b$([char] 0xFFFD)c$([char] 0xFFFD)$([char] 0xFFFD)d$([char] 0xFFFD)e$([char] 0xFFFD)f" }
+        @{ Case = 'printable text is kept'; Value = "completers/$([char] 0xE9)t$([char] 0xE9) set.psd1"; Expected = "completers/$([char] 0xE9)t$([char] 0xE9) set.psd1" }
+        @{ Case = 'an empty value is kept'; Value = ''; Expected = '' }
+        @{ Case = '256 characters are kept'; Value = 'x' * 256; Expected = 'x' * 256 }
+        @{ Case = '257 characters are cut to 256 and ...'; Value = 'x' * 257; Expected = ('x' * 256) + '...' }
+        @{ Case = 'a cut keeps a surrogate pair whole'; Value = ('x' * 255) + [char]::ConvertFromUtf32(0x1F600) + 'y'; Expected = ('x' * 255) + '...' }
+        @{ Case = 'a control character past the cut is dropped with it'; Value = ('x' * 256) + "`0"; Expected = ('x' * 256) + '...' }
+    ) {
+        param($Case, $Value, $Expected)
+
+        $null = $Case
+        $printable = & (Get-Module -Name 'CompleterActions') { param($Value) ConvertTo-CompleterPrintableText -Value $Value } $Value
+
+        $printable | Should -BeExactly $Expected
     }
 
     It 'fails with Failed to test completer set for <Case>' -TestCases @(

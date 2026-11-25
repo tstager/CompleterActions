@@ -16,6 +16,14 @@ data does not declare the set, and a folder that cannot be listed holds no
 manifest. Paths are compared case-insensitively on Windows and macOS and
 case-sensitively on Linux.
 
+A declaration that is not a valid file path, because it holds a null
+character or, on Windows, is longer than the platform allows, is recorded as a
+declaration problem, and the search goes on. Every candidate is read, also
+after the manifest is found, so each such manifest in the folder is recorded,
+in ordinal order of file name. The reason is 'it is longer than the platform
+allows' or the underlying message, as Resolve-CompleterSetEntry words an
+entry's Path.
+
 Nothing is imported or run: Import-CompleterDataFile reads each candidate as
 data only, under the set file limit, so a .psd1 larger than 128 KB is not
 parsed and does not declare the set.
@@ -29,8 +37,11 @@ The record Resolve-CompleterSetModule returned for the set.
 .OUTPUTS
 System.Management.Automation.PSCustomObject
 Returns Name, ManifestPath, ModuleBase (the folder that holds the manifest),
-and Manifest (the manifest's data), or nothing when no manifest declares the
-set.
+Manifest (the manifest's data), and DeclarationProblems, one record with
+ManifestPath and Reason per manifest whose declaration is not a valid file
+path, empty with Module. When no manifest declares the set but a declaration
+problem was recorded, Name, ManifestPath, ModuleBase, and Manifest are null.
+Returns nothing when no manifest declares the set and none was recorded.
 #>
 function Get-CompleterSetPackage
 {
@@ -48,10 +59,11 @@ function Get-CompleterSetPackage
     if ($null -ne $Module)
     {
         return [pscustomobject] [ordered] @{
-            Name         = $Module.Name
-            ManifestPath = $Module.ManifestPath
-            ModuleBase   = $Module.ModuleBase
-            Manifest     = $Module.Manifest
+            Name                = $Module.Name
+            ManifestPath        = $Module.ManifestPath
+            ModuleBase          = $Module.ModuleBase
+            Manifest            = $Module.Manifest
+            DeclarationProblems = @()
         }
     }
 
@@ -82,6 +94,8 @@ function Get-CompleterSetPackage
 
     [System.Array]::Sort($fileNames, [System.StringComparer]::Ordinal)
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
+    $package = $null
+    $declarationProblems = [System.Collections.Generic.List[psobject]]::new()
 
     foreach ($fileName in $fileNames)
     {
@@ -105,21 +119,66 @@ function Get-CompleterSetPackage
         $privateData = $manifest['PrivateData']
         $declaredSet = if ($privateData -is [System.Collections.IDictionary]) { $privateData['CompleterSet'] } else { $null }
 
-        if ($declaredSet -isnot [string] -or [string]::IsNullOrWhiteSpace($declaredSet) -or [System.IO.Path]::IsPathRooted($declaredSet))
+        if ($declaredSet -isnot [string] -or [string]::IsNullOrWhiteSpace($declaredSet))
         {
             continue
         }
 
-        $declaredSetPath = [System.IO.Path]::GetFullPath($declaredSet.Replace('\', '/'), $moduleBase)
-
-        if ([string]::Equals($declaredSetPath, $SetPath, $pathComparison))
+        # A bad declaration in one manifest must not hide the set's own manifest
+        # or another bad one, so it is recorded and the search goes on.
+        try
         {
-            return [pscustomobject] [ordered] @{
-                Name         = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
-                ManifestPath = $manifestPath
-                ModuleBase   = $moduleBase
-                Manifest     = $manifest
+            $declaredSetPath = [System.IO.Path]::GetFullPath($declaredSet.Replace('\', '/'), $moduleBase)
+        }
+        catch [System.IO.PathTooLongException]
+        {
+            # Its message repeats the whole path, so the reason is worded as the
+            # entry rule words it.
+            $declarationProblems.Add([pscustomobject] [ordered] @{ ManifestPath = $manifestPath; Reason = 'it is longer than the platform allows' })
+            continue
+        }
+        catch [System.ArgumentException]
+        {
+            $declarationProblems.Add([pscustomobject] [ordered] @{ ManifestPath = $manifestPath; Reason = $_.Exception.GetBaseException().Message })
+            continue
+        }
+
+        # A rooted declaration that is a valid path does not declare a set in the
+        # package, so it is checked after the bad ones are recorded.
+        if ([System.IO.Path]::IsPathRooted($declaredSet))
+        {
+            continue
+        }
+
+        if ($null -eq $package -and [string]::Equals($declaredSetPath, $SetPath, $pathComparison))
+        {
+            $package = [pscustomobject] [ordered] @{
+                Name                = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
+                ManifestPath        = $manifestPath
+                ModuleBase          = $moduleBase
+                Manifest            = $manifest
+                DeclarationProblems = $null
             }
         }
     }
+
+    if ($null -eq $package)
+    {
+        if ($declarationProblems.Count -eq 0)
+        {
+            return
+        }
+
+        # No manifest declares the set, so only the bad declarations are reported.
+        $package = [pscustomobject] [ordered] @{
+            Name                = $null
+            ManifestPath        = $null
+            ModuleBase          = $null
+            Manifest            = $null
+            DeclarationProblems = $null
+        }
+    }
+
+    $package.DeclarationProblems = $declarationProblems.ToArray()
+    $package
 }

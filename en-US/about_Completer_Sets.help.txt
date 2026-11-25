@@ -493,8 +493,11 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
       `@{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' }` to
       `RequiredModules`.
 
-    A set that no manifest declares gets no `PackageLayout` finding, and a
-    `RootModule` in the manifest is not one.
+    A `.psd1` in the module folder whose `PrivateData.CompleterSet` is not a
+    valid file path gets one `PackageLayout` Error at line 1 of the set,
+    whether or not a manifest declares the set. Apart from those, a set that
+    no manifest declares gets no `PackageLayout` finding, and a `RootModule`
+    in the manifest is not one.
 
     A set that matches its folder returns nothing: no finding, no warning,
     no error, and `$?` is `$true`. That makes the command a gate that

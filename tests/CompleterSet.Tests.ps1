@@ -446,6 +446,131 @@ Describe 'Completer sets' {
             $data.Entries[0].Hash | Should -BeExactly $expectedHash
         }
 
+        It 'refuses the output path <OutputPath> with its text and writes nothing while the PowerShell location and the process working directory differ' -TestCases @(
+            @{ OutputPath = 'FileSystem::sub/out.psd1'; Kind = 'ProviderQualified' }
+            @{ OutputPath = 'Variable:\x.psd1'; Kind = 'OtherProvider' }
+        ) {
+            param($OutputPath, $Kind)
+
+            $expected = if ($Kind -eq 'ProviderQualified')
+            {
+                "The output path '$OutputPath' is provider-qualified but not fully qualified, so PowerShell would resolve it against the process working directory rather than the PowerShell location. Drop the provider qualifier or give a fully qualified path."
+            }
+            else
+            {
+                $provider = $null
+                $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputPath, [ref] $provider, [ref] $null)
+                "The output path '$OutputPath' resolves to '$resolvedPath' on the Variable provider, not to a file system path."
+            }
+
+            $location = Join-Path -Path $script:SetRoot -ChildPath 'location'
+            $workingDirectory = Join-Path -Path $script:SetRoot -ChildPath 'working'
+            New-Item -Path (Join-Path -Path $location -ChildPath 'sub'), (Join-Path -Path $workingDirectory -ChildPath 'sub') -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $location -ChildPath 'sub' -AdditionalChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $records = @(Import-CompleterScript -LiteralPath $scriptPath)
+            $savedWorkingDirectory = [System.Environment]::CurrentDirectory
+
+            Push-Location -LiteralPath $location
+
+            try
+            {
+                [System.Environment]::CurrentDirectory = $workingDirectory
+                $thrown = { $records | Export-CompleterSet -Path $OutputPath } | Should -Throw -PassThru
+            }
+            finally
+            {
+                [System.Environment]::CurrentDirectory = $savedWorkingDirectory
+                Pop-Location
+            }
+
+            $thrown.Exception.Message | Should -BeExactly $expected
+            @(Get-ChildItem -LiteralPath $script:SetRoot -Filter '*.psd1' -File -Recurse) | Should -BeNullOrEmpty
+            Test-Path -LiteralPath 'Variable:\x.psd1' | Should -BeFalse
+        }
+
+        It 'refuses an output path on the Registry provider with its text, writes nothing, and leaves the registry key unchanged' {
+            if (-not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'the Registry provider exists only on Windows'
+                return
+            }
+
+            $outputPath = 'HKCU:\Software\x.psd1'
+            $readRegistry = {
+                $key = Get-Item -LiteralPath 'HKCU:\Software'
+
+                try
+                {
+                    [pscustomobject] @{
+                        SubKeys = @($key.GetSubKeyNames() | Sort-Object) -join '|'
+                        Values  = @($key.GetValueNames() | Sort-Object) -join '|'
+                        Target  = Test-Path -LiteralPath $outputPath
+                    }
+                }
+                finally
+                {
+                    $key.Dispose()
+                }
+            }
+            $records = @(Import-CompleterScript -LiteralPath $script:NativeFixturePath)
+
+            $before = & $readRegistry
+            $thrown = { $records | Export-CompleterSet -Path $outputPath } | Should -Throw -PassThru
+            $after = & $readRegistry
+
+            $thrown.Exception.Message | Should -BeExactly "The output path '$outputPath' resolves to 'HKEY_CURRENT_USER\Software\x.psd1' on the Registry provider, not to a file system path."
+            $after.Target | Should -Be $before.Target
+            $after.SubKeys | Should -BeExactly $before.SubKeys
+            $after.Values | Should -BeExactly $before.Values
+        }
+
+        It 'writes <Case> under the PowerShell location with entry paths against it while the process working directory differs' -TestCases @(
+            @{ Case = 'out.psd1'; OutputPath = 'out.psd1'; WrittenPath = 'out.psd1'; EntryPath = 'sub/Native.ps1' }
+            @{ Case = './sub/out.psd1'; OutputPath = './sub/out.psd1'; WrittenPath = 'sub/out.psd1'; EntryPath = 'Native.ps1' }
+            @{ Case = 'a fully qualified FileSystem:: path'; OutputPath = '<qualified>'; WrittenPath = 'sub/out.psd1'; EntryPath = 'Native.ps1' }
+        ) {
+            param($Case, $OutputPath, $WrittenPath, $EntryPath)
+
+            $null = $Case
+            $location = Join-Path -Path $script:SetRoot -ChildPath 'location'
+            $workingDirectory = Join-Path -Path $script:SetRoot -ChildPath 'working'
+            New-Item -Path (Join-Path -Path $location -ChildPath 'sub'), (Join-Path -Path $workingDirectory -ChildPath 'sub') -ItemType Directory | Out-Null
+            $scriptPath = Join-Path -Path $location -ChildPath 'sub' -AdditionalChildPath 'Native.ps1'
+            Copy-Item -LiteralPath $script:NativeFixturePath -Destination $scriptPath
+            $records = @(Import-CompleterScript -LiteralPath $scriptPath)
+            $expectedPath = [System.IO.Path]::GetFullPath($WrittenPath, $location)
+
+            if ($OutputPath -eq '<qualified>')
+            {
+                $OutputPath = 'FileSystem::{0}' -f $expectedPath
+            }
+
+            # A fully qualified plain path takes no provider rule, so its file is the reference.
+            $records | Export-CompleterSet -Path $expectedPath
+            $reference = [System.IO.File]::ReadAllBytes($expectedPath)
+            Remove-Item -LiteralPath $expectedPath
+            $savedWorkingDirectory = [System.Environment]::CurrentDirectory
+
+            Push-Location -LiteralPath $location
+
+            try
+            {
+                [System.Environment]::CurrentDirectory = $workingDirectory
+                $written = $records | Export-CompleterSet -Path $OutputPath -PassThru
+            }
+            finally
+            {
+                [System.Environment]::CurrentDirectory = $savedWorkingDirectory
+                Pop-Location
+            }
+
+            $written.FullName | Should -Be $expectedPath
+            @(Get-ChildItem -LiteralPath $script:SetRoot -Filter '*.psd1' -File -Recurse | ForEach-Object FullName) | Should -Be @($expectedPath)
+            (Import-PowerShellDataFile -LiteralPath $expectedPath).Entries[0].Path | Should -BeExactly $EntryPath
+            [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($expectedPath)) | Should -BeExactly ([System.Convert]::ToBase64String($reference))
+        }
+
         It 'refuses a strict subset registration that Import-CompleterSet could not read back and writes nothing' {
             $subset = Register-Completer -LiteralPath $script:NativeFixturePath -Lazy -CommandName 'importfixture.exe' -Native -PassThru
             $subset.State | Should -Be 'Pending'

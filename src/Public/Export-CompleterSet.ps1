@@ -127,7 +127,24 @@ function Export-CompleterSet
 
     begin
     {
-        $outputPath = $PSCmdlet.GetUnresolvedProviderPathFromPSPath($Path)
+        # The output path follows the two rules of a script path in the records.
+        # The engine hands the part after a provider qualifier to the provider
+        # unchanged, so a relative one would be written under the PowerShell
+        # location while every entry Path is computed against the process working
+        # directory.
+        $provider = $null
+        $outputPath = $PSCmdlet.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path, [ref] $provider, [ref] $null)
+
+        if ($provider.ImplementingType -ne [Microsoft.PowerShell.Commands.FileSystemProvider])
+        {
+            throw "The output path '$Path' resolves to '$outputPath' on the $($provider.Name) provider, not to a file system path."
+        }
+
+        if ($PSCmdlet.SessionState.Path.IsProviderQualified($Path) -and
+            -not [System.IO.Path]::IsPathFullyQualified($Path.Substring($Path.IndexOf('::') + 2)))
+        {
+            throw "The output path '$Path' is provider-qualified but not fully qualified, so PowerShell would resolve it against the process working directory rather than the PowerShell location. Drop the provider qualifier or give a fully qualified path."
+        }
 
         if ([System.IO.Path]::GetExtension($outputPath) -ne '.psd1')
         {
