@@ -1,0 +1,8 @@
+/Create
+/Delete
+/Query
+/Change
+/Run
+/End
+/ShowSid
+/?

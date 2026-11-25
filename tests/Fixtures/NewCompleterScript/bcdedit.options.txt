@@ -1,0 +1,7 @@
+/copy
+/create
+/delete
+/mirror
+/bootems
+/ems
+/emssettings
