@@ -836,6 +836,9 @@ function New-CompleterScript
         [switch] $NoProbe,
 
         [Parameter()]
+        [switch] $Documentation,
+
+        [Parameter()]
         [switch] $Force,
 
         [Parameter()]
@@ -877,6 +880,18 @@ function New-CompleterScript
             {
                 throw "The file '$outputPath' already exists. Use -Force to overwrite it."
             }
+
+            $documentationPath = $null
+
+            if ($Documentation)
+            {
+                $documentationPath = [System.IO.Path]::ChangeExtension($outputPath, '.md')
+
+                if (-not $Force -and (Test-Path -LiteralPath $documentationPath))
+                {
+                    throw "The file '$documentationPath' already exists. Use -Force to overwrite it."
+                }
+            }
         }
         catch
         {
@@ -906,7 +921,8 @@ function New-CompleterScript
         {
             $primaryName = $CommandName[0]
             $application = $null
-            $action = 'Create completer script without running a program'
+            $actionSubject = if ($Documentation) { 'Create completer script and documentation' } else { 'Create completer script' }
+            $action = "$actionSubject without running a program"
 
             if ($PSCmdlet.ParameterSetName -eq 'Probe')
             {
@@ -923,15 +939,15 @@ function New-CompleterScript
 
                     if ($PSBoundParameters.ContainsKey('HelpArgument'))
                     {
-                        $action = "Create completer script, running '$($application.Path) $HelpArgument' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) $HelpArgument' to read its help"
                     }
                     elseif ($IsWindows)
                     {
-                        $action = "Create completer script, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
                     }
                     else
                     {
-                        $action = "Create completer script, running '$($application.Path) --help' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) --help' to read its help"
                     }
                 }
                 else
@@ -949,6 +965,7 @@ function New-CompleterScript
             $ConfirmPreference = 'None'
 
             $subcommands = @()
+            $options = @()
             $skeletonParameters = @{}
 
             switch ($PSCmdlet.ParameterSetName)
@@ -978,8 +995,9 @@ function New-CompleterScript
                     }
 
                     $subcommands = @($probe.Subcommands)
+                    $options = @($probe.Options)
 
-                    if ($subcommands.Count -gt 0)
+                    if ($subcommands.Count -gt 0 -or $options.Count -gt 0)
                     {
                         $skeletonParameters['SeedKind'] = 'Probe'
                         $skeletonParameters['ProbeArgument'] = $probe.Argument
@@ -988,16 +1006,36 @@ function New-CompleterScript
 
                 'HelpText'
                 {
-                    $subcommands = @(ConvertFrom-CompleterHelpText -Text (ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")))
+                    $cleanText = ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")
+                    $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+                    $options = @(ConvertFrom-CompleterHelpOption -Text $cleanText)
                     $skeletonParameters['SeedKind'] = 'HelpText'
                 }
             }
 
-            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands @skeletonParameters
+            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands -Option $options @skeletonParameters
 
-            $file = Save-CompleterScriptFile -Line $lines -LiteralPath $outputPath -ExpectedTarget $targetNames -Force:$Force -Verbose:$false
+            $saveParameters = @{
+                Line           = $lines
+                LiteralPath    = $outputPath
+                ExpectedTarget = $targetNames
+                Force          = $Force
+            }
 
-            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands."
+            if ($Documentation)
+            {
+                $saveParameters['DocumentationLine'] = @(Get-CompleterScriptDocumentation -Name $primaryName -ScriptName ([System.IO.Path]::GetFileName($outputPath)) -Target $targetNames)
+                $saveParameters['DocumentationLiteralPath'] = $documentationPath
+            }
+
+            $file = Save-CompleterScriptFile @saveParameters -Verbose:$false
+
+            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands, $($options.Count) options."
+
+            if ($Documentation)
+            {
+                Write-Verbose -Message "Wrote '$([System.IO.Path]::ChangeExtension($file.FullName, '.md'))'."
+            }
 
             if ($PassThru)
             {
@@ -3871,27 +3909,27 @@ function Get-CompleterAppExecutionAliasTarget
 }
 <#
 .SYNOPSIS
-Reads a subcommand table by running a program's help.
+Reads a subcommand table and an option table by running a program's help.
 
 .DESCRIPTION
-Decides what the help probe runs and turns each run's outcome into a table,
+Decides what the help probe runs and turns each run's outcome into tables,
 warnings, and verbose lines.
 
 An application whose CanRun is false runs nothing; its Warning is returned.
 Otherwise the program runs once with -HelpArgument, or with --help when
 -HelpArgument is not given. On Windows, without -HelpArgument, /? runs once
-more only when the --help run exited, yielded no subcommand, and its cleaned
-text has fewer than five non-blank lines; the /? result is then used. No /?
-runs after a timeout, a start failure, or held output, so one call returns at
-most one warning.
+more only when the --help run exited, yielded no subcommand and no option, and
+its cleaned text has fewer than five non-blank lines; the /? result is then
+used. No /? runs after a timeout, a start failure, or held output, so one call
+returns at most one warning.
 
 A run that timed out, whose output a descendant held, or that failed to start
-gives its warning and an empty table, and adds no probe verbose line, because
-the line's exit code, characters, and subcommands describe a run that exited.
-For a run that exited, the text is standard output, or standard error when
-standard output is empty or whitespace after decoding; the exit code decides
-nothing. The text is decoded, cleaned, and parsed with the help text helpers,
-and the run adds one probe verbose line.
+gives its warning and empty tables, and adds no probe verbose line, because
+the line's exit code, characters, subcommands, and options describe a run that
+exited. For a run that exited, the text is standard output, or standard error
+when standard output is empty or whitespace after decoding; the exit code
+decides nothing. The text is decoded, cleaned, and parsed with the help text
+helpers, and the run adds one probe verbose line.
 
 Warnings and verbose lines are returned as data; this helper writes no
 stream.
@@ -3909,7 +3947,8 @@ The deadline for each run, in seconds.
 
 .OUTPUTS
 CompleterActions.CompleterHelpSubcommandResult
-Returns a record with Subcommands (the parsed rows, in help order), Argument
+Returns a record with Subcommands and Options (the parsed rows of each table,
+in help order), Argument
 (the argument of the last run that exited, whose result was used, or null
 when no run exited; a /? run that does not exit leaves it at --help),
 Warnings, and VerboseLines.
@@ -3930,6 +3969,7 @@ function Get-CompleterHelpSubcommand
     )
 
     $subcommands = @()
+    $options = @()
     $argument = $null
     $warnings = [System.Collections.Generic.List[string]]::new()
     $verboseLines = [System.Collections.Generic.List[string]]::new()
@@ -3977,10 +4017,11 @@ function Get-CompleterHelpSubcommand
 
             $cleanText = ConvertTo-CompleterCleanHelpText -Text $text
             $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+            $options = @(ConvertFrom-CompleterHelpOption -Text $cleanText)
             $argument = $runArgument
-            $verboseLines.Add("Probed '$($Application.Path) $argument': exit $($result.ExitCode), $($text.Length) characters, $($subcommands.Count) subcommands, $($result.ElapsedMilliseconds) ms.")
+            $verboseLines.Add("Probed '$($Application.Path) $argument': exit $($result.ExitCode), $($text.Length) characters, $($subcommands.Count) subcommands, $($options.Count) options, $($result.ElapsedMilliseconds) ms.")
 
-            $tryFallback = $IsWindows -and -not $hasHelpArgument -and $argument -eq '--help' -and $subcommands.Count -eq 0
+            $tryFallback = $IsWindows -and -not $hasHelpArgument -and $argument -eq '--help' -and $subcommands.Count -eq 0 -and $options.Count -eq 0
             if (-not $tryFallback)
             {
                 break
@@ -3999,6 +4040,7 @@ function Get-CompleterHelpSubcommand
     [pscustomobject] [ordered] @{
         PSTypeName   = 'CompleterActions.CompleterHelpSubcommandResult'
         Subcommands  = $subcommands
+        Options      = $options
         Argument     = $argument
         Warnings     = $warnings.ToArray()
         VerboseLines = $verboseLines.ToArray()
@@ -4337,6 +4379,63 @@ function Get-CompleterRuntimeDictionaryValue
 }
 <#
 .SYNOPSIS
+Composes the lines of the markdown file New-CompleterScript -Documentation writes.
+
+.DESCRIPTION
+Returns one string per line, without line endings: the title '# <Name>
+completer', the heading '## What it completes', and one sentence that names
+the script file and every target in registration order, with a blank line
+between them. Two targets are joined with 'and'; three or more with commas
+and a final ', and'. The output names no date, version, or machine path, so
+the same input always gives the same lines.
+
+.PARAMETER Name
+The primary command name, as given.
+
+.PARAMETER ScriptName
+The file name of the script, without its folder.
+
+.PARAMETER Target
+The target list from ConvertTo-CompleterTargetName.
+
+.OUTPUTS
+System.String
+#>
+function Get-CompleterScriptDocumentation
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Name,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $ScriptName,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string[]] $Target
+    )
+
+    $names = @($Target | ForEach-Object { '`{0}`' -f $_ })
+
+    $targetList = switch ($names.Count)
+    {
+        1 { $names[0] }
+        2 { '{0} and {1}' -f $names[0], $names[1] }
+        default { '{0}, and {1}' -f ($names[0..($names.Count - 2)] -join ', '), $names[-1] }
+    }
+
+    '# {0} completer' -f $Name
+    ''
+    '## What it completes'
+    ''
+    '`{0}` registers a native PowerShell completer for {1}.' -f $ScriptName, $targetList
+}
+<#
+.SYNOPSIS
 Parses a completer script and returns its strict-grammar findings.
 
 .DESCRIPTION
@@ -4530,11 +4629,12 @@ Composes the lines of a generated native completer script.
 .DESCRIPTION
 Returns the skeleton New-CompleterScript writes, one string per line and
 without line endings: the two comment lines, Set-StrictMode, one guarded
-literal-only state block holding the subcommand table, a Complete-<Stem>
-completion function that offers the table in the first argument position, and
-one bare script-scope Register-ArgumentCompleter call with a literal
--CommandName list. Every string literal is single-quoted with its quote
-characters doubled. The
+literal-only state block holding the subcommand table and the option table, a
+Complete-<Stem> completion function that offers the options in any argument
+position once the word starts with '-' or '/' and the subcommands in the first
+argument position, and one bare script-scope Register-ArgumentCompleter call
+with a literal -CommandName list. Every string literal is single-quoted with
+its quote characters doubled. The
 output names no date, version, or machine path, so the same input always gives
 the same lines. The generated code uses four-space indentation and opening
 braces on the same line, because it belongs to the author's repository.
@@ -4551,13 +4651,19 @@ The target list from ConvertTo-CompleterTargetName.
 
 .PARAMETER Subcommand
 The subcommand rows, each with a Name and a Description, in help order. An
-empty list writes an empty table and the skeleton line 2.
+empty list writes an empty table.
+
+.PARAMETER Option
+The option rows, each with a Name and a Description, in help order. An empty
+list, the default, writes an empty table. When both lists are empty, line 2 is
+the skeleton line.
 
 .PARAMETER SeedKind
-Where a non-empty table came from: Probe or HelpText. It picks line 2.
+Where the rows came from when either table has one: Probe or HelpText. It
+picks line 2.
 
 .PARAMETER ProbeArgument
-The argument whose output seeded the table. Required with -SeedKind Probe. It
+The argument whose output seeded the tables. Required with -SeedKind Probe. It
 must not contain a line break, which would end the line 2 comment.
 
 .OUTPUTS
@@ -4585,6 +4691,10 @@ function Get-CompleterScriptSkeleton
         [object[]] $Subcommand,
 
         [Parameter()]
+        [AllowEmptyCollection()]
+        [object[]] $Option = @(),
+
+        [Parameter()]
         [ValidateSet('Probe', 'HelpText')]
         [string] $SeedKind,
 
@@ -4597,21 +4707,21 @@ function Get-CompleterScriptSkeleton
     $catalogName = '{0}CompletionCatalog' -f $Stem
     $functionName = 'Complete-{0}' -f $Stem
 
-    if ($Subcommand.Count -eq 0)
+    if ($Subcommand.Count -eq 0 -and $Option.Count -eq 0)
     {
-        $sourceLine = '# Native completer skeleton: add subcommands to the table and options to {0}.' -f $functionName
+        $sourceLine = '# Native completer skeleton: add subcommands and options to the tables.'
     }
     elseif ($SeedKind -eq 'Probe' -and $PSBoundParameters.ContainsKey('ProbeArgument'))
     {
-        $sourceLine = "# Help-seeded native completer: the subcommand table was read from '{0} {1}' when the script was generated." -f $Name, $ProbeArgument
+        $sourceLine = "# Help-seeded native completer: the tables were read from '{0} {1}' when the script was generated." -f $Name, $ProbeArgument
     }
     elseif ($SeedKind -eq 'HelpText')
     {
-        $sourceLine = '# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.'
+        $sourceLine = '# Help-seeded native completer: the tables were read from help text passed to New-CompleterScript.'
     }
     else
     {
-        throw 'A non-empty subcommand table needs -SeedKind HelpText, or -SeedKind Probe with -ProbeArgument.'
+        throw 'A non-empty subcommand or option table needs -SeedKind HelpText, or -SeedKind Probe with -ProbeArgument.'
     }
 
     $lines = [System.Collections.Generic.List[string]]::new()
@@ -4623,15 +4733,17 @@ function Get-CompleterScriptSkeleton
     $lines.Add(('if (-not (Get-Variable -Name {0} -Scope Script -ErrorAction Ignore)) {{' -f $catalogName))
     $lines.Add(('    $script:{0} = @{{' -f $catalogName))
 
-    if ($Subcommand.Count -eq 0)
+    foreach ($table in @(@{ Key = 'Subcommands'; Rows = $Subcommand }, @{ Key = 'Options'; Rows = $Option }))
     {
-        $lines.Add('        Subcommands = @()')
-    }
-    else
-    {
-        $lines.Add('        Subcommands = @(')
+        if ($table.Rows.Count -eq 0)
+        {
+            $lines.Add(('        {0} = @()' -f $table.Key))
+            continue
+        }
 
-        foreach ($row in $Subcommand)
+        $lines.Add(('        {0} = @(' -f $table.Key))
+
+        foreach ($row in $table.Rows)
         {
             $lines.Add(("            @{{ Name = '{0}'; Description = '{1}' }}" -f (ConvertTo-CompleterSingleQuotedText -Value ([string] $row.Name)), (ConvertTo-CompleterSingleQuotedText -Value ([string] $row.Description))))
         }
@@ -4649,7 +4761,16 @@ function Get-CompleterScriptSkeleton
     $lines.Add('        [int]$cursorPosition')
     $lines.Add('    )')
     $lines.Add('')
-    $lines.Add('    # Offer subcommands in the first argument position only; extend this function for options and values.')
+    $lines.Add("    # Offer options in any position once the word starts with '-' or '/'.")
+    $lines.Add("    if (`$wordToComplete.StartsWith('-') -or `$wordToComplete.StartsWith('/')) {")
+    $lines.Add(('        foreach ($option in $script:{0}.Options) {{' -f $catalogName))
+    $lines.Add('            if ($option.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {')
+    $lines.Add("                [System.Management.Automation.CompletionResult]::new(`$option.Name, `$option.Name, 'ParameterName', `$option.Description)")
+    $lines.Add('            }')
+    $lines.Add('        }')
+    $lines.Add('    }')
+    $lines.Add('')
+    $lines.Add('    # Offer subcommands in the first argument position only; extend this function for values.')
     $lines.Add('    $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })')
     $lines.Add('    if ($precedingElements.Count -gt 1) {')
     $lines.Add('        return')
@@ -6577,6 +6698,43 @@ function Invoke-CompleterLazyStub
     $ErrorActionPreference = $callerErrorActionPreference
 
     & $realScriptBlock @ArgumentList
+}
+<#
+.SYNOPSIS
+Moves a checked temporary file into place.
+
+.DESCRIPTION
+Calls File.Move, which renames the file within its folder, so the file at the
+destination is either the old one or the new one. Without -Force a file that
+already exists at the destination makes the move fail with an IOException and
+stay unchanged.
+
+.PARAMETER LiteralPath
+The full path of the temporary file.
+
+.PARAMETER Destination
+The full path the file is moved to.
+
+.PARAMETER Force
+Replaces a file that exists at the destination.
+#>
+function Move-CompleterScriptFile
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath,
+
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $Destination,
+
+        [Parameter()]
+        [switch] $Force
+    )
+
+    [System.IO.File]::Move($LiteralPath, $Destination, [bool] $Force)
 }
 <#
 .SYNOPSIS
@@ -9337,8 +9495,14 @@ way Register-Completer -Lazy does. Any finding, or derived targets that differ
 from -ExpectedTarget in order or spelling, throws the self-check text. A
 checked file is moved into place with File.Move, overwriting only under
 -Force; without -Force, a file that appeared at the path before the move makes
-the call fail with the already-exists text and stay unchanged. The temporary
-file never survives the call.
+the call fail with the already-exists text and stay unchanged.
+
+With -DocumentationLine, the markdown lines are written the same way to a
+temporary file beside -DocumentationLiteralPath before the script is checked,
+so a script that fails its check leaves neither file. The script is moved
+into place first, then the markdown file; when the second move fails, the call
+fails with the was-written text, which names both paths and the reason, and
+the script stays. No temporary file survives the call.
 
 .PARAMETER Line
 The script's lines, without line endings.
@@ -9353,14 +9517,22 @@ neither case in its own words.
 The target list the script must register, in order.
 
 .PARAMETER Force
-Overwrites an existing file at the path.
+Overwrites an existing file at the path, and at -DocumentationLiteralPath.
+
+.PARAMETER DocumentationLine
+The markdown file's lines, without line endings. Requires
+-DocumentationLiteralPath.
+
+.PARAMETER DocumentationLiteralPath
+The .md file to write beside the script, resolved as -LiteralPath is.
 
 .OUTPUTS
 System.IO.FileInfo
+Returns the script file only.
 #>
 function Save-CompleterScriptFile
 {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Script')]
     [OutputType([System.IO.FileInfo])]
     param(
         [Parameter(Mandatory)]
@@ -9377,16 +9549,37 @@ function Save-CompleterScriptFile
         [string[]] $ExpectedTarget,
 
         [Parameter()]
-        [switch] $Force
+        [switch] $Force,
+
+        [Parameter(Mandatory, ParameterSetName = 'Documentation')]
+        [ValidateNotNull()]
+        [AllowEmptyString()]
+        [string[]] $DocumentationLine,
+
+        [Parameter(Mandatory, ParameterSetName = 'Documentation')]
+        [ValidateNotNullOrEmpty()]
+        [string] $DocumentationLiteralPath
     )
 
     # Set-Content resolves against the PowerShell location, File.Move against the process directory.
     $LiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($LiteralPath))
     $temporaryPath = '{0}.{1}.tmp' -f $LiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $documentationTemporaryPath = $null
+
+    if ($PSCmdlet.ParameterSetName -eq 'Documentation')
+    {
+        $DocumentationLiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($DocumentationLiteralPath))
+        $documentationTemporaryPath = '{0}.{1}.tmp' -f $DocumentationLiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+    }
 
     try
     {
         Set-Content -LiteralPath $temporaryPath -Value $Line -Encoding utf8 -ErrorAction Stop
+
+        if ($null -ne $documentationTemporaryPath)
+        {
+            Set-Content -LiteralPath $documentationTemporaryPath -Value $DocumentationLine -Encoding utf8 -ErrorAction Stop
+        }
 
         $detail = $null
         $finding = @(Get-CompleterScriptFinding -LiteralPath $temporaryPath) | Select-Object -First 1
@@ -9422,7 +9615,7 @@ function Save-CompleterScriptFile
 
         try
         {
-            [System.IO.File]::Move($temporaryPath, $LiteralPath, [bool] $Force)
+            Move-CompleterScriptFile -LiteralPath $temporaryPath -Destination $LiteralPath -Force:$Force
         }
         catch [System.IO.IOException]
         {
@@ -9434,13 +9627,28 @@ function Save-CompleterScriptFile
             throw
         }
 
+        if ($null -ne $documentationTemporaryPath)
+        {
+            try
+            {
+                Move-CompleterScriptFile -LiteralPath $documentationTemporaryPath -Destination $DocumentationLiteralPath -Force:$Force
+            }
+            catch
+            {
+                throw "The script '$LiteralPath' was written, but its documentation file '$DocumentationLiteralPath' was not: $($_.Exception.GetBaseException().Message)"
+            }
+        }
+
         Get-Item -LiteralPath $LiteralPath
     }
     finally
     {
-        if (Test-Path -LiteralPath $temporaryPath)
+        foreach ($leftover in @($temporaryPath, $documentationTemporaryPath))
         {
-            Remove-Item -LiteralPath $temporaryPath -Force
+            if ($null -ne $leftover -and (Test-Path -LiteralPath $leftover))
+            {
+                Remove-Item -LiteralPath $leftover -Force
+            }
         }
     }
 }

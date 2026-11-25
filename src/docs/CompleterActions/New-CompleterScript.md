@@ -21,21 +21,21 @@ Writes a completer script skeleton for a native command that passes Test-Complet
 
 ```PowerShell
 New-CompleterScript [-CommandName] <string[]> [-Path] <string> [-HelpArgument <string>]
- [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
+ [-Documentation] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### HelpText
 
 ```PowerShell
 New-CompleterScript [-CommandName] <string[]> [-Path] <string> -HelpText <string[]>
- [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
+ [-Documentation] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ### NoProbe
 
 ```PowerShell
 New-CompleterScript [-CommandName] <string[]> [-Path] <string> -NoProbe
- [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
+ [-Documentation] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ## ALIASES
@@ -202,9 +202,38 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -Documentation
+
+Also writes a markdown file beside the script, with the same folder and base
+name and the extension `.md`: a `# <name> completer` title, a
+`## What it completes` heading, and one sentence that names the script and
+every target. It is UTF-8 without a byte-order mark, with the platform newline
+and a final newline. An existing `.md` file fails the call before anything
+runs unless `-Force` is given. Both files are written to temporary files first
+and moved only after the script passes its check, the script first; if the
+markdown file cannot be moved, the call fails and says the script was written.
+`-PassThru` still returns only the script.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: False
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -Force
 
-Overwrites an existing file.
+Overwrites an existing file, and with `-Documentation` the markdown file too.
 
 ```yaml
 Type: System.Management.Automation.SwitchParameter

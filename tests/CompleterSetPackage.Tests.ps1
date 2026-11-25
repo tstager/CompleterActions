@@ -2621,7 +2621,7 @@ Describe 'Completer authoring and packages leave PSReadLine alone' {
         $after = @(Get-PSReadLineKeyHandler -Bound -Unbound | ForEach-Object { '{0}={1}' -f $_.Key, $_.Function })
 
         @($probeWarnings) | Should -BeNullOrEmpty
-        @(Get-Content -LiteralPath $file.FullName)[1] | Should -BeExactly "# Help-seeded native completer: the subcommand table was read from 'pwsh $fixture' when the script was generated."
+        @(Get-Content -LiteralPath $file.FullName)[1] | Should -BeExactly "# Help-seeded native completer: the tables were read from 'pwsh $fixture' when the script was generated."
         Test-CompleterScript -LiteralPath $file.FullName | Should -BeNullOrEmpty
         @($importWarnings) | Should -BeNullOrEmpty
         $records.Count | Should -Be 6

@@ -1,26 +1,26 @@
 <#
 .SYNOPSIS
-Reads a subcommand table by running a program's help.
+Reads a subcommand table and an option table by running a program's help.
 
 .DESCRIPTION
-Decides what the help probe runs and turns each run's outcome into a table,
+Decides what the help probe runs and turns each run's outcome into tables,
 warnings, and verbose lines.
 
 An application whose CanRun is false runs nothing; its Warning is returned.
 Otherwise the program runs once with -HelpArgument, or with --help when
 -HelpArgument is not given. On Windows, without -HelpArgument, /? runs once
-more only when the --help run exited, yielded no subcommand, and its cleaned
-text has fewer than five non-blank lines; the /? result is then used. No /?
-runs after a timeout, a start failure, or held output, so one call returns at
-most one warning.
+more only when the --help run exited, yielded no subcommand and no option, and
+its cleaned text has fewer than five non-blank lines; the /? result is then
+used. No /? runs after a timeout, a start failure, or held output, so one call
+returns at most one warning.
 
 A run that timed out, whose output a descendant held, or that failed to start
-gives its warning and an empty table, and adds no probe verbose line, because
-the line's exit code, characters, and subcommands describe a run that exited.
-For a run that exited, the text is standard output, or standard error when
-standard output is empty or whitespace after decoding; the exit code decides
-nothing. The text is decoded, cleaned, and parsed with the help text helpers,
-and the run adds one probe verbose line.
+gives its warning and empty tables, and adds no probe verbose line, because
+the line's exit code, characters, subcommands, and options describe a run that
+exited. For a run that exited, the text is standard output, or standard error
+when standard output is empty or whitespace after decoding; the exit code
+decides nothing. The text is decoded, cleaned, and parsed with the help text
+helpers, and the run adds one probe verbose line.
 
 Warnings and verbose lines are returned as data; this helper writes no
 stream.
@@ -38,7 +38,8 @@ The deadline for each run, in seconds.
 
 .OUTPUTS
 CompleterActions.CompleterHelpSubcommandResult
-Returns a record with Subcommands (the parsed rows, in help order), Argument
+Returns a record with Subcommands and Options (the parsed rows of each table,
+in help order), Argument
 (the argument of the last run that exited, whose result was used, or null
 when no run exited; a /? run that does not exit leaves it at --help),
 Warnings, and VerboseLines.
@@ -59,6 +60,7 @@ function Get-CompleterHelpSubcommand
     )
 
     $subcommands = @()
+    $options = @()
     $argument = $null
     $warnings = [System.Collections.Generic.List[string]]::new()
     $verboseLines = [System.Collections.Generic.List[string]]::new()
@@ -106,10 +108,11 @@ function Get-CompleterHelpSubcommand
 
             $cleanText = ConvertTo-CompleterCleanHelpText -Text $text
             $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+            $options = @(ConvertFrom-CompleterHelpOption -Text $cleanText)
             $argument = $runArgument
-            $verboseLines.Add("Probed '$($Application.Path) $argument': exit $($result.ExitCode), $($text.Length) characters, $($subcommands.Count) subcommands, $($result.ElapsedMilliseconds) ms.")
+            $verboseLines.Add("Probed '$($Application.Path) $argument': exit $($result.ExitCode), $($text.Length) characters, $($subcommands.Count) subcommands, $($options.Count) options, $($result.ElapsedMilliseconds) ms.")
 
-            $tryFallback = $IsWindows -and -not $hasHelpArgument -and $argument -eq '--help' -and $subcommands.Count -eq 0
+            $tryFallback = $IsWindows -and -not $hasHelpArgument -and $argument -eq '--help' -and $subcommands.Count -eq 0 -and $options.Count -eq 0
             if (-not $tryFallback)
             {
                 break
@@ -128,6 +131,7 @@ function Get-CompleterHelpSubcommand
     [pscustomobject] [ordered] @{
         PSTypeName   = 'CompleterActions.CompleterHelpSubcommandResult'
         Subcommands  = $subcommands
+        Options      = $options
         Argument     = $argument
         Warnings     = $warnings.ToArray()
         VerboseLines = $verboseLines.ToArray()

@@ -839,10 +839,13 @@ Describe 'Probe decisions' {
                 [string] $Characters,
 
                 [Parameter(Mandatory)]
-                [string] $Subcommands
+                [string] $Subcommands,
+
+                [Parameter(Mandatory)]
+                [string] $Options
             )
 
-            '^Probed ''{0} {1}'': exit {2}, {3} characters, {4} subcommands, \d+ ms\.$' -f [regex]::Escape($Path), [regex]::Escape($Argument), $ExitCode, $Characters, $Subcommands
+            '^Probed ''{0} {1}'': exit {2}, {3} characters, {4} subcommands, {5} options, \d+ ms\.$' -f [regex]::Escape($Path), [regex]::Escape($Argument), $ExitCode, $Characters, $Subcommands, $Options
         }
     }
 
@@ -863,7 +866,7 @@ Describe 'Probe decisions' {
         $result.Argument | Should -BeExactly '--help'
         $result.Warnings | Should -BeNullOrEmpty
         $result.VerboseLines.Count | Should -Be 1
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument '--help' -ExitCode '0' -Characters '\d+' -Subcommands '\d+')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument '--help' -ExitCode '0' -Characters '\d+' -Subcommands '\d+' -Options '\d+')
     }
 
     It 'uses help that a probe writes only to standard error with exit 2' {
@@ -878,7 +881,7 @@ Describe 'Probe decisions' {
         $result.Argument | Should -BeExactly $fixture
         $result.Warnings | Should -BeNullOrEmpty
         $result.VerboseLines.Count | Should -Be 1
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '2' -Characters $script:ProbeHelpText.Length -Subcommands '2')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '2' -Characters $script:ProbeHelpText.Length -Subcommands '2' -Options '0')
     }
 
     It 'decodes UTF-16 LE probe output' {
@@ -891,7 +894,7 @@ Describe 'Probe decisions' {
         $result.Subcommands.Name | Should -Be @('build', 'test')
         $result.Subcommands.Description | Should -Be @('Compile the project', 'Run the tests')
         $result.Warnings | Should -BeNullOrEmpty
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters $script:ProbeHelpText.Length -Subcommands '2')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters $script:ProbeHelpText.Length -Subcommands '2' -Options '0')
     }
 
     It 'cuts standard output at 1 MiB and still parses the table' {
@@ -906,7 +909,7 @@ Describe 'Probe decisions' {
         $runs[0].Status | Should -Be 'Exited'
         $result.Subcommands.Name | Should -Be @('build', 'test')
         $result.Warnings | Should -BeNullOrEmpty
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters '1048576' -Subcommands '2')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters '1048576' -Subcommands '2' -Options '0')
     }
 
     It 'warns did not exit within 0.05 seconds and leaves no direct child running' {
@@ -992,14 +995,15 @@ Describe 'Probe decisions' {
     }
 
     It 'applies the /? rule to <Case>' -TestCases @(
-        @{ Case = 'two lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help,/?'; Names = 'build,test'; Argument = '/?'; VerboseLines = 2; Warning = $null }
-        @{ Case = 'five lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "one`ntwo`n`nthree`nfour`nfive`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
-        @{ Case = 'a timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'TimedOut'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' did not exit within 5 seconds and was stopped, so its help was not used." }
-        @{ Case = 'a start failure on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'StartFailed'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'<path>' was not run: the fake program could not be started. Pass captured help with -HelpText." }
-        @{ Case = 'held output on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'HeldOutput'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' exited but left a process holding its output, so its help was not used." }
-        @{ Case = 'two lines then a /? timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'TimedOut'; Expected = '--help,/?'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = "'catool /?' did not exit within 5 seconds and was stopped, so its help was not used." }
-        @{ Case = '-HelpArgument given'; Platform = 'Any'; HelpArgument = '-h'; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '-h'; Names = ''; Argument = '-h'; VerboseLines = 1; Warning = $null }
-        @{ Case = 'two lines on Linux and macOS'; Platform = 'Unix'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'two lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help,/?'; Names = 'build,test'; Options = ''; Argument = '/?'; VerboseLines = 2; Warning = $null }
+        @{ Case = 'two option lines and no subcommand on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "  -a, --all    Show all`n  -b, --brief  Be brief`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = '-a,--all,-b,--brief'; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'five lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "one`ntwo`n`nthree`nfour`nfive`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'a timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'TimedOut'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' did not exit within 5 seconds and was stopped, so its help was not used." }
+        @{ Case = 'a start failure on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'StartFailed'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = $null; VerboseLines = 0; Warning = "'<path>' was not run: the fake program could not be started. Pass captured help with -HelpText." }
+        @{ Case = 'held output on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'HeldOutput'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' exited but left a process holding its output, so its help was not used." }
+        @{ Case = 'two lines then a /? timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'TimedOut'; Expected = '--help,/?'; Names = ''; Options = ''; Argument = '--help'; VerboseLines = 1; Warning = "'catool /?' did not exit within 5 seconds and was stopped, so its help was not used." }
+        @{ Case = '-HelpArgument given'; Platform = 'Any'; HelpArgument = '-h'; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '-h'; Names = ''; Options = ''; Argument = '-h'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'two lines on Linux and macOS'; Platform = 'Unix'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
     ) {
         if ($Platform -eq 'Windows' -and -not $IsWindows)
         {
@@ -1036,8 +1040,13 @@ Describe 'Probe decisions' {
         @($runs | ForEach-Object { $_.ArgumentList[0] }) -join ',' | Should -BeExactly $Expected
         @($runs | Where-Object { $_.FilePath -ne $application.Path }).Count | Should -Be 0
         @($result.Subcommands | ForEach-Object { $_.Name }) -join ',' | Should -BeExactly $Names
+        @($result.Options | ForEach-Object { $_.Name }) -join ',' | Should -BeExactly $Options
         $result.Argument | Should -BeExactly $Argument
         $result.VerboseLines.Count | Should -Be $VerboseLines
+        if ($VerboseLines -gt 0)
+        {
+            $result.VerboseLines[-1] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $Argument -ExitCode '1' -Characters '\d+' -Subcommands ($Names.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries).Count) -Options ($Options.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries).Count))
+        }
         if ($null -eq $Warning)
         {
             $result.Warnings | Should -BeNullOrEmpty

@@ -11,8 +11,14 @@ way Register-Completer -Lazy does. Any finding, or derived targets that differ
 from -ExpectedTarget in order or spelling, throws the self-check text. A
 checked file is moved into place with File.Move, overwriting only under
 -Force; without -Force, a file that appeared at the path before the move makes
-the call fail with the already-exists text and stay unchanged. The temporary
-file never survives the call.
+the call fail with the already-exists text and stay unchanged.
+
+With -DocumentationLine, the markdown lines are written the same way to a
+temporary file beside -DocumentationLiteralPath before the script is checked,
+so a script that fails its check leaves neither file. The script is moved
+into place first, then the markdown file; when the second move fails, the call
+fails with the was-written text, which names both paths and the reason, and
+the script stays. No temporary file survives the call.
 
 .PARAMETER Line
 The script's lines, without line endings.
@@ -27,14 +33,22 @@ neither case in its own words.
 The target list the script must register, in order.
 
 .PARAMETER Force
-Overwrites an existing file at the path.
+Overwrites an existing file at the path, and at -DocumentationLiteralPath.
+
+.PARAMETER DocumentationLine
+The markdown file's lines, without line endings. Requires
+-DocumentationLiteralPath.
+
+.PARAMETER DocumentationLiteralPath
+The .md file to write beside the script, resolved as -LiteralPath is.
 
 .OUTPUTS
 System.IO.FileInfo
+Returns the script file only.
 #>
 function Save-CompleterScriptFile
 {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Script')]
     [OutputType([System.IO.FileInfo])]
     param(
         [Parameter(Mandatory)]
@@ -51,16 +65,37 @@ function Save-CompleterScriptFile
         [string[]] $ExpectedTarget,
 
         [Parameter()]
-        [switch] $Force
+        [switch] $Force,
+
+        [Parameter(Mandatory, ParameterSetName = 'Documentation')]
+        [ValidateNotNull()]
+        [AllowEmptyString()]
+        [string[]] $DocumentationLine,
+
+        [Parameter(Mandatory, ParameterSetName = 'Documentation')]
+        [ValidateNotNullOrEmpty()]
+        [string] $DocumentationLiteralPath
     )
 
     # Set-Content resolves against the PowerShell location, File.Move against the process directory.
     $LiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($LiteralPath))
     $temporaryPath = '{0}.{1}.tmp' -f $LiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+    $documentationTemporaryPath = $null
+
+    if ($PSCmdlet.ParameterSetName -eq 'Documentation')
+    {
+        $DocumentationLiteralPath = [System.IO.Path]::GetFullPath($PSCmdlet.GetUnresolvedProviderPathFromPSPath($DocumentationLiteralPath))
+        $documentationTemporaryPath = '{0}.{1}.tmp' -f $DocumentationLiteralPath, [guid]::NewGuid().ToString('N').Substring(0, 8)
+    }
 
     try
     {
         Set-Content -LiteralPath $temporaryPath -Value $Line -Encoding utf8 -ErrorAction Stop
+
+        if ($null -ne $documentationTemporaryPath)
+        {
+            Set-Content -LiteralPath $documentationTemporaryPath -Value $DocumentationLine -Encoding utf8 -ErrorAction Stop
+        }
 
         $detail = $null
         $finding = @(Get-CompleterScriptFinding -LiteralPath $temporaryPath) | Select-Object -First 1
@@ -96,7 +131,7 @@ function Save-CompleterScriptFile
 
         try
         {
-            [System.IO.File]::Move($temporaryPath, $LiteralPath, [bool] $Force)
+            Move-CompleterScriptFile -LiteralPath $temporaryPath -Destination $LiteralPath -Force:$Force
         }
         catch [System.IO.IOException]
         {
@@ -108,13 +143,28 @@ function Save-CompleterScriptFile
             throw
         }
 
+        if ($null -ne $documentationTemporaryPath)
+        {
+            try
+            {
+                Move-CompleterScriptFile -LiteralPath $documentationTemporaryPath -Destination $DocumentationLiteralPath -Force:$Force
+            }
+            catch
+            {
+                throw "The script '$LiteralPath' was written, but its documentation file '$DocumentationLiteralPath' was not: $($_.Exception.GetBaseException().Message)"
+            }
+        }
+
         Get-Item -LiteralPath $LiteralPath
     }
     finally
     {
-        if (Test-Path -LiteralPath $temporaryPath)
+        foreach ($leftover in @($temporaryPath, $documentationTemporaryPath))
         {
-            Remove-Item -LiteralPath $temporaryPath -Force
+            if ($null -ne $leftover -and (Test-Path -LiteralPath $leftover))
+            {
+                Remove-Item -LiteralPath $leftover -Force
+            }
         }
     }
 }

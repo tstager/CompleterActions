@@ -67,8 +67,19 @@ winget --help | New-CompleterScript winget .\winget_completer.ps1 binds here.
 .PARAMETER NoProbe
 Runs nothing and writes an empty subcommand table.
 
+.PARAMETER Documentation
+Also writes a markdown file beside the script, with the same folder and base
+name and the extension .md: a '# <name> completer' title, a
+'## What it completes' heading, and one sentence that names the script and
+every target. It is UTF-8 without a byte-order mark, with the platform newline
+and a final newline. An existing .md file fails the call before anything runs
+unless -Force is given. Both files are written to temporary files first and
+moved only after the script passes its check, the script first; if the
+markdown file cannot be moved, the call fails and says the script was written.
+-PassThru still returns only the script.
+
 .PARAMETER Force
-Overwrites an existing file.
+Overwrites an existing file, and with -Documentation the markdown file too.
 
 .PARAMETER PassThru
 Returns the written file as System.IO.FileInfo, so it pipes into
@@ -123,6 +134,9 @@ function New-CompleterScript
         [switch] $NoProbe,
 
         [Parameter()]
+        [switch] $Documentation,
+
+        [Parameter()]
         [switch] $Force,
 
         [Parameter()]
@@ -164,6 +178,18 @@ function New-CompleterScript
             {
                 throw "The file '$outputPath' already exists. Use -Force to overwrite it."
             }
+
+            $documentationPath = $null
+
+            if ($Documentation)
+            {
+                $documentationPath = [System.IO.Path]::ChangeExtension($outputPath, '.md')
+
+                if (-not $Force -and (Test-Path -LiteralPath $documentationPath))
+                {
+                    throw "The file '$documentationPath' already exists. Use -Force to overwrite it."
+                }
+            }
         }
         catch
         {
@@ -193,7 +219,8 @@ function New-CompleterScript
         {
             $primaryName = $CommandName[0]
             $application = $null
-            $action = 'Create completer script without running a program'
+            $actionSubject = if ($Documentation) { 'Create completer script and documentation' } else { 'Create completer script' }
+            $action = "$actionSubject without running a program"
 
             if ($PSCmdlet.ParameterSetName -eq 'Probe')
             {
@@ -210,15 +237,15 @@ function New-CompleterScript
 
                     if ($PSBoundParameters.ContainsKey('HelpArgument'))
                     {
-                        $action = "Create completer script, running '$($application.Path) $HelpArgument' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) $HelpArgument' to read its help"
                     }
                     elseif ($IsWindows)
                     {
-                        $action = "Create completer script, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
                     }
                     else
                     {
-                        $action = "Create completer script, running '$($application.Path) --help' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) --help' to read its help"
                     }
                 }
                 else
@@ -236,6 +263,7 @@ function New-CompleterScript
             $ConfirmPreference = 'None'
 
             $subcommands = @()
+            $options = @()
             $skeletonParameters = @{}
 
             switch ($PSCmdlet.ParameterSetName)
@@ -265,8 +293,9 @@ function New-CompleterScript
                     }
 
                     $subcommands = @($probe.Subcommands)
+                    $options = @($probe.Options)
 
-                    if ($subcommands.Count -gt 0)
+                    if ($subcommands.Count -gt 0 -or $options.Count -gt 0)
                     {
                         $skeletonParameters['SeedKind'] = 'Probe'
                         $skeletonParameters['ProbeArgument'] = $probe.Argument
@@ -275,16 +304,36 @@ function New-CompleterScript
 
                 'HelpText'
                 {
-                    $subcommands = @(ConvertFrom-CompleterHelpText -Text (ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")))
+                    $cleanText = ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")
+                    $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+                    $options = @(ConvertFrom-CompleterHelpOption -Text $cleanText)
                     $skeletonParameters['SeedKind'] = 'HelpText'
                 }
             }
 
-            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands @skeletonParameters
+            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands -Option $options @skeletonParameters
 
-            $file = Save-CompleterScriptFile -Line $lines -LiteralPath $outputPath -ExpectedTarget $targetNames -Force:$Force -Verbose:$false
+            $saveParameters = @{
+                Line           = $lines
+                LiteralPath    = $outputPath
+                ExpectedTarget = $targetNames
+                Force          = $Force
+            }
 
-            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands."
+            if ($Documentation)
+            {
+                $saveParameters['DocumentationLine'] = @(Get-CompleterScriptDocumentation -Name $primaryName -ScriptName ([System.IO.Path]::GetFileName($outputPath)) -Target $targetNames)
+                $saveParameters['DocumentationLiteralPath'] = $documentationPath
+            }
+
+            $file = Save-CompleterScriptFile @saveParameters -Verbose:$false
+
+            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands, $($options.Count) options."
+
+            if ($Documentation)
+            {
+                Write-Verbose -Message "Wrote '$([System.IO.Path]::ChangeExtension($file.FullName, '.md'))'."
+            }
 
             if ($PassThru)
             {

@@ -1511,6 +1511,13 @@ path.</maml:para>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Documentation</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>Force</maml:name>
           <maml:description />
           <dev:type>
@@ -1563,6 +1570,13 @@ path.</maml:para>
           <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
           <dev:type>
             <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Documentation</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -1620,6 +1634,13 @@ path.</maml:para>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Documentation</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>Force</maml:name>
           <maml:description />
           <dev:type>
@@ -1671,9 +1692,26 @@ functions and state, and it is the one probed.</maml:para>
         </dev:type>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Documentation</maml:name>
+        <maml:description>
+          <maml:para>Also writes a markdown file beside the script, with the same folder and base
+name and the extension `.md`: a `# &lt;name&gt; completer` title, a
+`## What it completes` heading, and one sentence that names the script and
+every target. It is UTF-8 without a byte-order mark, with the platform newline
+and a final newline. An existing `.md` file fails the call before anything
+runs unless `-Force` is given. Both files are written to temporary files first
+and moved only after the script passes its check, the script first; if the
+markdown file cannot be moved, the call fails and says the script was written.
+`-PassThru` still returns only the script.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Force</maml:name>
         <maml:description>
-          <maml:para>Overwrites an existing file.</maml:para>
+          <maml:para>Overwrites an existing file, and with `-Documentation` the markdown file too.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
