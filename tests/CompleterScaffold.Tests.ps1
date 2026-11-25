@@ -452,7 +452,11 @@ Describe 'Completer script skeleton' {
 Describe 'New-CompleterScript' {
     BeforeAll {
         $script:CaptureFolder = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\NewCompleterScript'
-        $script:PwshApplicationPath = (Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Ignore | Select-Object -First 1).Source
+        # The pwsh running the suite. A test that hands the bare name pwsh to
+        # New-CompleterScript puts $PSHOME first on PATH in the process that
+        # resolves it, because the first pwsh on PATH can be an app execution
+        # alias, and a child pwsh puts the alias folder back at the front.
+        $script:PwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
         $script:SkeletonLine2Format = '# Native completer skeleton: add subcommands to the table and options to Complete-{0}.'
         $script:HelpTextLine2 = '# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.'
 
@@ -620,7 +624,7 @@ Describe 'New-CompleterScript' {
                 [string] $Fixture = 'none'
             )
 
-            @(& pwsh -NoProfile -NoLogo -NonInteractive -File $script:WhatIfChildPath -ManifestPath $script:ManifestPath -Case $Case -CommandName $CommandName -Target $Target -Fixture $Fixture 2>&1)
+            @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $script:WhatIfChildPath -ManifestPath $script:ManifestPath -Case $Case -CommandName $CommandName -Target $Target -Fixture $Fixture 2>&1)
         }
 
         $script:WhatIfChildPath = Join-Path -Path $TestDrive -ChildPath 'new-completerscript-whatif.ps1'
@@ -633,6 +637,8 @@ param(
     [string] $Fixture
 )
 
+# A child pwsh puts the alias folder back at the front of PATH, so the pin is made here.
+$env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $env:PATH
 $ErrorActionPreference = 'Stop'
 Import-Module -Name $ManifestPath -Force
 
@@ -856,17 +862,20 @@ switch ($Case)
     }
 
     It 'writes a conforming pwsh script from a real probe' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
 
-        $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
-        $probeLinePattern = '^Probed ''{0} --help'': exit 0, \d+ characters, \d+ subcommands, \d+ ms\.$' -f [regex]::Escape($script:PwshApplicationPath)
+        $probeLinePattern = '^Probed ''{0} --help'': exit 0, \d+ characters, \d+ subcommands, \d+ ms\.$' -f [regex]::Escape($script:PwshPath)
         @($verbose | Where-Object { $_ -match $probeLinePattern }).Count | Should -Be 1
         Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
     }
@@ -886,13 +895,6 @@ switch ($Case)
             @{ Outcome = 'held output' }
         ) {
             $script:ScaffoldDescendantId = $null
-            $usesPwsh = $Outcome -eq 'a timeout' -or $IsWindows
-            if ($usesPwsh -and $null -eq $script:PwshApplicationPath)
-            {
-                Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-                return
-            }
-
             $idPath = Join-Path -Path $script:CaseFolder -ChildPath 'descendant.txt'
             $savedPath = $env:PATH
 
@@ -901,6 +903,7 @@ switch ($Case)
                 if ($Outcome -eq 'a timeout')
                 {
                     $commandName = 'pwsh'
+                    $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
                     $fixture = Join-Path -Path $script:CaseFolder -ChildPath 'sleep-help.ps1'
                     Set-Content -LiteralPath $fixture -Encoding utf8 -Value 'Start-Sleep -Seconds 60', 'exit 0'
                     & (Get-Module -Name 'CompleterActions') { $script:CompleterHelpProbeTimeoutSeconds = 0.05 }
@@ -911,6 +914,7 @@ switch ($Case)
                 elseif ($IsWindows)
                 {
                     $commandName = 'pwsh'
+                    $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
                     $fixture = Join-Path -Path $script:CaseFolder -ChildPath 'held-help.ps1'
                     Set-Content -LiteralPath $fixture -Encoding utf8 -Value @(
                         '$descendant = Start-Process -NoNewWindow -FilePath ''ping.exe'' -ArgumentList ''-n'', ''15'', ''127.0.0.1'' -PassThru'
@@ -1052,12 +1056,6 @@ switch ($Case)
     }
 
     It 'runs nothing, writes nothing, and names the path and program under -WhatIf' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $markerPath = Join-Path -Path $script:CaseFolder -ChildPath 'marker.txt'
         $fixture = Join-Path -Path $script:CaseFolder -ChildPath 'marker-help.ps1'
         Set-Content -LiteralPath $fixture -Encoding utf8 -Value ("Set-Content -LiteralPath '{0}' -Value 'ran'" -f $markerPath)
@@ -1069,7 +1067,7 @@ switch ($Case)
         $output | Should -Contain 'COUNT=0'
         $output | Should -Contain 'EXISTS=False'
         Test-Path -LiteralPath $markerPath | Should -BeFalse
-        $whatIfLine = 'What if: Performing the operation "Create completer script, running ''{0} {1}'' to read its help" on target "{2}".' -f $script:PwshApplicationPath, $fixture, $target
+        $whatIfLine = 'What if: Performing the operation "Create completer script, running ''{0} {1}'' to read its help" on target "{2}".' -f $script:PwshPath, $fixture, $target
         @($output | Where-Object { $_ -ceq $whatIfLine }).Count | Should -Be 1
     }
 
@@ -1093,19 +1091,13 @@ switch ($Case)
             return
         }
 
-        if ($CommandName -eq 'pwsh' -and $null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $target = Join-Path -Path $script:CaseFolder -ChildPath "$($CommandName)_completer.ps1"
         $output = Invoke-TestWhatIfChild -Case $Child -CommandName $CommandName -Target $target -Fixture 'help'
 
         $LASTEXITCODE | Should -Be 0 -Because ($output -join [System.Environment]::NewLine)
         $output | Should -Contain 'COUNT=0'
         $output | Should -Contain 'EXISTS=False'
-        $action = if ($Action.StartsWith('running')) { 'Create completer script, ' + $Action.Replace('<pwsh>', $script:PwshApplicationPath) } else { 'Create completer script ' + $Action }
+        $action = if ($Action.StartsWith('running')) { 'Create completer script, ' + $Action.Replace('<pwsh>', $script:PwshPath) } else { 'Create completer script ' + $Action }
         $whatIfLine = 'What if: Performing the operation "{0}" on target "{1}".' -f $action, $target
         @($output | Where-Object { $_ -ceq $whatIfLine }).Count | Should -Be 1 -Because ($output -join [System.Environment]::NewLine)
     }
@@ -1124,7 +1116,16 @@ switch ($Case)
             }
         }
 
-        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -WhatIf } | Should -Throw -PassThru
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -WhatIf } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + ($script:AlreadyExistsFormat -f $scriptPath))
         (& (Get-Module -Name 'CompleterActions') { $script:TestResolveCount }) | Should -Be 0
@@ -1148,12 +1149,6 @@ switch ($Case)
     }
 
     It 'fails when the file appears during the probe and leaves no .tmp file' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
         $result = New-TestExitedResult -Text "Commands:`n  build    Compile the project`n"
         Install-TestRunnerShim -Fake ({
@@ -1163,7 +1158,16 @@ switch ($Case)
                 $result
             }.GetNewClosure())
 
-        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' } | Should -Throw -PassThru
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + ($script:AlreadyExistsFormat -f $scriptPath))
         @(Get-TestProbeRun).Count | Should -Be 1
@@ -1217,7 +1221,16 @@ switch ($Case)
                 $result
             }.GetNewClosure())
 
-        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $HelpArgument } | Should -Throw -PassThru
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $HelpArgument } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $thrown.Exception.Message | Should -BeExactly 'Failed to create completer script. -HelpArgument must not contain a line break.'
         @(Get-TestProbeRun).Count | Should -Be 0
@@ -1255,7 +1268,7 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
             Set-Content -LiteralPath $scriptPath -Value 'existing content'
         }
 
-        $output = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $childPath -ManifestPath $script:ManifestPath -CommandName $CommandName -Target $scriptPath -Action $Action 2>&1 | ForEach-Object { "$_" })
+        $output = @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $childPath -ManifestPath $script:ManifestPath -CommandName $CommandName -Target $scriptPath -Action $Action 2>&1 | ForEach-Object { "$_" })
 
         $errorLines = @($output | Where-Object { $_ -like 'ERROR=*' })
         $errorLines.Count | Should -Be 1 -Because ($output -join [System.Environment]::NewLine)
@@ -1345,12 +1358,6 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
     }
 
     It 'writes the resolved-application, probe, and wrote verbose lines' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
         $helpText = "Commands:`n  build    Compile the project`n  test     Run the tests`n"
         $result = New-TestExitedResult -Text $helpText
@@ -1360,12 +1367,21 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
                 $result
             }.GetNewClosure())
 
-        $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $verbose.Count | Should -Be 4 -Because ($verbose -join [System.Environment]::NewLine)
-        $verbose[0] | Should -BeExactly ("Resolved 'pwsh' to the application '{0}'." -f $script:PwshApplicationPath)
-        $verbose[1] | Should -BeExactly ('Performing the operation "Create completer script, running ''{0} --help'' to read its help" on target "{1}".' -f $script:PwshApplicationPath, $scriptPath)
-        $verbose[2] | Should -BeExactly ("Probed '{0} --help': exit 0, {1} characters, 2 subcommands, 12 ms." -f $script:PwshApplicationPath, $helpText.Length)
+        $verbose[0] | Should -BeExactly ("Resolved 'pwsh' to the application '{0}'." -f $script:PwshPath)
+        $verbose[1] | Should -BeExactly ('Performing the operation "Create completer script, running ''{0} --help'' to read its help" on target "{1}".' -f $script:PwshPath, $scriptPath)
+        $verbose[2] | Should -BeExactly ("Probed '{0} --help': exit 0, {1} characters, 2 subcommands, 12 ms." -f $script:PwshPath, $helpText.Length)
         $verbose[3] | Should -BeExactly ("Wrote '{0}': 2 targets, 2 subcommands." -f $scriptPath)
         @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ("# Help-seeded native completer: the subcommand table was read from 'pwsh --help' when the script was generated.")
     }

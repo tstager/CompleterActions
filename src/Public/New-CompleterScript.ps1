@@ -203,6 +203,11 @@ function New-CompleterScript
                 {
                     Write-Verbose -Message "Resolved '$primaryName' to the application '$($application.Path)'."
 
+                    if ($null -ne $application.AliasTarget)
+                    {
+                        Write-Verbose -Message "'$($application.Path)' is an app execution alias for '$($application.AliasTarget)'."
+                    }
+
                     if ($PSBoundParameters.ContainsKey('HelpArgument'))
                     {
                         $action = "Create completer script, running '$($application.Path) $HelpArgument' to read its help"

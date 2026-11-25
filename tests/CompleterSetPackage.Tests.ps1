@@ -282,6 +282,8 @@ BeforeAll {
 
     $script:ModuleManifestPath = [System.IO.Path]::GetFullPath((Join-Path -Path $PSScriptRoot -ChildPath '../CompleterActions.psd1'))
     $script:PackageFixtureRoot = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures/CompleterSetPackage'
+    # The pwsh running the suite, because the first pwsh on PATH can be an app execution alias.
+    $script:PwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
     $script:PackageCleanupTargets = @(
         foreach ($fixture in 'alpha', 'beta', 'gamma')
         {
@@ -1196,7 +1198,7 @@ finally
                 $env:XDG_DATA_HOME = $dataHome
             }
 
-            $publishOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $publishScriptPath -RepositoryName $repositoryName -RepositoryPath $repositoryPath -PackagePath $packageBase -ModulesPath $modulesPath 2>&1)
+            $publishOutput = @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $publishScriptPath -RepositoryName $repositoryName -RepositoryPath $repositoryPath -PackagePath $packageBase -ModulesPath $modulesPath 2>&1)
             $publishExitCode = $LASTEXITCODE
         }
         finally
@@ -1232,7 +1234,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module -Name $ModuleManifestPath -Force
 Import-CompleterSet -LiteralPath $SetPath | Select-Object -Property Key, RuntimeKey, State, Trusted, ScriptPath | ConvertTo-Csv
 '@
-        $literalCsv = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $literalScriptPath -ModuleManifestPath $script:ModuleManifestPath -SetPath $savedSetPath 2>&1)
+        $literalCsv = @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $literalScriptPath -ModuleManifestPath $script:ModuleManifestPath -SetPath $savedSetPath 2>&1)
         $LASTEXITCODE | Should -Be 0 -Because ($literalCsv -join [Environment]::NewLine)
 
         $byNameCsv = @($byName | Select-Object -Property Key, RuntimeKey, State, Trusted, ScriptPath | ConvertTo-Csv)
@@ -1453,7 +1455,7 @@ finally
                     $env:XDG_DATA_HOME = $dataHome
                 }
 
-                $publishOutput = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $publishScriptPath -RepositoryName $repositoryName -RepositoryPath $repositoryPath -PackagePath $PackageBase -ModulesPath $modulesPath 2>&1)
+                $publishOutput = @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $publishScriptPath -RepositoryName $repositoryName -RepositoryPath $repositoryPath -PackagePath $PackageBase -ModulesPath $modulesPath 2>&1)
                 $publishExitCode = $LASTEXITCODE
             }
             finally
@@ -2195,7 +2197,17 @@ Describe 'Completer authoring and packages leave PSReadLine alone' {
         Set-Content -LiteralPath $fixture -Encoding utf8 -Value "'Commands:'", "'  build    Compile the project'", "'  test     Run the tests'"
         $scriptPath = Join-Path -Path $script:PackageRoot -ChildPath 'pwsh_completer.ps1'
         Install-TestRunnerShim -NoProfile
-        $file = New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $fixture -PassThru -WarningVariable probeWarnings -WarningAction SilentlyContinue
+        $savedPath = $env:PATH
+        try
+        {
+            # The first pwsh on PATH can be an app execution alias.
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $file = New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $fixture -PassThru -WarningVariable probeWarnings -WarningAction SilentlyContinue
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
         $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'

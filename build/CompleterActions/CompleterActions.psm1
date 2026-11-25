@@ -888,6 +888,11 @@ function New-CompleterScript
                 {
                     Write-Verbose -Message "Resolved '$primaryName' to the application '$($application.Path)'."
 
+                    if ($null -ne $application.AliasTarget)
+                    {
+                        Write-Verbose -Message "'$($application.Path)' is an app execution alias for '$($application.AliasTarget)'."
+                    }
+
                     if ($PSBoundParameters.ContainsKey('HelpArgument'))
                     {
                         $action = "Create completer script, running '$($application.Path) $HelpArgument' to read its help"
@@ -3171,6 +3176,37 @@ function Get-CompleterActionState
     }
 
     return $script:CompleterActionState
+}
+<#
+.SYNOPSIS
+Reads the target of a Windows app execution alias.
+
+.DESCRIPTION
+Calls CompleterActions.Internal.AppExecutionAlias.GetTarget, which reads the
+file's reparse data. An app execution alias is a zero-byte reparse point with
+the tag IO_REPARSE_TAG_APPEXECLINK; the third string of its data is the
+executable it starts. Nothing is run, and nothing is read on Linux or macOS.
+
+.PARAMETER LiteralPath
+The full path of the file to read.
+
+.OUTPUTS
+System.String
+Returns null when the file is not an app execution alias or its reparse data
+cannot be read, the empty string for an alias with no target, and otherwise
+the target path as the alias gives it.
+#>
+function Get-CompleterAppExecutionAliasTarget
+{
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)]
+        [ValidateNotNullOrEmpty()]
+        [string] $LiteralPath
+    )
+
+    [CompleterActions.Internal.AppExecutionAlias]::GetTarget($LiteralPath)
 }
 <#
 .SYNOPSIS
@@ -6327,6 +6363,16 @@ program (Subsystem 2), another subsystem, an unreadable header, no file
 extension, or an extension that only runs through cmd.exe. On Linux and macOS
 every resolved application may run.
 
+When the header of a .exe cannot be read, its reparse data is read with
+Get-CompleterAppExecutionAliasTarget. An app execution alias may run when its
+target is a fully qualified path to an existing .exe whose header reads as
+Subsystem 3; the alias is what runs, so Path stays the alias path. An alias
+with no target, or whose target does not exist, is not a .exe, has an
+unreadable header, or is not a console program, gets a reason that names the
+target. A file that is not an alias, or whose reparse data cannot be read,
+keeps the unreadable-header reason. The reparse data is never read on Linux
+or macOS.
+
 The warning text is returned as data; this helper writes no stream.
 
 .PARAMETER Name
@@ -6335,8 +6381,9 @@ The command name to resolve, as the author gave it.
 .OUTPUTS
 CompleterActions.CompleterHelpProbeApplication
 Returns a record with Name (as given), Path (the resolved file, or null when
-nothing was found), CanRun, and Warning (the not-found or not-run text, or
-null when the application may run).
+nothing was found), CanRun, Warning (the not-found or not-run text, or null
+when the application may run), and AliasTarget (the target an app execution
+alias names, or null when Path is not an alias or the alias names none).
 #>
 function Resolve-CompleterHelpProbeApplication
 {
@@ -6352,6 +6399,7 @@ function Resolve-CompleterHelpProbeApplication
 
     $path = $null
     $warning = $null
+    $aliasTarget = $null
     if ($null -eq $application)
     {
         $warning = "The command '$Name' was not found as an application, so the subcommand table is empty. Pass captured help with -HelpText, or fill the table by hand."
@@ -6368,7 +6416,44 @@ function Resolve-CompleterHelpProbeApplication
                 $subsystem = Get-CompleterPESubsystem -LiteralPath $path
                 if ($null -eq $subsystem)
                 {
-                    $reason = 'its program header could not be read'
+                    # An app execution alias is a zero-byte reparse point, so its own header never reads.
+                    $target = Get-CompleterAppExecutionAliasTarget -LiteralPath $path
+                    if ($null -eq $target)
+                    {
+                        $reason = 'its program header could not be read'
+                    }
+                    elseif ($target.Length -eq 0)
+                    {
+                        $reason = 'it is an app execution alias with no target'
+                    }
+                    else
+                    {
+                        $aliasTarget = $target
+                        if (-not [System.IO.Path]::IsPathFullyQualified($target) -or -not [System.IO.File]::Exists($target))
+                        {
+                            $reason = "its target '$target' does not exist"
+                        }
+                        elseif (-not [string]::Equals([System.IO.Path]::GetExtension($target), '.exe', [System.StringComparison]::OrdinalIgnoreCase))
+                        {
+                            $reason = "its target '$target' is not a .exe file"
+                        }
+                        else
+                        {
+                            $targetSubsystem = Get-CompleterPESubsystem -LiteralPath $target
+                            if ($null -eq $targetSubsystem)
+                            {
+                                $reason = "the program header of its target '$target' could not be read"
+                            }
+                            elseif ($targetSubsystem -eq 2)
+                            {
+                                $reason = "its target '$target' is a Windows GUI program"
+                            }
+                            elseif ($targetSubsystem -ne 3)
+                            {
+                                $reason = "its target '$target' is not a Windows console program (subsystem $targetSubsystem)"
+                            }
+                        }
+                    }
                 }
                 elseif ($subsystem -eq 2)
                 {
@@ -6396,11 +6481,12 @@ function Resolve-CompleterHelpProbeApplication
     }
 
     [pscustomobject] [ordered] @{
-        PSTypeName = 'CompleterActions.CompleterHelpProbeApplication'
-        Name       = $Name
-        Path       = $path
-        CanRun     = $null -ne $path -and $null -eq $warning
-        Warning    = $warning
+        PSTypeName  = 'CompleterActions.CompleterHelpProbeApplication'
+        Name        = $Name
+        Path        = $path
+        CanRun      = $null -ne $path -and $null -eq $warning
+        Warning     = $warning
+        AliasTarget = $aliasTarget
     }
 }
 <#
