@@ -521,7 +521,7 @@ function Import-CompleterScript
                 # both forms are tried in turn, and only command information for the
                 # resolved file itself is accepted, never a sibling a pattern matched.
                 $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
-                $scriptInfo = $null
+                $scriptCommand = $null
                 $otherPath = $null
                 foreach ($lookupPath in @(($resolvedPath -replace '[\[*?]', '[$0]'), $resolvedPath))
                 {
@@ -529,14 +529,14 @@ function Import-CompleterScript
                     if ($null -eq $candidate) { continue }
                     if ([string]::Equals($candidate.Path, $resolvedPath, $pathComparison))
                     {
-                        $scriptInfo = $candidate
+                        $scriptCommand = $candidate
                         break
                     }
 
                     $otherPath = $candidate.Path
                 }
 
-                if ($null -eq $scriptInfo)
+                if ($null -eq $scriptCommand)
                 {
                     if ($null -ne $otherPath)
                     {
@@ -548,11 +548,11 @@ function Import-CompleterScript
 
                 if (-not $Trusted)
                 {
-                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptInfo
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptCommand
                     Assert-CompleterScriptConformance -LiteralPath $resolvedPath -ParseResult $parseResult
                 }
 
-                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptInfo
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptCommand
 
                 foreach ($definition in $importSession.Definitions)
                 {
@@ -4885,13 +4885,16 @@ function Import-CompleterScriptDefinition
 
     try
     {
+        # The script is dot-sourced into this module's scope, so the variables the module
+        # keeps there carry the reserved __CompleterActions prefix and cannot shadow the
+        # script's own state.
         $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -Function @() -ArgumentList $Script -ScriptBlock {
             param(
                 [Parameter(Mandatory)]
-                [System.Management.Automation.ExternalScriptInfo] $ScriptInfo
+                [System.Management.Automation.ExternalScriptInfo] $__CompleterActionsScriptInfo
             )
 
-            $script:CapturedCompleterDefinitions = [System.Collections.Generic.List[object]]::new()
+            $script:__CompleterActionsCapturedDefinitions = [System.Collections.Generic.List[object]]::new()
 
             function Register-ArgumentCompleter
             {
@@ -4922,7 +4925,7 @@ function Import-CompleterScriptDefinition
                     # script; rebuilding it from text would drop that association.
                     $capturedScriptBlock = $ExecutionContext.SessionState.Module.NewBoundScriptBlock($ScriptBlock)
 
-                    $script:CapturedCompleterDefinitions.Add(
+                    $script:__CompleterActionsCapturedDefinitions.Add(
                         [pscustomobject] [ordered] @{
                             CommandName   = @($CommandName)
                             ParameterName = if ($Native) { @() } else { @($ParameterName) }
@@ -4933,11 +4936,11 @@ function Import-CompleterScriptDefinition
                 }
             }
 
-            $null = @(. $ScriptInfo)
+            $null = @(. $__CompleterActionsScriptInfo)
         }
 
         $capturedDefinitions = @(& $importModule {
-                @($script:CapturedCompleterDefinitions)
+                @($script:__CompleterActionsCapturedDefinitions)
             })
 
         if ($capturedDefinitions.Count -eq 0)

@@ -71,7 +71,9 @@ Describe 'Test-CompleterScript' {
         @{ Name = 'ImportableNativeCompleter.ps1'; Folder = 'Fixtures' },
         @{ Name = 'ParameterCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
         @{ Name = 'MultiCommandCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
-        @{ Name = 'ArrayExpressionCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' }
+        @{ Name = 'ArrayExpressionCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
+        @{ Name = 'ScriptInfoStateCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
+        @{ Name = 'CapturedDefinitionsStateCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' }
     ) {
         param(
             [string] $Name,
@@ -669,12 +671,153 @@ Describe 'Test-CompleterScript literal target arrays' {
         [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($markerPath)) | Should -Be ([System.Convert]::ToBase64String($markerBytes))
     }
 
+    It 'reports one finding at the argument for -ParameterName given <Name>' -TestCases @(
+        @{
+            Name         = 'an array literal'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName 'Name', 'Path' -ScriptBlock { 'ok' }"
+            Argument     = "'Name', 'Path'"
+            Construct    = 'ArrayLiteralAst'
+        },
+        @{
+            Name         = 'an array expression'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName @('Name', 'Path') -ScriptBlock { 'ok' }"
+            Argument     = "@('Name', 'Path')"
+            Construct    = 'ArrayExpressionAst'
+        },
+        @{
+            Name         = 'a single-element array expression'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName @('Name') -ScriptBlock { 'ok' }"
+            Argument     = "@('Name')"
+            Construct    = 'ArrayExpressionAst'
+        },
+        @{
+            Name         = 'a colon-bound array expression'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName:@('Name', 'Path') -ScriptBlock { 'ok' }"
+            Argument     = "@('Name', 'Path')"
+            Construct    = 'ArrayExpressionAst'
+        }
+    ) {
+        param(
+            [string] $Registration,
+            [string] $Argument,
+            [string] $Construct
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-array_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be $Construct
+        $findings[0].Line | Should -Be 1
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Argument) + 1)
+        $findings[0].Message | Should -Be 'The script passes an array to -ParameterName.'
+        $findings[0].Hint | Should -Be 'Give -ParameterName one literal string; Register-ArgumentCompleter binds a single parameter name. Register each parameter with its own call.'
+    }
+
+    It 'reports nothing for <Name>' -TestCases @(
+        @{
+            Name         = 'one literal -ParameterName string'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName 'Name' -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'a -CommandName array literal beside one parameter name'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool', 'Test-ArrayTargetToolTwo' -ParameterName 'Name' -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'a native -CommandName array literal'
+            Registration = "Register-ArgumentCompleter -Native -CommandName 'arraytarget', 'arraytarget.exe' -ScriptBlock { 'ok' }"
+        }
+    ) {
+        param(
+            [string] $Registration
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-single_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        @(Test-CompleterScript -LiteralPath $scriptPath) | Should -BeNullOrEmpty
+    }
+
+    It 'reports both the array and the blank name for <Name>' -TestCases @(
+        @{
+            Name      = 'an array literal with an empty name'
+            Argument  = "'', 'Path'"
+            Construct = 'ArrayLiteralAst'
+            Blank     = "''"
+        },
+        @{
+            Name      = 'an array expression with a blank name'
+            Argument  = "@('  ', 'Path')"
+            Construct = 'ArrayExpressionAst'
+            Blank     = "'  '"
+        }
+    ) {
+        param(
+            [string] $Argument,
+            [string] $Construct,
+            [string] $Blank
+        )
+
+        $registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName $Argument -ScriptBlock { 'ok' }"
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-blank-array_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 2
+        $findings[0].Construct | Should -Be $Construct
+        $findings[0].Column | Should -Be ($registration.IndexOf($Argument) + 1)
+        $findings[0].Message | Should -Be 'The script passes an array to -ParameterName.'
+        $findings[1].Severity | Should -Be 'Error'
+        $findings[1].Construct | Should -Be 'StringConstantExpressionAst'
+        $findings[1].Column | Should -Be ($registration.IndexOf($Blank, $registration.IndexOf($Argument)) + 1)
+        $findings[1].Message | Should -Be 'The script uses an empty or blank name for -ParameterName.'
+    }
+
+    It 'gives a non-literal -ParameterName value only the literal-string finding, with the one-string hint (<Name>)' -TestCases @(
+        @{ Name = 'a variable'; Argument = '$name'; Construct = 'VariableExpressionAst' },
+        @{ Name = 'a parenthesized string'; Argument = "('Name')"; Construct = 'ParenExpressionAst' },
+        @{ Name = 'an array expression with a redirection'; Argument = "@('Name' >> 'never-written.txt')"; Construct = 'ArrayExpressionAst' }
+    ) {
+        param(
+            [string] $Argument,
+            [string] $Construct
+        )
+
+        $registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName $Argument -ScriptBlock { 'ok' }"
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-dynamic_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be $Construct
+        $findings[0].Column | Should -Be ($registration.IndexOf($Argument) + 1)
+        $findings[0].Message | Should -Be 'The script must use literal string values for -ParameterName.'
+        $findings[0].Hint | Should -Be 'Replace the -ParameterName value with one literal string; a value computed at import time cannot be analyzed.'
+    }
+
+    It 'keeps the array hint for a non-literal -CommandName value' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'command-name-dynamic_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName `$tool -ScriptBlock { 'ok' }" -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Message | Should -Be 'The script must use literal string values for -CommandName.'
+        $findings[0].Hint | Should -Be "Replace the -CommandName value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed."
+    }
+
     It 'still accepts single-element and multi-element literal target arrays' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'literal-arrays_completer.ps1'
         Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @(
             "Register-ArgumentCompleter -Native -CommandName @('arraytarget') -ScriptBlock { 'ok' }",
             "Register-ArgumentCompleter -Native -CommandName @('arraytarget', 'arraytarget.exe') -ScriptBlock { 'ok' }",
-            "Register-ArgumentCompleter -CommandName @('Test-ArrayTargetTool') -ParameterName @('Name', 'Path') -ScriptBlock { 'ok' }"
+            "Register-ArgumentCompleter -CommandName @('Test-ArrayTargetTool', 'Test-ArrayTargetToolTwo') -ParameterName 'Name' -ScriptBlock { 'ok' }"
         )
 
         @(Test-CompleterScript -LiteralPath $scriptPath) | Should -BeNullOrEmpty

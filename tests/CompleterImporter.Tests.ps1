@@ -525,7 +525,7 @@ Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
         $imported.Count | Should -Be 2
         @($imported.Key | Sort-Object) | Should -Be @(
             'test-importedarrayone:name',
-            'test-importedarraytwo:path'
+            'test-importedarraytwo:name'
         )
 
         $registered = @($imported | Register-Completer -PassThru)
@@ -533,16 +533,66 @@ Register-ArgumentCompleter -Native -CommandName 'locationfixture' -ScriptBlock {
         $registered.Count | Should -Be 2
         @($registered.Key | Sort-Object) | Should -Be @(
             'test-importedarrayone:name',
-            'test-importedarraytwo:path'
+            'test-importedarraytwo:name'
         )
 
-        $nameInputScript = 'Test-ImportedArrayOne -Name array'
-        $nameCompletion = TabExpansion2 -InputScript $nameInputScript -CursorColumn $nameInputScript.Length
-        $nameCompletion.CompletionMatches.CompletionText | Should -Contain 'array-target'
+        $oneInputScript = 'Test-ImportedArrayOne -Name array'
+        $oneCompletion = TabExpansion2 -InputScript $oneInputScript -CursorColumn $oneInputScript.Length
+        $oneCompletion.CompletionMatches.CompletionText | Should -Contain 'array-target'
 
-        $pathInputScript = 'Test-ImportedArrayTwo -Path array'
-        $pathCompletion = TabExpansion2 -InputScript $pathInputScript -CursorColumn $pathInputScript.Length
-        $pathCompletion.CompletionMatches.CompletionText | Should -Contain 'array-target'
+        $twoInputScript = 'Test-ImportedArrayTwo -Name array'
+        $twoCompletion = TabExpansion2 -InputScript $twoInputScript -CursorColumn $twoInputScript.Length
+        $twoCompletion.CompletionMatches.CompletionText | Should -Contain 'array-target'
+    }
+
+    It 'refuses a script that passes an array to -ParameterName, and imports it with -Trusted' {
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath 'ParameterNameArrayCompleter.ps1'
+
+        $caught = $null
+        $strict = @(try { Import-CompleterScript -LiteralPath $fixturePath } catch { $caught = $_ })
+
+        $strict | Should -BeNullOrEmpty
+        $caught | Should -Not -BeNullOrEmpty
+        $caught.Exception.Message | Should -BeLike '*does not conform to the strict import grammar*'
+        $caught.Exception.Message | Should -BeLike '*Line 5, column 90 (ArrayExpressionAst): The script passes an array to -ParameterName.*'
+
+        $trusted = @(Import-CompleterScript -LiteralPath $fixturePath -Trusted)
+
+        @($trusted.Key | Sort-Object) | Should -Be @(
+            'test-importedparameterarraytool:name',
+            'test-importedparameterarraytool:path'
+        )
+        @($trusted.Trusted | Select-Object -Unique) | Should -Be @($true)
+    }
+
+    It 'gives a script whose guarded state is named <Name> its own state under the strict tier' -TestCases @(
+        @{ Name = 'ScriptInfo'; Fixture = 'ScriptInfoStateCompleter.ps1'; CommandName = 'Test-ScriptInfoStateTool'; Expected = @('script-info-alpha', 'script-info-beta') },
+        @{ Name = 'CapturedCompleterDefinitions'; Fixture = 'CapturedDefinitionsStateCompleter.ps1'; CommandName = 'Test-CapturedDefinitionsStateTool'; Expected = @('captured-alpha', 'captured-beta') }
+    ) {
+        param(
+            [string] $Fixture,
+            [string] $CommandName,
+            [string[]] $Expected
+        )
+
+        $fixturePath = Join-Path -Path $script:CompleterImporterFixtureRoot -ChildPath $Fixture
+
+        $imported = @(Import-CompleterScript -LiteralPath $fixturePath)
+
+        $imported.Count | Should -Be 1
+        $imported[0].Key | Should -Be ('{0}:name' -f $CommandName.ToLowerInvariant())
+        $imported[0].Trusted | Should -BeFalse
+        @(& $imported[0].ScriptBlock $CommandName 'Name' '' $null @{} | ForEach-Object { $_.CompletionText }) | Should -Be $Expected
+    }
+
+    It 'holds no capture scope name in src outside the reserved __CompleterActions names' {
+        $sourceRoot = Join-Path -Path $PSScriptRoot -ChildPath '..\src'
+        $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object -Property FullName -NotMatch -Value '[\\/]Core[\\/](bin|obj)[\\/]')
+
+        $hits = @($sourceFiles | Select-String -Pattern '\$(?:script:)?ScriptInfo\b|CapturedCompleterDefinitions' | ForEach-Object { '{0}:{1}: {2}' -f $_.Path, $_.LineNumber, $_.Line.Trim() })
+
+        $sourceFiles.Count | Should -BeGreaterThan 0
+        $hits | Should -BeNullOrEmpty
     }
 
     It 'imports native completer scripts that depend on helper functions and script scope' {

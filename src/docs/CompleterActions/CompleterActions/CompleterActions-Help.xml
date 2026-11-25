@@ -784,9 +784,11 @@ remain importable through the strict tier without redesign. Run
   `-ScriptBlock` a value. PowerShell cannot bind a repeated parameter or one
   left without its value.
 - Keep target metadata literal:
-  - `-CommandName` and `-ParameterName` may be a single literal string
-  - a literal string array
-  - or a literal `@('name', 'name.exe')` array expression
+  - `-CommandName` may be a single literal string, a literal string array, or
+    a literal `@('name', 'name.exe')` array expression
+  - `-ParameterName` takes one literal string, because
+    `Register-ArgumentCompleter` binds a single parameter name; register each
+    parameter with its own call
   - and every name must be non-empty: an empty or blank name cannot be bound
     or imported
 - Keep `-ScriptBlock` literal.

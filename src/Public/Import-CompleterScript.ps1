@@ -28,9 +28,11 @@ Register-ArgumentCompleter usage must use explicit parameter names and only the
 supported import-time surface: -CommandName, -ParameterName, the bare -Native
 switch, and -ScriptBlock.
 
-Target metadata must stay literal. -CommandName and -ParameterName may be a
-single literal string, a literal string array, or a literal @('...') array
-expression. -ScriptBlock must be a literal script block. Positional arguments,
+Target metadata must stay literal. -CommandName may be a single literal
+string, a literal string array, or a literal @('...') array expression.
+-ParameterName takes one literal string, because Register-ArgumentCompleter
+binds a single parameter name; register each parameter with its own call.
+-ScriptBlock must be a literal script block. Positional arguments,
 argument splatting, custom Register-ArgumentCompleter wrappers, dot-sourcing,
 top-level assignments, loops, try/catch blocks, alias bootstrap, cache
 initialization, and external command execution are not import-compatible and
@@ -119,7 +121,7 @@ function Import-CompleterScript
                 # both forms are tried in turn, and only command information for the
                 # resolved file itself is accepted, never a sibling a pattern matched.
                 $pathComparison = if ($IsWindows) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
-                $scriptInfo = $null
+                $scriptCommand = $null
                 $otherPath = $null
                 foreach ($lookupPath in @(($resolvedPath -replace '[\[*?]', '[$0]'), $resolvedPath))
                 {
@@ -127,14 +129,14 @@ function Import-CompleterScript
                     if ($null -eq $candidate) { continue }
                     if ([string]::Equals($candidate.Path, $resolvedPath, $pathComparison))
                     {
-                        $scriptInfo = $candidate
+                        $scriptCommand = $candidate
                         break
                     }
 
                     $otherPath = $candidate.Path
                 }
 
-                if ($null -eq $scriptInfo)
+                if ($null -eq $scriptCommand)
                 {
                     if ($null -ne $otherPath)
                     {
@@ -146,11 +148,11 @@ function Import-CompleterScript
 
                 if (-not $Trusted)
                 {
-                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptInfo
+                    $parseResult = Get-CompleterScriptParseResult -LiteralPath $resolvedPath -Script $scriptCommand
                     Assert-CompleterScriptConformance -LiteralPath $resolvedPath -ParseResult $parseResult
                 }
 
-                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptInfo
+                $importSession = Import-CompleterScriptDefinition -LiteralPath $resolvedPath -Script $scriptCommand
 
                 foreach ($definition in $importSession.Definitions)
                 {

@@ -44,13 +44,16 @@ function Import-CompleterScriptDefinition
 
     try
     {
+        # The script is dot-sourced into this module's scope, so the variables the module
+        # keeps there carry the reserved __CompleterActions prefix and cannot shadow the
+        # script's own state.
         $importModule = New-Module -Name ('CompleterActions.ScriptImport.{0}' -f ([guid]::NewGuid().ToString('N'))) -Function @() -ArgumentList $Script -ScriptBlock {
             param(
                 [Parameter(Mandatory)]
-                [System.Management.Automation.ExternalScriptInfo] $ScriptInfo
+                [System.Management.Automation.ExternalScriptInfo] $__CompleterActionsScriptInfo
             )
 
-            $script:CapturedCompleterDefinitions = [System.Collections.Generic.List[object]]::new()
+            $script:__CompleterActionsCapturedDefinitions = [System.Collections.Generic.List[object]]::new()
 
             function Register-ArgumentCompleter
             {
@@ -81,7 +84,7 @@ function Import-CompleterScriptDefinition
                     # script; rebuilding it from text would drop that association.
                     $capturedScriptBlock = $ExecutionContext.SessionState.Module.NewBoundScriptBlock($ScriptBlock)
 
-                    $script:CapturedCompleterDefinitions.Add(
+                    $script:__CompleterActionsCapturedDefinitions.Add(
                         [pscustomobject] [ordered] @{
                             CommandName   = @($CommandName)
                             ParameterName = if ($Native) { @() } else { @($ParameterName) }
@@ -92,11 +95,11 @@ function Import-CompleterScriptDefinition
                 }
             }
 
-            $null = @(. $ScriptInfo)
+            $null = @(. $__CompleterActionsScriptInfo)
         }
 
         $capturedDefinitions = @(& $importModule {
-                @($script:CapturedCompleterDefinitions)
+                @($script:__CompleterActionsCapturedDefinitions)
             })
 
         if ($capturedDefinitions.Count -eq 0)
