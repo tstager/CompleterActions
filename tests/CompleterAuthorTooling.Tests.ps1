@@ -601,6 +601,146 @@ Describe 'Test-CompleterRegistration' {
         $before.Count | Should -BeGreaterThan 0
         $after | Should -Be $before
     }
+
+    # The fixtures of the FromTarget tests above, with the output each gave in 3.0.1.
+    $targetOnlyCases = @(
+        @{ Kind = 'a native completer that matches'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture '; Texts = @('alpha', 'beta'); FromTarget = @($true, $true) },
+        @{ Kind = 'a parameter completer that matches'; Target = @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name' }; InputText = 'Test-ImportedFixtureTool -Name imported'; Texts = @('imported-alpha'); FromTarget = @($true) },
+        @{ Kind = 'a completer that returns nothing while a file name matches'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture fallback'; Texts = @(Join-Path -Path '.' -ChildPath 'fallback-marker.txt'); FromTarget = @($false) },
+        @{ Kind = 'a cursor on another parameter'; Target = @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One' }; InputText = 'Test-TwoParameterFixtureTool -One x -Two '; Texts = @('two-only'); FromTarget = @($false) }
+    )
+
+    Context 'TargetOnly' {
+        BeforeAll {
+            # One line per match, with its type and every property in order, so two outputs compare as a whole.
+            function ConvertTo-TestCompletionMatchText
+            {
+                param(
+                    [Parameter()]
+                    [AllowEmptyCollection()]
+                    [object[]] $Match = @()
+                )
+
+                @(
+                    foreach ($item in $Match)
+                    {
+                        '{0}: {1}' -f $item.GetType().FullName, (@($item.PSObject.Properties | ForEach-Object { '{0}={1}' -f $_.Name, $_.Value }) -join '; ')
+                    }
+                ) -join "`n"
+            }
+
+            function Invoke-TestTargetOnlyCompletion
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [scriptblock] $Run
+                )
+
+                function global:Test-TwoParameterFixtureTool
+                {
+                    [CmdletBinding()]
+                    param(
+                        [string] $One,
+                        [string] $Two
+                    )
+                }
+
+                Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -ScriptBlock { 'one-only' }
+                Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'Two' -ScriptBlock { 'two-only' }
+
+                # A fresh folder holding one file, so the engine's file-name fallback has exactly one match.
+                $location = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+                $null = New-Item -ItemType Directory -Path $location
+                Set-Content -LiteralPath (Join-Path -Path $location -ChildPath 'fallback-marker.txt') -Value 'marker' -Encoding utf8
+
+                Push-Location -LiteralPath $location
+
+                try
+                {
+                    & $Run
+                }
+                finally
+                {
+                    Pop-Location
+                }
+            }
+        }
+
+        It 'writes with -TargetOnly exactly the matches that Where-Object FromTarget keeps, for <Kind>' -TestCases $targetOnlyCases {
+            param($Target, $InputText, $FromTarget)
+
+            $result = Invoke-TestTargetOnlyCompletion -Run {
+                $all = @(Test-CompleterRegistration @Target -InputText $InputText)
+                $targetOnly = Test-CompleterRegistration @Target -InputText $InputText -TargetOnly -ErrorVariable commandErrors -ErrorAction Continue
+                $succeeded = $?
+
+                [pscustomobject] @{
+                    All        = $all
+                    TargetOnly = @($targetOnly)
+                    Succeeded  = $succeeded
+                    Errors     = @($commandErrors)
+                }
+            }
+
+            @($result.All.FromTarget) | Should -Be $FromTarget -Because 'the fixture gives the output it gave in 3.0.1'
+            ConvertTo-TestCompletionMatchText -Match $result.TargetOnly | Should -BeExactly (ConvertTo-TestCompletionMatchText -Match @($result.All | Where-Object FromTarget))
+            $result.TargetOnly.Count | Should -Be @($FromTarget | Where-Object { $_ }).Count
+            $result.Succeeded | Should -BeTrue
+            $result.Errors | Should -BeNullOrEmpty
+        }
+
+        It 'writes every match the engine returns without -TargetOnly or with -TargetOnly:$false, as 3.0.1 did, for <Kind>' -TestCases $targetOnlyCases {
+            param($Target, $InputText, $Texts, $FromTarget)
+
+            $result = Invoke-TestTargetOnlyCompletion -Run {
+                [pscustomobject] @{
+                    Omitted  = @(Test-CompleterRegistration @Target -InputText $InputText)
+                    Disabled = @(Test-CompleterRegistration @Target -InputText $InputText -TargetOnly:$false)
+                }
+            }
+
+            @($result.Omitted.CompletionText) | Should -Be $Texts
+            @($result.Omitted.FromTarget) | Should -Be $FromTarget
+            $result.Omitted.Count | Should -BeGreaterThan 0
+            ConvertTo-TestCompletionMatchText -Match $result.Disabled | Should -BeExactly (ConvertTo-TestCompletionMatchText -Match $result.Omitted)
+        }
+
+        It 'puts the runtime entry back when -TargetOnly drops every match' {
+            $result = Invoke-TestTargetOnlyCompletion -Run {
+                $original = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+                $output = @(Test-CompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -InputText 'Test-TwoParameterFixtureTool -One x -Two ' -TargetOnly)
+                $restored = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+
+                [pscustomobject] @{
+                    Output   = $output
+                    Restored = [object]::ReferenceEquals($original, $restored)
+                }
+            }
+
+            $result.Output | Should -BeNullOrEmpty
+            $result.Restored | Should -BeTrue
+        }
+
+        It 'declares -TargetOnly as an optional switch on every parameter set' {
+            $command = Get-Command -Name 'Test-CompleterRegistration' -Module 'CompleterActions'
+
+            $command.Parameters['TargetOnly'].ParameterType | Should -Be ([System.Management.Automation.SwitchParameter])
+
+            foreach ($set in $command.ParameterSets)
+            {
+                $parameter = @($set.Parameters | Where-Object { $_.Name -eq 'TargetOnly' })
+
+                $parameter.Count | Should -Be 1 -Because "the set $($set.Name) carries -TargetOnly"
+                $parameter[0].IsMandatory | Should -BeFalse
+                $parameter[0].Position | Should -BeLessThan 0
+                $parameter[0].ValueFromPipeline | Should -BeFalse
+                $parameter[0].ValueFromPipelineByPropertyName | Should -BeFalse
+            }
+
+            @($command.ParameterSets.Name | Sort-Object) | Should -Be @('CommandParameter', 'InputObject', 'Native')
+            $command.DefaultParameterSet | Should -Be 'CommandParameter'
+        }
+    }
 }
 
 Describe 'Test-CompleterScript literal target arrays' {

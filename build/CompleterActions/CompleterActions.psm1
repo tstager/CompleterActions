@@ -1427,7 +1427,10 @@ function Test-CompleterRegistration
 
         [Parameter()]
         [ValidateRange(0, [int]::MaxValue)]
-        [int] $CursorPosition
+        [int] $CursorPosition,
+
+        [Parameter()]
+        [switch] $TargetOnly
     )
 
     begin
@@ -1545,7 +1548,14 @@ function Test-CompleterRegistration
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition -FromTarget:$targetCompletionTexts.Contains($completionMatch.CompletionText)))
+                $match = New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition -FromTarget:$targetCompletionTexts.Contains($completionMatch.CompletionText)
+
+                if ($TargetOnly -and -not $match.FromTarget)
+                {
+                    continue
+                }
+
+                $PSCmdlet.WriteObject($match)
             }
         }
         catch

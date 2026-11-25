@@ -2933,6 +2933,13 @@ with any `Pending` registration of the same script, becomes `Active`, or
             <maml:name>System.Int32</maml:name>
           </dev:type>
         </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>TargetOnly</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
@@ -2958,6 +2965,13 @@ with any `Pending` registration of the same script, becomes `Active`, or
           <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
           <dev:type>
             <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>TargetOnly</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
       </command:syntaxItem>
@@ -2992,6 +3006,13 @@ with any `Pending` registration of the same script, becomes `Active`, or
           <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
           <dev:type>
             <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>TargetOnly</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
       </command:syntaxItem>
@@ -3071,6 +3092,17 @@ parameter completer.</maml:para>
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>TargetOnly</maml:name>
+        <maml:description>
+          <maml:para>Returns only the matches whose `FromTarget` is `$true`, the ones the target's
+own completer produced. When the target's completer produced none, nothing is
+returned. Without it, every match the engine returns is written.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
     </command:parameters>
     <command:inputTypes>
       <command:inputType>
@@ -3147,14 +3179,14 @@ completing an argument for its parameter.</maml:para>
         <maml:title>--------- EXAMPLE 3 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' |
-    Where-Object FromTarget
+$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' -TargetOnly
 $matches.CompletionText | Should -Contain 'checkout'
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Asserts inside a Pester test on the matches the git completer produced
 itself, so a match the engine supplied without it cannot satisfy the
-assertion.</maml:para>
+assertion. `-TargetOnly` is equivalent to piping the matches to
+`Where-Object FromTarget`.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />

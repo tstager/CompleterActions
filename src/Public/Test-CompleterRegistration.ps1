@@ -68,6 +68,11 @@ command the text names.
 The zero-based cursor position within InputText at which completion runs. The
 default is the end of the input.
 
+.PARAMETER TargetOnly
+Returns only the matches whose FromTarget is $true, the ones the target's own
+completer produced. When the target's completer produced none, nothing is
+returned. Without it, every match the engine returns is written.
+
 .OUTPUTS
 CompleterActions.CompletionMatch
 Returns CompleterActions.CompletionMatch records, one per completion match,
@@ -90,12 +95,13 @@ Verifies a registration record returned by Get-Completer by
 completing an argument for its parameter.
 
 .EXAMPLE
-PS> $matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' | Where-Object FromTarget
+PS> $matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' -TargetOnly
 $matches.CompletionText | Should -Contain 'checkout'
 
 Asserts inside a Pester test on the matches the git completer produced
 itself, so a match the engine supplied without it cannot satisfy the
-assertion.
+assertion. TargetOnly is equivalent to piping the matches to
+Where-Object FromTarget.
 
 .NOTES
 Completion runs from the module's scope, so the commands named in InputText
@@ -131,7 +137,10 @@ function Test-CompleterRegistration
 
         [Parameter()]
         [ValidateRange(0, [int]::MaxValue)]
-        [int] $CursorPosition
+        [int] $CursorPosition,
+
+        [Parameter()]
+        [switch] $TargetOnly
     )
 
     begin
@@ -249,7 +258,14 @@ function Test-CompleterRegistration
 
             foreach ($completionMatch in @($completion.CompletionMatches))
             {
-                $PSCmdlet.WriteObject((New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition -FromTarget:$targetCompletionTexts.Contains($completionMatch.CompletionText)))
+                $match = New-CompletionMatch -Target $target -CompletionResult $completionMatch -InputText $InputText -CursorPosition $resolvedCursorPosition -FromTarget:$targetCompletionTexts.Contains($completionMatch.CompletionText)
+
+                if ($TargetOnly -and -not $match.FromTarget)
+                {
+                    continue
+                }
+
+                $PSCmdlet.WriteObject($match)
             }
         }
         catch
