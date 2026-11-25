@@ -1250,6 +1250,400 @@ Import-CompleterSet -LiteralPath $SetPath | Select-Object -Property Key, Runtime
     }
 }
 
+Describe 'Version selection for -Name' {
+    BeforeAll {
+        # The roots of section 13 check 2: CaFixtureSet 1.0.0 and 1.2.0 in the first, 2.0.0 in the second.
+        function New-TestVersionRoot
+        {
+            [CmdletBinding(SupportsShouldProcess)]
+            param(
+                [Parameter(Mandatory)]
+                [string] $Root
+            )
+
+            if (-not $PSCmdlet.ShouldProcess($Root, 'Create the version selection module roots'))
+            {
+                return
+            }
+
+            $firstRoot = Join-Path -Path $Root -ChildPath 'first'
+            $secondRoot = Join-Path -Path $Root -ChildPath 'second'
+            $bases = [ordered] @{}
+
+            foreach ($version in '1.0.0', '1.2.0')
+            {
+                $bases[$version] = New-TestCompleterSetPackage -Root $firstRoot -Name 'CaFixtureSet' -Version $version
+            }
+
+            $bases['2.0.0'] = New-TestCompleterSetPackage -Root $secondRoot -Name 'CaFixtureSet' -Version '2.0.0'
+
+            [pscustomobject] @{
+                FirstRoot  = $firstRoot
+                SecondRoot = $secondRoot
+                ModulePath = Join-TestModulePath -Root $firstRoot, $secondRoot
+                Bases      = $bases
+            }
+        }
+
+        function Invoke-TestVersionImport
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $ModulePath,
+
+                [Parameter()]
+                [hashtable] $Version = @{}
+            )
+
+            $savedModulePath = $env:PSModulePath
+            try
+            {
+                $env:PSModulePath = $ModulePath
+                $output = @(Import-CompleterSet -Name 'CaFixtureSet' @Version -Force -Verbose 4>&1)
+            }
+            finally
+            {
+                $env:PSModulePath = $savedModulePath
+            }
+
+            [pscustomobject] @{
+                Records    = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+                ModuleLine = @(
+                    $output |
+                        Where-Object { $_ -is [System.Management.Automation.VerboseRecord] -and $_.Message.StartsWith('Completer set module ', [System.StringComparison]::Ordinal) } |
+                        ForEach-Object { $_.Message }
+                )
+            }
+        }
+
+        function Get-TestVersionFailure
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $ModulePath,
+
+                [Parameter(Mandatory)]
+                [string[]] $Name,
+
+                [Parameter(Mandatory)]
+                [hashtable] $Version
+            )
+
+            $savedModulePath = $env:PSModulePath
+            try
+            {
+                $env:PSModulePath = $ModulePath
+                $importThrown = { Import-CompleterSet -Name $Name @Version } | Should -Throw -PassThru
+                $testThrown = { Test-CompleterSet -Name $Name @Version } | Should -Throw -PassThru
+            }
+            finally
+            {
+                $env:PSModulePath = $savedModulePath
+            }
+
+            [pscustomobject] @{
+                Import = $importThrown.Exception.Message
+                Test   = $testThrown.Exception.Message
+            }
+        }
+    }
+
+    BeforeEach {
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+
+        foreach ($cleanupTarget in $script:PackageCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Import-Module -Name $script:ModuleManifestPath -Force | Out-Null
+
+        $script:PackageRoot = Join-Path -Path $TestDrive -ChildPath ('ver-{0}' -f ([guid]::NewGuid().ToString('N')))
+        New-Item -Path $script:PackageRoot -ItemType Directory | Out-Null
+        $script:SavedModulePath = $env:PSModulePath
+    }
+
+    AfterEach {
+        $env:PSModulePath = $script:SavedModulePath
+
+        foreach ($cleanupTarget in $script:PackageCleanupTargets)
+        {
+            Invoke-TestRuntimeCompleterCleanup @cleanupTarget
+        }
+
+        Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
+    }
+
+    It 'selects <Expected> for <Case>' -TestCases @(
+        @{ Case = 'no version parameter'; Version = @{}; Expected = '1.2.0' }
+        @{ Case = '-MinimumVersion 1.1.3'; Version = @{ MinimumVersion = '1.1.3' }; Expected = '1.2.0' }
+        @{ Case = '-MinimumVersion 1.2.0'; Version = @{ MinimumVersion = '1.2.0' }; Expected = '1.2.0' }
+        @{ Case = '-MinimumVersion 1.0.0, the highest of two candidates'; Version = @{ MinimumVersion = '1.0.0' }; Expected = '1.2.0' }
+        @{ Case = '-MinimumVersion 1.5.0, from the second root'; Version = @{ MinimumVersion = '1.5.0' }; Expected = '2.0.0' }
+        @{ Case = '-RequiredVersion 1.0.0'; Version = @{ RequiredVersion = '1.0.0' }; Expected = '1.0.0' }
+        @{ Case = '-RequiredVersion 2.0.0, from the second root'; Version = @{ RequiredVersion = '2.0.0' }; Expected = '2.0.0' }
+    ) {
+        param($Case, $Version, $Expected)
+
+        $null = $Case
+        $roots = New-TestVersionRoot -Root $script:PackageRoot
+        $expectedBase = $roots.Bases[$Expected]
+
+        $result = Invoke-TestVersionImport -ModulePath $roots.ModulePath -Version $Version
+
+        $result.ModuleLine | Should -Be @(Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version $Expected -ModuleBase $expectedBase)
+        $result.Records.Count | Should -Be 6
+        foreach ($record in $result.Records)
+        {
+            $record.ScriptPath.StartsWith($expectedBase + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::Ordinal) | Should -BeTrue -Because "'$($record.ScriptPath)' must be under '$expectedBase'"
+        }
+    }
+
+    It 'selects -RequiredVersion 1.2.0 from the first root when the second root holds 1.2.0 as well' {
+        $roots = New-TestVersionRoot -Root $script:PackageRoot
+        $null = New-TestCompleterSetPackage -Root $roots.SecondRoot -Name 'CaFixtureSet' -Version '1.2.0'
+
+        $result = Invoke-TestVersionImport -ModulePath $roots.ModulePath -Version @{ RequiredVersion = '1.2.0' }
+
+        $result.ModuleLine | Should -Be @(Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '1.2.0' -ModuleBase $roots.Bases['1.2.0'])
+        $result.Records.Count | Should -Be 6
+    }
+
+    It 'fails <Case> through Import-CompleterSet and Test-CompleterSet with the installed versions, highest first and each once' -TestCases @(
+        @{ Case = '-MinimumVersion 3.0.0'; Version = @{ MinimumVersion = '3.0.0' }; Wanted = 'version 3.0.0 or later' }
+        @{ Case = '-RequiredVersion 1.1.0'; Version = @{ RequiredVersion = '1.1.0' }; Wanted = 'version 1.1.0' }
+    ) {
+        param($Case, $Version, $Wanted)
+
+        $null = $Case
+        $roots = New-TestVersionRoot -Root $script:PackageRoot
+        # A version installed in two roots is listed once.
+        $null = New-TestCompleterSetPackage -Root $roots.SecondRoot -Name 'CaFixtureSet' -Version '1.2.0'
+        $expected = "No installed module named 'CaFixtureSet' with $Wanted was found in `$env:PSModulePath. Installed versions: 2.0.0, 1.2.0, 1.0.0."
+
+        $failure = Get-TestVersionFailure -ModulePath $roots.ModulePath -Name 'CaFixtureSet' -Version $Version
+
+        $failure.Import | Should -BeExactly "Failed to import completer set. $expected"
+        $failure.Test | Should -BeExactly "Failed to test completer set. $expected"
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'fails with the not-found text unchanged when no root holds a candidate, for <Case>' -TestCases @(
+        @{ Case = 'a missing module and -RequiredVersion'; Name = 'cafixmissing'; Version = @{ RequiredVersion = '1.0.0' } }
+        @{ Case = 'a missing module and -MinimumVersion'; Name = 'cafixmissing'; Version = @{ MinimumVersion = '1.0.0' } }
+        @{ Case = 'a module whose only version folder differs from its manifest'; Name = 'CaFixtureSet'; Version = @{ MinimumVersion = '1.0.0' } }
+    ) {
+        param($Case, $Name, $Version)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $mismatchedBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        Rename-Item -LiteralPath $mismatchedBase -NewName '9.0.0'
+        $expected = "No installed module named '$Name' was found in `$env:PSModulePath. Install it with Install-PSResource $Name."
+
+        $failure = Get-TestVersionFailure -ModulePath (Join-TestModulePath -Root $root) -Name $Name -Version $Version
+
+        $failure.Import | Should -BeExactly "Failed to import completer set. $expected"
+        $failure.Test | Should -BeExactly "Failed to test completer set. $expected"
+    }
+
+    It 'fails <Case> before resolving any name' -TestCases @(
+        @{ Case = 'both version parameters'; Names = @('CaFixtureSet'); Version = @{ MinimumVersion = '1.0.0'; RequiredVersion = '1.0.0' }; Expected = '-MinimumVersion and -RequiredVersion cannot be used together.' }
+        @{ Case = 'both version parameters with two names'; Names = @('CaFixtureSet', 'CaFixtureAlt'); Version = @{ MinimumVersion = '1.0.0'; RequiredVersion = '1.0.0' }; Expected = '-MinimumVersion and -RequiredVersion cannot be used together.' }
+        @{ Case = '-MinimumVersion with two names'; Names = @('CaFixtureSet', 'CaFixtureAlt'); Version = @{ MinimumVersion = '1.0.0' }; Expected = '-MinimumVersion and -RequiredVersion apply to one module name, but 2 names were given.' }
+        @{ Case = '-RequiredVersion with three names'; Names = @('CaFixtureSet', 'CaFixtureAlt', 'CaFixtureSet'); Version = @{ RequiredVersion = '1.0.0' }; Expected = '-MinimumVersion and -RequiredVersion apply to one module name, but 3 names were given.' }
+    ) {
+        param($Case, $Names, $Version, $Expected)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+
+        & (Get-Module -Name 'CompleterActions') {
+            $script:TestResolveCalls = 0
+
+            function script:Resolve-CompleterSetModule
+            {
+                param([string] $Name, [version] $MinimumVersion, [version] $RequiredVersion)
+
+                $null = $Name, $MinimumVersion, $RequiredVersion
+                $script:TestResolveCalls++
+                throw 'Resolve-CompleterSetModule ran.'
+            }
+        }
+
+        $failure = Get-TestVersionFailure -ModulePath (Join-TestModulePath -Root $root) -Name $Names -Version $Version
+
+        $failure.Import | Should -BeExactly "Failed to import completer set. $Expected"
+        $failure.Test | Should -BeExactly "Failed to test completer set. $Expected"
+        (& (Get-Module -Name 'CompleterActions') { $script:TestResolveCalls }) | Should -Be 0
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'selects a 2.0.0 folder whose manifest carries Prerelease preview1 by -RequiredVersion 2.0.0 and shows 2.0.0-preview1' {
+        $roots = New-TestVersionRoot -Root $script:PackageRoot
+        $manifestPath = Join-Path -Path $roots.Bases['2.0.0'] -ChildPath 'CaFixtureSet.psd1'
+        $manifestText = (Get-Content -LiteralPath $manifestPath -Raw).Replace("# Prerelease = ''", "Prerelease = 'preview1'")
+        Set-Content -LiteralPath $manifestPath -Value $manifestText -Encoding utf8 -NoNewline
+        (Import-PowerShellDataFile -LiteralPath $manifestPath).PrivateData.PSData.Prerelease | Should -Be 'preview1'
+
+        $result = Invoke-TestVersionImport -ModulePath $roots.ModulePath -Version @{ RequiredVersion = '2.0.0' }
+
+        $result.ModuleLine | Should -Be @(Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '2.0.0-preview1' -ModuleBase $roots.Bases['2.0.0'])
+        $result.Records.Count | Should -Be 6
+    }
+
+    It 'takes an unversioned copy beside a version folder only with a version parameter, for <Case>' -TestCases @(
+        @{ Case = 'no version parameter'; Version = @{}; Unversioned = $false }
+        @{ Case = '-MinimumVersion 1.5.0'; Version = @{ MinimumVersion = '1.5.0' }; Unversioned = $true }
+        @{ Case = '-RequiredVersion 2.0.0'; Version = @{ RequiredVersion = '2.0.0' }; Unversioned = $true }
+    ) {
+        param($Case, $Version, $Unversioned)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleFolder = [System.IO.Path]::GetFullPath((Join-Path -Path $root -ChildPath 'CaFixtureSet'))
+        $stagedBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '2.0.0'
+        New-Item -Path $moduleFolder -ItemType Directory | Out-Null
+        Get-ChildItem -LiteralPath $stagedBase | Move-Item -Destination $moduleFolder
+        $versionedBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+
+        $result = Invoke-TestVersionImport -ModulePath (Join-TestModulePath -Root $root) -Version $Version
+
+        $expectedLine = if ($Unversioned)
+        {
+            Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '2.0.0' -ModuleBase $moduleFolder
+        }
+        else
+        {
+            Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '1.0.0' -ModuleBase $versionedBase
+        }
+
+        $result.ModuleLine | Should -Be @($expectedLine)
+        $result.Records.Count | Should -Be 6
+    }
+
+    It 'takes the version folder over an unversioned copy of the same version, for <Case>' -TestCases @(
+        @{ Case = '-MinimumVersion 2.0.0'; Version = @{ MinimumVersion = '2.0.0' } }
+        @{ Case = '-RequiredVersion 2.0.0'; Version = @{ RequiredVersion = '2.0.0' } }
+    ) {
+        param($Case, $Version)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $moduleFolder = [System.IO.Path]::GetFullPath((Join-Path -Path $root -ChildPath 'CaFixtureSet'))
+        $stagedBase = New-TestCompleterSetPackage -Root (Join-Path -Path $script:PackageRoot -ChildPath 'staging') -Name 'CaFixtureSet' -Version '2.0.0'
+        New-Item -Path $moduleFolder -ItemType Directory | Out-Null
+        Get-ChildItem -LiteralPath $stagedBase | Move-Item -Destination $moduleFolder
+        $versionedBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '2.0.0'
+
+        $result = Invoke-TestVersionImport -ModulePath (Join-TestModulePath -Root $root) -Version $Version
+
+        $result.ModuleLine | Should -Be @(Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '2.0.0' -ModuleBase $versionedBase)
+        $result.Records.Count | Should -Be 6
+    }
+
+    It 'takes no version folder that differs from its manifest and no unversioned manifest whose version does not parse, and compares versions exactly, for <Case>' -TestCases @(
+        @{ Case = '-MinimumVersion 1.0.0'; Version = @{ MinimumVersion = '1.0.0' }; Wanted = $null }
+        @{ Case = '-RequiredVersion 3.0.0, the folder of a 1.0.0 manifest'; Version = @{ RequiredVersion = '3.0.0' }; Wanted = 'version 3.0.0' }
+        @{ Case = '-RequiredVersion 1.0.0, the manifest in a 3.0.0 folder'; Version = @{ RequiredVersion = '1.0.0' }; Wanted = 'version 1.0.0' }
+        @{ Case = '-RequiredVersion 1.2.0.0'; Version = @{ RequiredVersion = '1.2.0.0' }; Wanted = 'version 1.2.0.0' }
+        @{ Case = '-MinimumVersion 1.2.0.0'; Version = @{ MinimumVersion = '1.2.0.0' }; Wanted = 'version 1.2.0.0 or later' }
+    ) {
+        param($Case, $Version, $Wanted)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $mismatchedBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        Rename-Item -LiteralPath $mismatchedBase -NewName '3.0.0'
+        $validBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.2.0'
+        Set-Content -LiteralPath ([System.IO.Path]::Combine($root, 'CaFixtureSet', 'CaFixtureSet.psd1')) -Value "@{ ModuleVersion = 'not-a-version'; PrivateData = @{ CompleterSet = 'completers/completers.psd1' } }" -Encoding utf8
+        $modulePath = Join-TestModulePath -Root $root
+
+        if ($null -eq $Wanted)
+        {
+            $result = Invoke-TestVersionImport -ModulePath $modulePath -Version $Version
+            $result.ModuleLine | Should -Be @(Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '1.2.0' -ModuleBase $validBase)
+            return
+        }
+
+        $expected = "No installed module named 'CaFixtureSet' with $Wanted was found in `$env:PSModulePath. Installed versions: 1.2.0."
+
+        $failure = Get-TestVersionFailure -ModulePath $modulePath -Name 'CaFixtureSet' -Version $Version
+
+        $failure.Import | Should -BeExactly "Failed to import completer set. $expected"
+        $failure.Test | Should -BeExactly "Failed to test completer set. $expected"
+    }
+
+    It 'shows the selected version in the trusted-entry warning' {
+        $roots = New-TestVersionRoot -Root $script:PackageRoot
+        $selectedBase = $roots.Bases['1.0.0']
+        Export-TestPackageSet -ModuleBase $selectedBase -ScriptPath (Get-TestFixtureScriptPath -ModuleBase $selectedBase -Fixture 'gamma') -TrustedScriptPath (Get-TestFixtureScriptPath -ModuleBase $selectedBase -Fixture 'alpha'), (Get-TestFixtureScriptPath -ModuleBase $selectedBase -Fixture 'beta')
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = $roots.ModulePath
+            $records = @(Import-CompleterSet -Name 'CaFixtureSet' -RequiredVersion '1.0.0' -WarningVariable versionWarnings -WarningAction SilentlyContinue)
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        @($versionWarnings.Message) | Should -Be @("The completer set module 'CaFixtureSet' 1.0.0 declares 2 trusted completer scripts, which run without the strict grammar check at first tab.")
+        $records.Count | Should -Be 6
+    }
+
+    It 'tests the copy a version parameter selects through Test-CompleterSet -Name' {
+        $roots = New-TestVersionRoot -Root $script:PackageRoot
+        $changedBase = $roots.Bases['1.0.0']
+        Add-Content -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $changedBase -Fixture 'alpha') -Value '# changed after the set was written' -Encoding utf8
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = $roots.ModulePath
+            $required = @(Test-CompleterSet -Name 'CaFixtureSet' -RequiredVersion '1.0.0')
+            $minimum = @(Test-CompleterSet -Name 'CaFixtureSet' -MinimumVersion '1.1.3')
+            $unpinned = @(Test-CompleterSet -Name 'CaFixtureSet')
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        @($required | ForEach-Object { '{0} {1}' -f $_.Construct, $_.Severity }) | Should -Be @('HashMismatch Warning')
+        $required[0].Path | Should -BeExactly ([System.IO.Path]::Combine($changedBase, 'completers', 'completers.psd1'))
+        $minimum | Should -BeNullOrEmpty
+        $unpinned | Should -BeNullOrEmpty
+    }
+
+    It 'declares -MinimumVersion and -RequiredVersion on <Command> as optional System.Version parameters of the Name set alone' -TestCases @(
+        @{ Command = 'Import-CompleterSet' }
+        @{ Command = 'Test-CompleterSet' }
+    ) {
+        param($Command)
+
+        $commandInfo = Get-Command -Name $Command
+
+        $commandInfo.DefaultParameterSet | Should -Be 'Path'
+        foreach ($parameterName in 'MinimumVersion', 'RequiredVersion')
+        {
+            $parameter = $commandInfo.Parameters[$parameterName]
+            $attributes = @($parameter.Attributes | Where-Object { $_ -is [System.Management.Automation.ParameterAttribute] })
+
+            $parameter.ParameterType | Should -Be ([version])
+            $attributes.Count | Should -Be 1
+            $attributes[0].ParameterSetName | Should -Be 'Name'
+            $attributes[0].Mandatory | Should -BeFalse
+            $attributes[0].Position | Should -Be ([int]::MinValue)
+            $attributes[0].ValueFromPipeline | Should -BeFalse
+            $attributes[0].ValueFromPipelineByPropertyName | Should -BeFalse
+        }
+    }
+}
+
 Describe 'Test-CompleterSet package checks' {
     BeforeAll {
         function Format-TestFinding

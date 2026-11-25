@@ -120,6 +120,24 @@ The names of installed completer set modules. Each name is taken literally: a
 name containing *, ?, [, or ] fails the call before any name is resolved. The
 parameter takes no pipeline input.
 
+.PARAMETER MinimumVersion
+Selects the highest installed version of the module, equal to or above this
+one, from the first $env:PSModulePath root that holds such a version; a root
+whose versions are all lower is passed over. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders. Write
+the version as its folder is named, because versions compare exactly: 1.2.0
+and 1.2.0.0 differ. A prerelease label takes no part. It applies to one -Name
+and cannot be used with -RequiredVersion.
+
+.PARAMETER RequiredVersion
+Selects the installed version of the module that equals this one, from the
+first $env:PSModulePath root that holds it. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders. Write
+the version as its folder is named, because versions compare exactly: 1.2.0
+and 1.2.0.0 differ. A prerelease label takes no part: 2.0.0-preview1 is
+installed in the folder 2.0.0 and is selected by 2.0.0. It applies to one
+-Name and cannot be used with -MinimumVersion.
+
 .PARAMETER Filter
 The file-name pattern of the scan for scripts that no entry lists. The scan
 is recursive under the set file's directory. The default is *_completer.ps1.
@@ -166,6 +184,14 @@ function Test-CompleterSet
         [ValidateNotNullOrEmpty()]
         [string[]] $Name,
 
+        [Parameter(ParameterSetName = 'Name')]
+        [ValidateNotNull()]
+        [version] $MinimumVersion,
+
+        [Parameter(ParameterSetName = 'Name')]
+        [ValidateNotNull()]
+        [version] $RequiredVersion,
+
         [Parameter()]
         [ValidateNotNullOrEmpty()]
         [string] $Filter = '*_completer.ps1'
@@ -178,6 +204,26 @@ function Test-CompleterSet
             $sets = @(
                 if ($PSCmdlet.ParameterSetName -eq 'Name')
                 {
+                    $versionParameters = @{}
+
+                    foreach ($versionParameterName in 'MinimumVersion', 'RequiredVersion')
+                    {
+                        if ($PSBoundParameters.ContainsKey($versionParameterName))
+                        {
+                            $versionParameters[$versionParameterName] = $PSBoundParameters[$versionParameterName]
+                        }
+                    }
+
+                    if ($versionParameters.Count -eq 2)
+                    {
+                        throw '-MinimumVersion and -RequiredVersion cannot be used together.'
+                    }
+
+                    if ($versionParameters.Count -eq 1 -and $Name.Count -gt 1)
+                    {
+                        throw "-MinimumVersion and -RequiredVersion apply to one module name, but $($Name.Count) names were given."
+                    }
+
                     foreach ($nameItem in $Name)
                     {
                         if ($nameItem -match '[*?\[\]]')
@@ -188,7 +234,7 @@ function Test-CompleterSet
 
                     foreach ($nameItem in $Name)
                     {
-                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem @versionParameters
                         @{ SetPath = $setModule.SetPath; Module = $setModule }
                     }
                 }
