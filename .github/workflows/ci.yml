@@ -3,7 +3,12 @@ name: CI
 on:
   push:
     branches: [main]
+  # A pull request that changes only these files runs nothing. README.md and
+  # src/docs are not listed: the tests read both, and src/docs ships as help.
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - 'CHANGELOG.md'
 
 permissions:
   contents: read
