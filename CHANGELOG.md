@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ## [Unreleased]
 
+## [3.1.0-preview1] - 2026-11-25
+
 The authoring second pass, additive on the 3.x line, with six defect fixes
 folded in. The module exports twelve functions and no alias, and the core
 assembly keeps `AssemblyVersion` 3.0.0.0. Four of the changes alter what
@@ -1293,7 +1295,8 @@ Version 1.1.0 (commit
 [`05ebec3`](https://github.com/tstager/CompleterActions/commit/05ebec3)) is the
 baseline for this file; earlier history is not documented.
 
-[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.0.1...HEAD
+[Unreleased]: https://github.com/tstager/CompleterActions/compare/v3.1.0-preview1...HEAD
+[3.1.0-preview1]: https://github.com/tstager/CompleterActions/compare/v3.0.1...v3.1.0-preview1
 [3.0.1]: https://github.com/tstager/CompleterActions/compare/v3.0.0...v3.0.1
 [3.0.1-preview2]: https://github.com/tstager/CompleterActions/compare/v3.0.1-preview1...v3.0.1-preview2
 [3.0.1-preview1]: https://github.com/tstager/CompleterActions/compare/v3.0.0...v3.0.1-preview1
