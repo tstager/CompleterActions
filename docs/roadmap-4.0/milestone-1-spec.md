@@ -702,3 +702,12 @@ Taken on 2026-11-25 on the owner's machine, not elevated, PowerShell 7.7.0. The 
 **`pwsh` on `PATH`.** `Get-Command pwsh -CommandType Application -All` in a `pwsh -NoProfile` child returned, first, `...\WindowsApps\Microsoft.PowerShell_8wekyb3d8bbwe\pwsh.exe`, an alias. A child started from any `pwsh` on the machine, with `PATH` reset to `C:\Windows\System32`, had that package folder at or near the front of its `PATH`. Putting `$PSHOME` first in the parent therefore does not pin a child.
 
 **PS_Completers.** At `9db457c`: 176 completer folders, each with a script and a markdown file; no script passes `-ParameterName` to `Register-ArgumentCompleter` (the two matches for the text are calls to the scripts' own helper functions). The installed 1.3.1 set is 65984 bytes, UTF-8 without a byte-order mark, LF line endings, 176 entries, each with a `Hash` in the exact shape `Export-CompleterSet` writes.
+
+## 15. Amendments after the final review
+
+The owner ruled on these on 2026-11-25, after the final review of the branch. Each amends the section named and is implemented on the branch.
+
+1. **Section 5, what is updated.** An untrusted entry whose script does not pass the strict grammar is not updated. It is skipped with the skipped-entry warning, whose problem text is the first grammar Error as `Test-CompleterScript` words it. Without this, a matching `Hash` would let `Import-CompleterSet` take the fast path and move the failure from import to the first tab.
+2. **Section 4, candidates.** With a version parameter, a version folder or an unversioned manifest that cannot be read is left out of the candidates; it no longer fails the call. A pin therefore never breaks a call that works without one, as `Import-Module` behaves. Without a version parameter, resolution and its errors are as in 3.0.1.
+3. **Section 3, existing file.** When a directory sits at the markdown path, the call fails before anything runs, with or without `-Force`: `Failed to create completer script. Documentation files must be file paths. '<md path>' is a directory.` Neither file is written.
+4. **Section 5, wording.** The ShouldProcess action is `Update 1 Hash value` for one entry and `Update <n> Hash values` otherwise. When the rewritten set would exceed the limit, the text is `Completer set '<set>' would be <n> bytes after the update, which is larger than the 131072-byte limit for completer set files. Split its entries across several sets and regenerate them with Export-CompleterSet.` `Export-CompleterSet` keeps its own text.
