@@ -19,7 +19,11 @@ Import-CompleterSet take a strict entry's Targets without comparing them with
 the script, so rehashing an entry whose targets also changed would make the
 import register stale targets unchecked. Such an entry is left as it is, with
 a warning that names its first Error, whether or not its Hash differs, and the
-set needs Export-CompleterSet. A trusted entry is updated, with a warning,
+set needs Export-CompleterSet. An entry that is not trusted and whose script no
+longer passes the strict grammar is left as it is too, with a warning that
+names the first grammar Error as Test-CompleterScript words it, because a
+matching Hash would let the import skip the grammar and move the failure to
+the first tab. A trusted entry is updated, with a warning,
 because its script is never parsed, so its Targets cannot be checked; import
 ignores a trusted entry's Hash, which only feeds Test-CompleterSet. One
 warning per set counts the entries without a Hash, and one warning names each
@@ -257,6 +261,18 @@ function Update-CompleterSet
                     {
                         Write-Warning -Message "$entryLabel of '$setFile' is trusted, so its Targets were not checked against the script."
                     }
+                    else
+                    {
+                        # A matching Hash lets Import-CompleterSet skip the strict
+                        # grammar, which would move this failure to the first tab.
+                        $grammarError = @(Get-CompleterScriptFinding -LiteralPath $entry.Path | Where-Object -Property Severity -EQ -Value 'Error') | Select-Object -First 1
+
+                        if ($null -ne $grammarError)
+                        {
+                            Write-Warning -Message "$entryLabel of '$setFile' was not updated: $($grammarError.Message.TrimEnd('.')). Regenerate the set with Export-CompleterSet."
+                            continue
+                        }
+                    }
 
                     $updates.Add([pscustomobject] [ordered] @{
                             State  = $state
@@ -323,10 +339,12 @@ function Update-CompleterSet
 
                 if ($newBytes.Length -gt $script:CompleterSetMaxFileBytes)
                 {
-                    throw (Get-CompleterSetOverLimitMessage -ByteCount $newBytes.Length)
+                    throw "Completer set '$setFile' would be $($newBytes.Length) bytes after the update, which is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files. Split its entries across several sets and regenerate them with Export-CompleterSet."
                 }
 
-                if (-not $PSCmdlet.ShouldProcess($setFile, "Update $($updates.Count) Hash values"))
+                $hashValueNoun = if ($updates.Count -eq 1) { 'Hash value' } else { 'Hash values' }
+
+                if (-not $PSCmdlet.ShouldProcess($setFile, "Update $($updates.Count) $hashValueNoun"))
                 {
                     continue
                 }

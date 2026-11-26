@@ -19,7 +19,9 @@ by a lower version, even when its set declaration is broken.
 
 With -MinimumVersion or -RequiredVersion every manifest of each root walked is
 read, and the unversioned layout is a candidate beside the version folders
-when its ModuleVersion parses as a version. -RequiredVersion takes the
+when its ModuleVersion parses as a version. A version folder or unversioned
+layout whose manifest cannot be read or parsed is left out of the candidates
+instead of failing the call. -RequiredVersion takes the
 candidate equal to the value from the first root that holds one.
 -MinimumVersion takes, from the first root that holds a candidate equal to or
 above the value, the highest such candidate; a root whose candidates are all
@@ -186,10 +188,18 @@ function Resolve-CompleterSetModule
         if ($selectVersion)
         {
             # Version folders come first, so on a tie a version folder wins over the unversioned layout.
+            # A copy whose manifest cannot be read or parsed is left out instead of failing the call.
             $candidates = @(
                 foreach ($versionFolder in $versionFolders)
                 {
-                    $candidate = & $readVersionFolder $versionFolder
+                    try
+                    {
+                        $candidate = & $readVersionFolder $versionFolder
+                    }
+                    catch
+                    {
+                        continue
+                    }
 
                     if ($null -ne $candidate)
                     {
@@ -204,7 +214,15 @@ function Resolve-CompleterSetModule
 
                     if ($null -ne $manifestPath)
                     {
-                        $manifest = & $readManifest $manifestPath
+                        try
+                        {
+                            $manifest = & $readManifest $manifestPath
+                        }
+                        catch
+                        {
+                            continue
+                        }
+
                         $manifestVersion = $null
 
                         if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion))

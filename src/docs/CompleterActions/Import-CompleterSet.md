@@ -252,8 +252,9 @@ HelpMessage: ''
 Selects the highest installed version of the module, equal to or above this
 one, from the first `$env:PSModulePath` root that holds such a version; a root
 whose versions are all lower is passed over. An unversioned copy, a manifest
-directly in the module folder, takes part beside the version folders. Write
-the version as its folder is named, because versions compare exactly: `1.2.0`
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
 and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
 `-Name` and cannot be used with `-RequiredVersion`.
 
@@ -323,8 +324,9 @@ HelpMessage: ''
 
 Selects the installed version of the module that equals this one, from the
 first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
-directly in the module folder, takes part beside the version folders. Write
-the version as its folder is named, because versions compare exactly: `1.2.0`
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
 and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
 installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
 `-Name` and cannot be used with `-MinimumVersion`.

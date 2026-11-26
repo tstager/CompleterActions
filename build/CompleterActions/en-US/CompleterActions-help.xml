@@ -1226,8 +1226,9 @@ retries them without re-importing the set.</maml:para>
           <maml:para>Selects the highest installed version of the module, equal to or above this
 one, from the first `$env:PSModulePath` root that holds such a version; a root
 whose versions are all lower is passed over. An unversioned copy, a manifest
-directly in the module folder, takes part beside the version folders. Write
-the version as its folder is named, because versions compare exactly: `1.2.0`
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
 and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
 `-Name` and cannot be used with `-RequiredVersion`.</maml:para>
         </maml:description>
@@ -1263,8 +1264,9 @@ resolved. The parameter takes no pipeline input.</maml:para>
         <maml:description>
           <maml:para>Selects the installed version of the module that equals this one, from the
 first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
-directly in the module folder, takes part beside the version folders. Write
-the version as its folder is named, because versions compare exactly: `1.2.0`
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
 and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
 installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
 `-Name` and cannot be used with `-MinimumVersion`.</maml:para>
@@ -3775,8 +3777,9 @@ recursive under the set file's directory. The default is `*_completer.ps1`.</mam
           <maml:para>Selects the highest installed version of the module, equal to or above this
 one, from the first `$env:PSModulePath` root that holds such a version; a root
 whose versions are all lower is passed over. An unversioned copy, a manifest
-directly in the module folder, takes part beside the version folders. Write
-the version as its folder is named, because versions compare exactly: `1.2.0`
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
 and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
 `-Name` and cannot be used with `-RequiredVersion`.</maml:para>
         </maml:description>
@@ -3812,8 +3815,9 @@ resolved. The parameter takes no pipeline input.</maml:para>
         <maml:description>
           <maml:para>Selects the installed version of the module that equals this one, from the
 first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
-directly in the module folder, takes part beside the version folders. Write
-the version as its folder is named, because versions compare exactly: `1.2.0`
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
 and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
 installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
 `-Name` and cannot be used with `-MinimumVersion`.</maml:para>
@@ -4267,7 +4271,11 @@ matching `Hash` makes `Import-CompleterSet` take a strict entry's `Targets`
 without comparing them with the script, so rehashing an entry whose targets
 also changed would make the import register stale targets unchecked. Such an
 entry is left as it is, with a warning that names its first `Error`, whether
-or not its `Hash` differs, and the set needs `Export-CompleterSet`. A trusted
+or not its `Hash` differs, and the set needs `Export-CompleterSet`. An entry
+that is not trusted and whose script no longer passes the strict grammar is
+left as it is too, with a warning that names the first grammar `Error` as
+`Test-CompleterScript` words it, because a matching `Hash` would let the
+import skip the grammar and move the failure to the first tab. A trusted
 entry is updated, with a warning, because its script is never parsed, so its
 `Targets` cannot be checked; import ignores a trusted entry's `Hash`, which
 only feeds `Test-CompleterSet`. One warning per set counts the entries without

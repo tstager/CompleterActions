@@ -487,6 +487,35 @@ Describe 'Update-CompleterSet' {
             Get-TestCurrentFileState -Path $script:SetPath | Should -BeExactly $state
         }
 
+        It 'does not update an entry whose script gained a top-level assignment, warns with the first grammar Error, and does not write the file, so Import-CompleterSet still refuses the set' {
+            Add-Content -LiteralPath $script:AlphaPath -Value '$caUpdateState = 1' -Encoding utf8
+            $grammarError = @(Test-CompleterScript -LiteralPath $script:AlphaPath | Where-Object -Property Severity -EQ -Value 'Error')
+            $grammarError[0].Message | Should -BeExactly 'The script uses a top-level assignment.'
+            @((Test-CompleterSet -LiteralPath $script:SetPath).Construct) | Should -Be @('HashMismatch') -Because 'Test-CompleterSet does not run the grammar'
+            $state = Get-TestFileState -Path $script:SetPath
+
+            Update-CompleterSet -LiteralPath $script:SetPath -WarningVariable updateWarnings -WarningAction SilentlyContinue
+
+            @($updateWarnings.Message) | Should -Be @("Entry 1 ('alpha_completer/alpha_completer.ps1') of '$script:SetPath' was not updated: $($grammarError[0].Message) Regenerate the set with Export-CompleterSet.")
+            Get-TestCurrentFileState -Path $script:SetPath | Should -BeExactly $state
+            Get-TestTemporaryFile | Should -BeNullOrEmpty
+            $thrown = { Import-CompleterSet -LiteralPath $script:SetPath } | Should -Throw -PassThru
+            $thrown.Exception.Message | Should -BeLike "Failed to import completer set.*Entry 1 ('alpha_completer/alpha_completer.ps1')*does not conform to the strict import grammar*$($grammarError[0].Message)*"
+            @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.Key -like '*caupdate*' }) | Should -BeNullOrEmpty
+        }
+
+        It 'rewrites the Hash of a trusted entry whose script gained a top-level assignment, because a trusted script is not checked against the grammar' {
+            Edit-TestEntryValue -Path $script:SetPath -Entry 1 -Key 'Trusted' -Value '$true'
+            $before = [System.IO.File]::ReadAllText($script:SetPath)
+            $oldHash = Get-TestScriptHash -LiteralPath $script:AlphaPath
+            Add-Content -LiteralPath $script:AlphaPath -Value '$caUpdateState = 1' -Encoding utf8
+
+            Update-CompleterSet -LiteralPath $script:SetPath -WarningVariable updateWarnings -WarningAction SilentlyContinue
+
+            @($updateWarnings.Message) | Should -Be @("Entry 1 ('alpha_completer/alpha_completer.ps1') of '$script:SetPath' is trusted, so its Targets were not checked against the script.")
+            [System.IO.File]::ReadAllText($script:SetPath) | Should -BeExactly $before.Replace($oldHash, (Get-TestScriptHash -LiteralPath $script:AlphaPath))
+        }
+
         It 'does not add a Hash to an entry without one and counts it in one warning' {
             Clear-TestEntryLine -Path $script:SetPath -Entry 2 -Key 'Hash'
             $state = Get-TestFileState -Path $script:SetPath
@@ -700,7 +729,7 @@ Describe 'Update-CompleterSet' {
             Get-TestTemporaryFile | Should -BeNullOrEmpty
         }
 
-        It 'refuses a result over the set file limit with the text Export-CompleterSet uses and writes nothing' {
+        It 'refuses a result over the set file limit, naming the set and the limit variable''s value, and writes nothing' {
             Edit-TestEntryValue -Path $script:SetPath -Entry 1 -Key 'Hash' -Value "'x'"
             $length = (Get-Item -LiteralPath $script:SetPath).Length
             & (Get-Module -Name 'CompleterActions') { param($Bytes) $script:CompleterSetMaxFileBytes = $Bytes } ($length + 10)
@@ -716,7 +745,7 @@ Describe 'Update-CompleterSet' {
                 $caught = $_
             }
 
-            $caught.Exception.Message | Should -BeExactly "Failed to update completer set. The set would be $($length + 70) bytes, larger than the $($length + 10)-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
+            $caught.Exception.Message | Should -BeExactly "Failed to update completer set. Completer set '$script:SetPath' would be $($length + 70) bytes after the update, which is larger than the $($length + 10)-byte limit for completer set files. Split its entries across several sets and regenerate them with Export-CompleterSet."
             Get-TestCurrentFileState -Path $script:SetPath | Should -BeExactly $state
             Get-TestTemporaryFile | Should -BeNullOrEmpty
         }
@@ -893,11 +922,17 @@ Describe 'Update-CompleterSet' {
             Get-TestTemporaryFile | Should -BeNullOrEmpty
         }
 
-        It 'asks ShouldProcess once per set that has something to update, on the set path, with the count' {
+        It 'asks ShouldProcess once per set that has something to update, on the set path, with the action <Action>' -TestCases @(
+            @{ Action = 'Update 1 Hash value'; Changed = 1 }
+            @{ Action = 'Update 2 Hash values'; Changed = 2 }
+        ) {
             $cleanPath = Join-Path -Path $script:Folder -ChildPath 'clean.psd1'
             Copy-Item -LiteralPath $script:SetPath -Destination $cleanPath
             Add-Content -LiteralPath $script:AlphaPath -Value '# drift' -Encoding utf8
-            Add-Content -LiteralPath $script:BetaPath -Value '# drift' -Encoding utf8
+            if ($Changed -eq 2)
+            {
+                Add-Content -LiteralPath $script:BetaPath -Value '# drift' -Encoding utf8
+            }
             Update-CompleterSet -LiteralPath $cleanPath
             $childPath = Join-Path -Path $TestDrive -ChildPath 'update-completerset-whatif.ps1'
             Set-Content -LiteralPath $childPath -Encoding utf8 -Value @(
@@ -911,7 +946,7 @@ Describe 'Update-CompleterSet' {
             $output = @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $childPath -ManifestPath $script:ManifestPath -SetPath $script:SetPath -CleanPath $cleanPath 2>&1)
 
             $LASTEXITCODE | Should -Be 0 -Because ($output -join [Environment]::NewLine)
-            @($output | ForEach-Object { [string] $_ } | Where-Object { $_ -like 'What if:*' }) | Should -Be @("What if: Performing the operation `"Update 2 Hash values`" on target `"$script:SetPath`".")
+            @($output | ForEach-Object { [string] $_ } | Where-Object { $_ -like 'What if:*' }) | Should -Be @("What if: Performing the operation `"$Action`" on target `"$script:SetPath`".")
             Get-TestCurrentFileState -Path $script:SetPath | Should -BeExactly $state
         }
 

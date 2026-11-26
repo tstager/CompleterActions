@@ -283,7 +283,7 @@ function Export-CompleterSet
 
             if ($byteCount -gt $script:CompleterSetMaxFileBytes)
             {
-                throw (Get-CompleterSetOverLimitMessage -ByteCount $byteCount)
+                throw "The set would be $byteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
             }
 
             if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
@@ -2152,6 +2152,18 @@ function Update-CompleterSet
                     {
                         Write-Warning -Message "$entryLabel of '$setFile' is trusted, so its Targets were not checked against the script."
                     }
+                    else
+                    {
+                        # A matching Hash lets Import-CompleterSet skip the strict
+                        # grammar, which would move this failure to the first tab.
+                        $grammarError = @(Get-CompleterScriptFinding -LiteralPath $entry.Path | Where-Object -Property Severity -EQ -Value 'Error') | Select-Object -First 1
+
+                        if ($null -ne $grammarError)
+                        {
+                            Write-Warning -Message "$entryLabel of '$setFile' was not updated: $($grammarError.Message.TrimEnd('.')). Regenerate the set with Export-CompleterSet."
+                            continue
+                        }
+                    }
 
                     $updates.Add([pscustomobject] [ordered] @{
                             State  = $state
@@ -2218,10 +2230,12 @@ function Update-CompleterSet
 
                 if ($newBytes.Length -gt $script:CompleterSetMaxFileBytes)
                 {
-                    throw (Get-CompleterSetOverLimitMessage -ByteCount $newBytes.Length)
+                    throw "Completer set '$setFile' would be $($newBytes.Length) bytes after the update, which is larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files. Split its entries across several sets and regenerate them with Export-CompleterSet."
                 }
 
-                if (-not $PSCmdlet.ShouldProcess($setFile, "Update $($updates.Count) Hash values"))
+                $hashValueNoun = if ($updates.Count -eq 1) { 'Hash value' } else { 'Hash values' }
+
+                if (-not $PSCmdlet.ShouldProcess($setFile, "Update $($updates.Count) $hashValueNoun"))
                 {
                     continue
                 }
@@ -5358,34 +5372,6 @@ function Get-CompleterSetFinding
             }
         }
     }
-}
-<#
-.SYNOPSIS
-Words the refusal of a completer set that would be written over the size limit.
-
-.DESCRIPTION
-Returns the one text Export-CompleterSet and Update-CompleterSet give when the
-set they would write is larger than $script:CompleterSetMaxFileBytes, the
-limit Import-CompleterSet and Test-CompleterSet read up to, so both commands
-word it alike.
-
-.PARAMETER ByteCount
-The size in bytes of the set that would be written.
-
-.OUTPUTS
-System.String
-#>
-function Get-CompleterSetOverLimitMessage
-{
-    [CmdletBinding()]
-    [OutputType([string])]
-    param(
-        [Parameter(Mandatory)]
-        [ValidateRange(0, [long]::MaxValue)]
-        [long] $ByteCount
-    )
-
-    "The set would be $ByteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
 }
 <#
 .SYNOPSIS
@@ -8799,7 +8785,9 @@ by a lower version, even when its set declaration is broken.
 
 With -MinimumVersion or -RequiredVersion every manifest of each root walked is
 read, and the unversioned layout is a candidate beside the version folders
-when its ModuleVersion parses as a version. -RequiredVersion takes the
+when its ModuleVersion parses as a version. A version folder or unversioned
+layout whose manifest cannot be read or parsed is left out of the candidates
+instead of failing the call. -RequiredVersion takes the
 candidate equal to the value from the first root that holds one.
 -MinimumVersion takes, from the first root that holds a candidate equal to or
 above the value, the highest such candidate; a root whose candidates are all
@@ -8966,10 +8954,18 @@ function Resolve-CompleterSetModule
         if ($selectVersion)
         {
             # Version folders come first, so on a tie a version folder wins over the unversioned layout.
+            # A copy whose manifest cannot be read or parsed is left out instead of failing the call.
             $candidates = @(
                 foreach ($versionFolder in $versionFolders)
                 {
-                    $candidate = & $readVersionFolder $versionFolder
+                    try
+                    {
+                        $candidate = & $readVersionFolder $versionFolder
+                    }
+                    catch
+                    {
+                        continue
+                    }
 
                     if ($null -ne $candidate)
                     {
@@ -8984,7 +8980,15 @@ function Resolve-CompleterSetModule
 
                     if ($null -ne $manifestPath)
                     {
-                        $manifest = & $readManifest $manifestPath
+                        try
+                        {
+                            $manifest = & $readManifest $manifestPath
+                        }
+                        catch
+                        {
+                            continue
+                        }
+
                         $manifestVersion = $null
 
                         if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion))

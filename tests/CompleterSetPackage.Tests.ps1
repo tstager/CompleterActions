@@ -1575,6 +1575,82 @@ Describe 'Version selection for -Name' {
         $failure.Test | Should -BeExactly "Failed to test completer set. $expected"
     }
 
+    It 'passes over <Case> and selects 2.0.0 through Import-CompleterSet and Test-CompleterSet' -TestCases @(
+        @{ Case = 'a 0.5.0 folder whose manifest does not parse, for -MinimumVersion 1.0.0'; Broken = 'VersionFolder'; Version = @{ MinimumVersion = '1.0.0' } }
+        @{ Case = 'a 0.5.0 folder whose manifest does not parse, for -RequiredVersion 2.0.0'; Broken = 'VersionFolder'; Version = @{ RequiredVersion = '2.0.0' } }
+        @{ Case = 'an unversioned manifest that does not parse, for -MinimumVersion 1.0.0'; Broken = 'Unversioned'; Version = @{ MinimumVersion = '1.0.0' } }
+    ) {
+        param($Case, $Broken, $Version)
+
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $selectedBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '2.0.0'
+        $brokenFolder = if ($Broken -eq 'VersionFolder') { [System.IO.Path]::Combine($root, 'CaFixtureSet', '0.5.0') } else { [System.IO.Path]::Combine($root, 'CaFixtureSet') }
+        $null = New-Item -Path $brokenFolder -ItemType Directory -Force
+        [System.IO.File]::WriteAllText((Join-Path -Path $brokenFolder -ChildPath 'CaFixtureSet.psd1'), "@{ ModuleVersion = '0.5.0'")
+        # A HashMismatch in the selected copy shows which set Test-CompleterSet read.
+        Add-Content -LiteralPath (Get-TestFixtureScriptPath -ModuleBase $selectedBase -Fixture 'alpha') -Value '# changed after the set was written' -Encoding utf8
+        $modulePath = Join-TestModulePath -Root $root
+
+        $result = Invoke-TestVersionImport -ModulePath $modulePath -Version $Version
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = $modulePath
+            $findings = @(Test-CompleterSet -Name 'CaFixtureSet' @Version)
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $result.ModuleLine | Should -Be @(Get-TestModuleVerboseLine -Name 'CaFixtureSet' -Version '2.0.0' -ModuleBase $selectedBase)
+        $result.Records.Count | Should -Be 6
+        @($findings | ForEach-Object { '{0} {1}' -f $_.Construct, $_.Severity }) | Should -Be @('HashMismatch Warning')
+        $findings[0].Path | Should -BeExactly ([System.IO.Path]::Combine($selectedBase, 'completers', 'completers.psd1'))
+    }
+
+    It 'fails -RequiredVersion 2.0.0 with the not-found text, listing 1.0.0 alone, when the only 2.0.0 has a manifest that does not parse' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $brokenBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '2.0.0'
+        [System.IO.File]::WriteAllText((Join-Path -Path $brokenBase -ChildPath 'CaFixtureSet.psd1'), "@{ ModuleVersion = '2.0.0'")
+        $expected = "No installed module named 'CaFixtureSet' with version 2.0.0 was found in `$env:PSModulePath. Installed versions: 1.0.0."
+
+        $failure = Get-TestVersionFailure -ModulePath (Join-TestModulePath -Root $root) -Name 'CaFixtureSet' -Version @{ RequiredVersion = '2.0.0' }
+
+        $failure.Import | Should -BeExactly "Failed to import completer set. $expected"
+        $failure.Test | Should -BeExactly "Failed to test completer set. $expected"
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
+    It 'still fails with the reader''s text without a version parameter when the highest version''s manifest does not parse' {
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'
+        $brokenBase = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '2.0.0'
+        $brokenManifestPath = Join-Path -Path $brokenBase -ChildPath 'CaFixtureSet.psd1'
+        [System.IO.File]::WriteAllText($brokenManifestPath, "@{ ModuleVersion = '2.0.0'")
+        $expected = "The file '$brokenManifestPath' could not be parsed as a PowerShell Data File."
+
+        $savedModulePath = $env:PSModulePath
+        try
+        {
+            $env:PSModulePath = Join-TestModulePath -Root $root
+            $importThrown = { Import-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+            $testThrown = { Test-CompleterSet -Name 'CaFixtureSet' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PSModulePath = $savedModulePath
+        }
+
+        $importThrown.Exception.Message | Should -BeExactly "Failed to import completer set. $expected"
+        $testThrown.Exception.Message | Should -BeExactly "Failed to test completer set. $expected"
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
     It 'shows the selected version in the trusted-entry warning' {
         $roots = New-TestVersionRoot -Root $script:PackageRoot
         $selectedBase = $roots.Bases['1.0.0']

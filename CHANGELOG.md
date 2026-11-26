@@ -23,7 +23,10 @@ happens to input that 3.0.1 accepted; they are listed under Changed.
   that `Test-CompleterSet` reports with an `Error`, such as a
   `TargetMismatch` or a `DuplicateTarget`, is left as it is with a warning,
   because a matching `Hash` would make import register its stale `Targets`
-  unchecked; a trusted entry is updated with a warning. It never adds an
+  unchecked. So is an untrusted entry whose script no longer passes the
+  strict grammar, with the first grammar `Error` in its warning, because a
+  matching `Hash` would let import skip the grammar and move the failure to
+  the first tab; a trusted entry is updated with a warning. It never adds an
   entry or a `Hash`, warns about entries without one and about scripts the
   set does not list, supports `-WhatIf`, and returns the written files with
   `-PassThru`.
@@ -44,8 +47,9 @@ happens to input that 3.0.1 accepted; they are listed under Changed.
 - **Version selection for `-Name`.** `Import-CompleterSet -Name` and
   `Test-CompleterSet -Name` take `-MinimumVersion` or `-RequiredVersion`,
   for one name, to select an installed completer set package by version,
-  across `$env:PSModulePath` roots as `Import-Module` selects one. A version
-  that no root holds fails the call and lists the installed versions.
+  across `$env:PSModulePath` roots as `Import-Module` selects one. A copy
+  whose manifest cannot be read is passed over, and a version that no root
+  holds fails the call and lists the installed versions.
 - **`Test-CompleterRegistration -TargetOnly`.** Writes only the matches
   whose `FromTarget` is `$true`, as piping them to `Where-Object
   FromTarget` would (2026-11-18 review, finding 5).

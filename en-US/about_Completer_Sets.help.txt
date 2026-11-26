@@ -595,6 +595,11 @@ FIXING DRIFT WITH UPDATE-COMPLETERSET
 
         WARNING: Entry 4 ('git_completer/git_completer.ps1') of '<set>' was not updated: <problem> Regenerate the set with Export-CompleterSet.
 
+    An entry that is not trusted is refused the same way when its script
+    no longer passes the strict grammar, with the first grammar `Error` as
+    `Test-CompleterScript` words it as the problem: rehashing it would let
+    the import skip the grammar and move the failure to the first tab.
+
     The command never adds anything to a set. One warning per set counts
     the entries without a `Hash`, and one warning names each script under
     the set's folder that matches `-Filter` and that no entry lists.
@@ -757,10 +762,11 @@ COMPLETER SETS AS MODULES
     differ: write the version as its folder is named. A prerelease label
     takes no part, because a prerelease is installed in the folder of its
     version, so `-RequiredVersion 2.0.0` selects `2.0.0-preview1`, and the
-    verbose line shows the label. The selected version is used even when
-    it is broken, as in step 4. When the module is installed but no folder
-    holds a match, the call fails and lists every installed version,
-    highest first:
+    verbose line shows the label. A copy whose manifest cannot be read is
+    passed over and is not listed in the error below. The selected version
+    is used even when it is broken, as in step 4. When the module is
+    installed but no folder holds a match, the call fails and lists every
+    installed version, highest first:
 
         Failed to import completer set. No installed module named 'PS_Completers' with version 2.0.0 or later was found in $env:PSModulePath. Installed versions: 1.3.1, 1.3.0, 1.2.0.
 

@@ -390,7 +390,7 @@ function Export-CompleterSet
 
             if ($byteCount -gt $script:CompleterSetMaxFileBytes)
             {
-                throw (Get-CompleterSetOverLimitMessage -ByteCount $byteCount)
+                throw "The set would be $byteCount bytes, larger than the $script:CompleterSetMaxFileBytes-byte limit for completer set files, so Import-CompleterSet could not read it. Export the registrations as several sets. Nothing was written."
             }
 
             if (-not $PSCmdlet.ShouldProcess($outputPath, 'Export completer set'))
