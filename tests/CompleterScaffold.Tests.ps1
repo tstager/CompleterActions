@@ -1708,7 +1708,16 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
                 }
             }
 
-            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Documentation } | Should -Throw -PassThru
+            $savedPath = $env:PATH
+            try
+            {
+                $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+                $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Documentation } | Should -Throw -PassThru
+            }
+            finally
+            {
+                $env:PATH = $savedPath
+            }
 
             $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + ($script:AlreadyExistsFormat -f $markdownPath))
             (& (Get-Module -Name 'CompleterActions') { $script:TestResolveCount }) | Should -Be 0
