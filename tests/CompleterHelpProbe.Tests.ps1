@@ -816,14 +816,11 @@ Describe 'Probe decisions' {
             )
         }
 
+        # Resolves the pwsh running the suite by its full path, because the
+        # first pwsh on PATH can be an app execution alias.
         function Resolve-TestPwshApplication
         {
-            if ($null -eq (Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Ignore))
-            {
-                return $null
-            }
-
-            Resolve-TestProbeApplication -Name 'pwsh'
+            Resolve-TestProbeApplication -Name $script:PwshPath
         }
 
         function Get-TestProbeLinePattern
@@ -842,10 +839,13 @@ Describe 'Probe decisions' {
                 [string] $Characters,
 
                 [Parameter(Mandatory)]
-                [string] $Subcommands
+                [string] $Subcommands,
+
+                [Parameter(Mandatory)]
+                [string] $Options
             )
 
-            '^Probed ''{0} {1}'': exit {2}, {3} characters, {4} subcommands, \d+ ms\.$' -f [regex]::Escape($Path), [regex]::Escape($Argument), $ExitCode, $Characters, $Subcommands
+            '^Probed ''{0} {1}'': exit {2}, {3} characters, {4} subcommands, {5} options, \d+ ms\.$' -f [regex]::Escape($Path), [regex]::Escape($Argument), $ExitCode, $Characters, $Subcommands, $Options
         }
     }
 
@@ -856,11 +856,6 @@ Describe 'Probe decisions' {
 
     It 'probes pwsh --help once and returns one probe line with exit 0' {
         $application = Resolve-TestPwshApplication
-        if ($null -eq $application)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
 
         Install-TestRunnerShim
         $result = Invoke-TestHelpSubcommand -Application $application
@@ -871,17 +866,11 @@ Describe 'Probe decisions' {
         $result.Argument | Should -BeExactly '--help'
         $result.Warnings | Should -BeNullOrEmpty
         $result.VerboseLines.Count | Should -Be 1
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument '--help' -ExitCode '0' -Characters '\d+' -Subcommands '\d+')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument '--help' -ExitCode '0' -Characters '\d+' -Subcommands '\d+' -Options '\d+')
     }
 
     It 'uses help that a probe writes only to standard error with exit 2' {
         $application = Resolve-TestPwshApplication
-        if ($null -eq $application)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $fixture = Write-TestByteFixture -Name 'stderr-help.ps1' -StandardError ([System.Text.Encoding]::UTF8.GetBytes($script:ProbeHelpText)) -ExitCode 2
 
         Install-TestRunnerShim -NoProfile
@@ -892,17 +881,11 @@ Describe 'Probe decisions' {
         $result.Argument | Should -BeExactly $fixture
         $result.Warnings | Should -BeNullOrEmpty
         $result.VerboseLines.Count | Should -Be 1
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '2' -Characters $script:ProbeHelpText.Length -Subcommands '2')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '2' -Characters $script:ProbeHelpText.Length -Subcommands '2' -Options '0')
     }
 
     It 'decodes UTF-16 LE probe output' {
         $application = Resolve-TestPwshApplication
-        if ($null -eq $application)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $fixture = Write-TestByteFixture -Name 'utf16-help.ps1' -StandardOutput ([System.Text.Encoding]::Unicode.GetBytes($script:ProbeHelpText))
 
         Install-TestRunnerShim -NoProfile
@@ -911,17 +894,11 @@ Describe 'Probe decisions' {
         $result.Subcommands.Name | Should -Be @('build', 'test')
         $result.Subcommands.Description | Should -Be @('Compile the project', 'Run the tests')
         $result.Warnings | Should -BeNullOrEmpty
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters $script:ProbeHelpText.Length -Subcommands '2')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters $script:ProbeHelpText.Length -Subcommands '2' -Options '0')
     }
 
     It 'cuts standard output at 1 MiB and still parses the table' {
         $application = Resolve-TestPwshApplication
-        if ($null -eq $application)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $fixture = Write-TestByteFixture -Name 'chatty-help.ps1' -StandardOutput ([System.Text.Encoding]::UTF8.GetBytes($script:ProbeHelpText + "`n")) -PaddingLines 16384
 
         Install-TestRunnerShim -NoProfile
@@ -932,17 +909,11 @@ Describe 'Probe decisions' {
         $runs[0].Status | Should -Be 'Exited'
         $result.Subcommands.Name | Should -Be @('build', 'test')
         $result.Warnings | Should -BeNullOrEmpty
-        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters '1048576' -Subcommands '2')
+        $result.VerboseLines[0] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $fixture -ExitCode '0' -Characters '1048576' -Subcommands '2' -Options '0')
     }
 
     It 'warns did not exit within 0.05 seconds and leaves no direct child running' {
         $application = Resolve-TestPwshApplication
-        if ($null -eq $application)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $fixture = Write-TestFixture -Name 'sleep-help.ps1' -Line @(
             'Start-Sleep -Seconds 60'
             'exit 0'
@@ -956,7 +927,7 @@ Describe 'Probe decisions' {
         $runs[0].Status | Should -Be 'TimedOut'
         $runs[0].ProcessId | Should -BeGreaterThan 0
         $result.Subcommands.Count | Should -Be 0
-        $result.Warnings | Should -Be @("'pwsh $fixture' did not exit within 0.05 seconds and was stopped, so its help was not used.")
+        $result.Warnings | Should -Be @("'$($script:PwshPath) $fixture' did not exit within 0.05 seconds and was stopped, so its help was not used.")
         Get-Process -Id $runs[0].ProcessId -ErrorAction Ignore | Should -BeNullOrEmpty
     }
 
@@ -978,18 +949,12 @@ Describe 'Probe decisions' {
             if ($IsWindows)
             {
                 $application = Resolve-TestPwshApplication
-                if ($null -eq $application)
-                {
-                    Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-                    return
-                }
-
                 $fixture = Write-TestFixture -Name 'held-help.ps1' -Line @(
                     '$descendant = Start-Process -NoNewWindow -FilePath ''ping.exe'' -ArgumentList ''-n'', ''15'', ''127.0.0.1'' -PassThru'
                     ('Set-Content -LiteralPath ''{0}'' -Value $descendant.Id' -f $idPath)
                     'exit 0'
                 )
-                $expectedWarning = "'pwsh $fixture' exited but left a process holding its output, so its help was not used."
+                $expectedWarning = "'$($script:PwshPath) $fixture' exited but left a process holding its output, so its help was not used."
 
                 Install-TestRunnerShim -NoProfile
                 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -1030,14 +995,15 @@ Describe 'Probe decisions' {
     }
 
     It 'applies the /? rule to <Case>' -TestCases @(
-        @{ Case = 'two lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help,/?'; Names = 'build,test'; Argument = '/?'; VerboseLines = 2; Warning = $null }
-        @{ Case = 'five lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "one`ntwo`n`nthree`nfour`nfive`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
-        @{ Case = 'a timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'TimedOut'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' did not exit within 5 seconds and was stopped, so its help was not used." }
-        @{ Case = 'a start failure on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'StartFailed'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'<path>' was not run: the fake program could not be started. Pass captured help with -HelpText." }
-        @{ Case = 'held output on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'HeldOutput'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' exited but left a process holding its output, so its help was not used." }
-        @{ Case = 'two lines then a /? timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'TimedOut'; Expected = '--help,/?'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = "'catool /?' did not exit within 5 seconds and was stopped, so its help was not used." }
-        @{ Case = '-HelpArgument given'; Platform = 'Any'; HelpArgument = '-h'; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '-h'; Names = ''; Argument = '-h'; VerboseLines = 1; Warning = $null }
-        @{ Case = 'two lines on Linux and macOS'; Platform = 'Unix'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'two lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help,/?'; Names = 'build,test'; Options = ''; Argument = '/?'; VerboseLines = 2; Warning = $null }
+        @{ Case = 'two option lines and no subcommand on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "  -a, --all    Show all`n  -b, --brief  Be brief`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = '-a,--all,-b,--brief'; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'five lines on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "one`ntwo`n`nthree`nfour`nfive`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'a timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'TimedOut'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' did not exit within 5 seconds and was stopped, so its help was not used." }
+        @{ Case = 'a start failure on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'StartFailed'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = $null; VerboseLines = 0; Warning = "'<path>' was not run: the fake program could not be started. Pass captured help with -HelpText." }
+        @{ Case = 'held output on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'HeldOutput'; FirstText = ''; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = $null; VerboseLines = 0; Warning = "'catool --help' exited but left a process holding its output, so its help was not used." }
+        @{ Case = 'two lines then a /? timeout on Windows'; Platform = 'Windows'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'TimedOut'; Expected = '--help,/?'; Names = ''; Options = ''; Argument = '--help'; VerboseLines = 1; Warning = "'catool /?' did not exit within 5 seconds and was stopped, so its help was not used." }
+        @{ Case = '-HelpArgument given'; Platform = 'Any'; HelpArgument = '-h'; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '-h'; Names = ''; Options = ''; Argument = '-h'; VerboseLines = 1; Warning = $null }
+        @{ Case = 'two lines on Linux and macOS'; Platform = 'Unix'; HelpArgument = $null; FirstStatus = 'Exited'; FirstText = "Invalid argument.`nType ""catool /?"" for usage.`n"; FallbackStatus = 'Exited'; Expected = '--help'; Names = ''; Options = ''; Argument = '--help'; VerboseLines = 1; Warning = $null }
     ) {
         if ($Platform -eq 'Windows' -and -not $IsWindows)
         {
@@ -1074,8 +1040,13 @@ Describe 'Probe decisions' {
         @($runs | ForEach-Object { $_.ArgumentList[0] }) -join ',' | Should -BeExactly $Expected
         @($runs | Where-Object { $_.FilePath -ne $application.Path }).Count | Should -Be 0
         @($result.Subcommands | ForEach-Object { $_.Name }) -join ',' | Should -BeExactly $Names
+        @($result.Options | ForEach-Object { $_.Name }) -join ',' | Should -BeExactly $Options
         $result.Argument | Should -BeExactly $Argument
         $result.VerboseLines.Count | Should -Be $VerboseLines
+        if ($VerboseLines -gt 0)
+        {
+            $result.VerboseLines[-1] | Should -Match (Get-TestProbeLinePattern -Path $application.Path -Argument $Argument -ExitCode '1' -Characters '\d+' -Subcommands ($Names.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries).Count) -Options ($Options.Split(',', [System.StringSplitOptions]::RemoveEmptyEntries).Count))
+        }
         if ($null -eq $Warning)
         {
             $result.Warnings | Should -BeNullOrEmpty
@@ -1251,5 +1222,362 @@ Describe 'Probe decisions' {
 
         $commaText | Should -Be '0,05'
         $result.Warnings | Should -Be @("'catool --help' did not exit within 0.05 seconds and was stopped, so its help was not used.")
+    }
+
+    Context 'App execution aliases' {
+        BeforeAll {
+            # Writes an IO_REPARSE_TAG_APPEXECLINK reparse point with
+            # FSCTL_SET_REPARSE_POINT, which needs no elevation: the tag, the
+            # data length, a reserved word, the version 3, and each string
+            # NUL-terminated in UTF-16. A point written this way has no package
+            # behind it and does not start, so it proves the decision, not a run.
+            if ($IsWindows -and -not ('CompleterActionsTests.AppExecLinkWriter' -as [type]))
+            {
+                Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace CompleterActionsTests
+{
+    public static class AppExecLinkWriter
+    {
+        private const uint GenericWrite = 0x40000000;
+        private const uint OpenExisting = 3;
+        private const uint FileFlagOpenReparsePoint = 0x00200000;
+        private const uint FileFlagBackupSemantics = 0x02000000;
+        private const uint FsctlSetReparsePoint = 0x000900A4;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool DeviceIoControl(SafeFileHandle device, uint code, byte[] input, uint inputSize, IntPtr output, uint outputSize, out uint returned, IntPtr overlapped);
+
+        public static void Write(string path, string[] strings)
+        {
+            File.WriteAllBytes(path, new byte[0]);
+
+            var data = new List<byte>(BitConverter.GetBytes(3u));
+            foreach (string value in strings)
+            {
+                data.AddRange(Encoding.Unicode.GetBytes(value + "\0"));
+            }
+
+            var buffer = new List<byte>(BitConverter.GetBytes(0x8000001Bu));
+            buffer.AddRange(BitConverter.GetBytes((ushort)data.Count));
+            buffer.AddRange(BitConverter.GetBytes((ushort)0));
+            buffer.AddRange(data);
+            byte[] bytes = buffer.ToArray();
+
+            using (SafeFileHandle handle = CreateFileW(path, GenericWrite, 0, IntPtr.Zero, OpenExisting, FileFlagOpenReparsePoint | FileFlagBackupSemantics, IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+
+                uint returned;
+                if (!DeviceIoControl(handle, FsctlSetReparsePoint, bytes, (uint)bytes.Length, IntPtr.Zero, 0, out returned, IntPtr.Zero))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+        }
+    }
+}
+'@
+            }
+
+            $script:TestAliasPaths = [System.Collections.Generic.List[string]]::new()
+            $script:TestPackageStrings = @('CaTest.Alias_8wekyb3d8bbwe', 'CaTest.Alias_8wekyb3d8bbwe!App')
+
+            # Records the path to remove before it writes, so AfterEach also
+            # removes a point that was only half written.
+            function New-TestAppExecutionAlias
+            {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only writes a reparse point in TestDrive.')]
+                [CmdletBinding()]
+                param(
+                    [Parameter(Mandatory)]
+                    [string] $Path,
+
+                    [Parameter(Mandatory)]
+                    [AllowEmptyString()]
+                    [string[]] $String
+                )
+
+                $script:TestAliasPaths.Add($Path)
+                [CompleterActionsTests.AppExecLinkWriter]::Write($Path, $String)
+            }
+
+            # Replaces Get-CompleterAppExecutionAliasTarget in module scope with
+            # a pass-through that records each path it is given.
+            function Install-TestAliasReaderCounter
+            {
+                [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only replaces a function in the imported test module.')]
+                [CmdletBinding()]
+                param()
+
+                & (Get-Module -Name 'CompleterActions') {
+                    $script:TestAliasReads = [System.Collections.Generic.List[string]]::new()
+                    $script:TestAliasReaderOriginal = ${function:Get-CompleterAppExecutionAliasTarget}
+
+                    function script:Get-CompleterAppExecutionAliasTarget
+                    {
+                        param($LiteralPath)
+
+                        $script:TestAliasReads.Add($LiteralPath)
+                        & $script:TestAliasReaderOriginal -LiteralPath $LiteralPath
+                    }
+                }
+            }
+
+            function Get-TestAliasRead
+            {
+                & (Get-Module -Name 'CompleterActions') {
+                    $script:TestAliasReads.ToArray()
+                }
+            }
+        }
+
+        AfterEach {
+            # A reparse point the test cannot remove fails the test; it is never silenced.
+            foreach ($aliasPath in $script:TestAliasPaths.ToArray())
+            {
+                [System.IO.File]::Delete($aliasPath)
+                [System.IO.File]::Exists($aliasPath) | Should -BeFalse -Because "the test removes the reparse point it wrote at '$aliasPath'"
+            }
+
+            $script:TestAliasPaths.Clear()
+        }
+
+        It 'decides whether <Case> may run' -TestCases @(
+            @{ Case = 'an alias whose target is a copy of cmd.exe'; Target = 'Console'; Reason = $null }
+            @{ Case = 'an alias whose target is the patched GUI copy'; Target = 'Gui'; Reason = "its target '<target>' is a Windows GUI program" }
+            @{ Case = 'an alias whose target is a subsystem 1 .exe'; Target = 'Native'; Reason = "its target '<target>' is not a Windows console program (subsystem 1)" }
+            @{ Case = 'an alias whose target header cannot be read'; Target = 'Unreadable'; Reason = "the program header of its target '<target>' could not be read" }
+            @{ Case = 'an alias whose target is a .cmd file'; Target = 'Cmd'; Reason = "its target '<target>' is not a .exe file" }
+            @{ Case = 'an alias whose target is missing'; Target = 'Missing'; Reason = "its target '<target>' does not exist" }
+            @{ Case = 'an alias whose target is not fully qualified'; Target = 'Relative'; Reason = "its target '<target>' does not exist" }
+            @{ Case = 'an alias whose target is empty'; Target = 'Empty'; Reason = 'it is an app execution alias with no target' }
+            @{ Case = 'an alias whose data has no target string'; Target = 'None'; Reason = 'it is an app execution alias with no target' }
+            @{ Case = 'a zero-byte .exe that is not a reparse point'; Target = 'NotAlias'; Reason = 'its program header could not be read' }
+        ) {
+            if (-not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'app execution aliases exist only on Windows'
+                return
+            }
+
+            $directory = New-TestDirectory
+            $targetDirectory = New-TestDirectory
+            $aliasPath = Join-Path -Path $directory -ChildPath 'caaliasprobe.exe'
+            $targetPath = $null
+            switch ($Target)
+            {
+                'Console'
+                {
+                    $targetPath = Join-Path -Path $targetDirectory -ChildPath 'console.exe'
+                    Copy-Item -LiteralPath $env:ComSpec -Destination $targetPath
+                }
+                'Gui'
+                {
+                    $targetPath = Join-Path -Path $targetDirectory -ChildPath 'gui.exe'
+                    New-TestPatchedExe -Path $targetPath -Subsystem 2
+                }
+                'Native'
+                {
+                    $targetPath = Join-Path -Path $targetDirectory -ChildPath 'native.exe'
+                    New-TestPEFile -Path $targetPath -Subsystem 1
+                }
+                'Unreadable'
+                {
+                    $targetPath = Join-Path -Path $targetDirectory -ChildPath 'empty.exe'
+                    [System.IO.File]::WriteAllBytes($targetPath, [byte[]]::new(0))
+                }
+                'Cmd'
+                {
+                    $targetPath = Join-Path -Path $targetDirectory -ChildPath 'tool.cmd'
+                    Set-Content -LiteralPath $targetPath -Value '@echo off' -Encoding ascii
+                }
+                'Missing'
+                {
+                    $targetPath = Join-Path -Path $targetDirectory -ChildPath 'missing.exe'
+                }
+                'Relative'
+                {
+                    # The bare name resolves to a real console program from the process
+                    # working directory, so only the fully-qualified rule can reject it.
+                    Copy-Item -LiteralPath $env:ComSpec -Destination (Join-Path -Path $targetDirectory -ChildPath 'console.exe')
+                    $targetPath = 'console.exe'
+                }
+                'Empty'
+                {
+                    $targetPath = ''
+                }
+            }
+
+            if ($Target -eq 'NotAlias')
+            {
+                [System.IO.File]::WriteAllBytes($aliasPath, [byte[]]::new(0))
+            }
+            elseif ($Target -eq 'None')
+            {
+                New-TestAppExecutionAlias -Path $aliasPath -String $script:TestPackageStrings
+            }
+            else
+            {
+                New-TestAppExecutionAlias -Path $aliasPath -String ($script:TestPackageStrings + $targetPath + '0')
+            }
+
+            Install-TestAliasReaderCounter
+            $savedPath = $env:PATH
+            $savedDirectory = [System.Environment]::CurrentDirectory
+            try
+            {
+                $env:PATH = $directory
+                if ($Target -eq 'Relative')
+                {
+                    [System.Environment]::CurrentDirectory = $targetDirectory
+                }
+
+                $result = Resolve-TestProbeApplication -Name 'caaliasprobe'
+            }
+            finally
+            {
+                $env:PATH = $savedPath
+                [System.Environment]::CurrentDirectory = $savedDirectory
+            }
+
+            $expectedAliasTarget = if ([string]::IsNullOrEmpty($targetPath)) { $null } else { $targetPath }
+
+            $result.Path | Should -BeExactly $aliasPath
+            (@(Get-TestAliasRead) -join '|') | Should -BeExactly $aliasPath
+            $result.AliasTarget | Should -BeExactly $expectedAliasTarget
+            if ($null -eq $Reason)
+            {
+                $result.CanRun | Should -BeTrue
+                $result.Warning | Should -BeNullOrEmpty
+            }
+            else
+            {
+                $result.CanRun | Should -BeFalse
+                $result.Warning | Should -BeExactly ("'{0}' was not run: {1}. Run 'caaliasprobe --help' yourself and pass the text with -HelpText." -f $aliasPath, $Reason.Replace('<target>', $targetPath))
+            }
+        }
+
+        It 'reads reparse data only for a .exe whose header cannot be read, and never on Linux and macOS' {
+            $directory = New-TestDirectory
+            if ($IsWindows)
+            {
+                New-TestPEFile -Path (Join-Path -Path $directory -ChildPath 'caaliasconsole.exe') -Subsystem 3
+                New-TestPatchedExe -Path (Join-Path -Path $directory -ChildPath 'caaliasgui.exe') -Subsystem 2
+                New-TestPEFile -Path (Join-Path -Path $directory -ChildPath 'caaliasnative.exe') -Subsystem 1
+                Set-Content -LiteralPath (Join-Path -Path $directory -ChildPath 'caaliasshim.cmd') -Value '@echo off' -Encoding ascii
+                [System.IO.File]::WriteAllBytes((Join-Path -Path $directory -ChildPath 'caaliasempty.exe'), [byte[]]::new(0))
+                $names = 'caaliasconsole', 'caaliasgui', 'caaliasnative', 'caaliasshim', 'caaliasempty'
+                $expectedReads = @(Join-Path -Path $directory -ChildPath 'caaliasempty.exe')
+            }
+            else
+            {
+                Write-TestShellScript -Path (Join-Path -Path $directory -ChildPath 'caaliasshell') -Line '#!/bin/sh', 'exit 0' -Executable
+                $emptyPath = Join-Path -Path $directory -ChildPath 'caaliasempty.exe'
+                [System.IO.File]::WriteAllBytes($emptyPath, [byte[]]::new(0))
+                & chmod 755 $emptyPath
+                $names = 'caaliasshell', 'caaliasempty.exe'
+                $expectedReads = @()
+            }
+
+            Install-TestAliasReaderCounter
+            $savedPath = $env:PATH
+            try
+            {
+                $env:PATH = $directory
+                $results = @(foreach ($name in $names) { Resolve-TestProbeApplication -Name $name })
+            }
+            finally
+            {
+                $env:PATH = $savedPath
+            }
+
+            @($results | Where-Object { $null -eq $_.Path }).Count | Should -Be 0
+            (@(Get-TestAliasRead) -join '|') | Should -BeExactly ($expectedReads -join '|')
+            @($results | Where-Object { $null -ne $_.AliasTarget }).Count | Should -Be 0
+            if (-not $IsWindows)
+            {
+                @($results | Where-Object { -not $_.CanRun }).Count | Should -Be 0
+            }
+        }
+
+        It 'writes the alias line after the resolved line, names the alias in the action, and runs the alias path' {
+            if (-not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'app execution aliases exist only on Windows'
+                return
+            }
+
+            $directory = New-TestDirectory
+            $targetPath = Join-Path -Path (New-TestDirectory) -ChildPath 'console.exe'
+            Copy-Item -LiteralPath $env:ComSpec -Destination $targetPath
+            $aliasPath = Join-Path -Path $directory -ChildPath 'caaliasrun.exe'
+            New-TestAppExecutionAlias -Path $aliasPath -String ($script:TestPackageStrings + $targetPath + '0')
+            $scriptPath = Join-Path -Path (New-TestDirectory) -ChildPath 'caaliasrun_completer.ps1'
+            $exited = New-TestProcessResult -Status 'Exited' -Text $script:ProbeHelpText
+            Install-TestRunnerShim -Fake ({
+                    param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                    $exited
+                }.GetNewClosure())
+
+            $savedPath = $env:PATH
+            try
+            {
+                $env:PATH = $directory
+                $verbose = @(New-CompleterScript -CommandName 'caaliasrun' -Path $scriptPath -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+            }
+            finally
+            {
+                $env:PATH = $savedPath
+            }
+
+            $verbose[0] | Should -BeExactly ("Resolved 'caaliasrun' to the application '{0}'." -f $aliasPath)
+            $verbose[1] | Should -BeExactly ("'{0}' is an app execution alias for '{1}'." -f $aliasPath, $targetPath)
+            $verbose[2] | Should -BeExactly ('Performing the operation "Create completer script, running ''{0} --help'' and, if it is rejected, ''/?'' to read its help" on target "{1}".' -f $aliasPath, $scriptPath)
+            (@(Get-TestProbeRun | ForEach-Object FilePath) -join '|') | Should -BeExactly $aliasPath
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+        }
+
+        It 'probes winget through its app execution alias' {
+            $winget = Get-Command -Name 'winget' -CommandType Application -ErrorAction Ignore | Select-Object -First 1
+            $isAlias = $false
+            if ($IsWindows -and $null -ne $winget)
+            {
+                $file = [System.IO.FileInfo]::new($winget.Path)
+                $isAlias = $file.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint) -and $file.Length -eq 0
+            }
+
+            if (-not $isAlias)
+            {
+                Set-ItResult -Skipped -Because 'winget is not an app execution alias here'
+                return
+            }
+
+            $scriptPath = Join-Path -Path (New-TestDirectory) -ChildPath 'winget_completer.ps1'
+
+            $verbose = @(New-CompleterScript -CommandName 'winget' -Path $scriptPath -Verbose -WarningVariable warnings -WarningAction SilentlyContinue 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+
+            @($warnings) | Should -BeNullOrEmpty
+            $verbose[0] | Should -BeExactly ("Resolved 'winget' to the application '{0}'." -f $winget.Path)
+            $verbose[1] | Should -Match ('^''{0}'' is an app execution alias for ''.+\.exe''\.$' -f [regex]::Escape($winget.Path))
+            @($verbose | Where-Object { $_ -match ('^Probed ''{0} --help'': exit 0, ' -f [regex]::Escape($winget.Path)) }).Count | Should -Be 1 -Because ($verbose -join [System.Environment]::NewLine)
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+            @(Get-Content -LiteralPath $scriptPath | Where-Object { $_ -clike '*@{ Name = *' }).Count | Should -BeGreaterThan 0
+        }
     }
 }

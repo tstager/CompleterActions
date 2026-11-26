@@ -21,21 +21,21 @@ Runs tab completion for an input against a registered completer target.
 
 ```PowerShell
 Test-CompleterRegistration -CommandName <string[]> -ParameterName <string[]> -InputText <string>
- [-CursorPosition <int>] [<CommonParameters>]
+ [-CursorPosition <int>] [-TargetOnly] [<CommonParameters>]
 ```
 
 ### InputObject
 
 ```PowerShell
 Test-CompleterRegistration -InputObject <Object[]> -InputText <string> [-CursorPosition <int>]
- [<CommonParameters>]
+ [-TargetOnly] [<CommonParameters>]
 ```
 
 ### Native
 
 ```PowerShell
 Test-CompleterRegistration -CommandName <string[]> -Native -InputText <string>
- [-CursorPosition <int>] [<CommonParameters>]
+ [-CursorPosition <int>] [-TargetOnly] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -53,7 +53,8 @@ came from somewhere else: another completer, because the input or the cursor
 position completes a different parameter or command, or the engine's own
 fallback completion, such as file names, which the engine offers when the
 target's completer returns nothing. Assert on the matches whose `FromTarget`
-is `$true` to verify the registration itself.
+is `$true` to verify the registration itself; `-TargetOnly` writes only those,
+as `Where-Object FromTarget` would select them.
 
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as `Get-Completer` so
@@ -96,14 +97,14 @@ completing an argument for its parameter.
 ### EXAMPLE 3
 
 ```PowerShell
-$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' |
-    Where-Object FromTarget
+$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' -TargetOnly
 $matches.CompletionText | Should -Contain 'checkout'
 ```
 
 Asserts inside a Pester test on the matches the git completer produced
 itself, so a match the engine supplied without it cannot satisfy the
-assertion.
+assertion. `-TargetOnly` is equivalent to piping the matches to
+`Where-Object FromTarget`.
 
 ## PARAMETERS
 
@@ -249,6 +250,29 @@ ParameterSets:
   IsRequired: true
   ValueFromPipeline: false
   ValueFromPipelineByPropertyName: true
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -TargetOnly
+
+Returns only the matches whose `FromTarget` is `$true`, the ones the target's
+own completer produced. When the target's completer produced none, nothing is
+returned. Without it, every match the engine returns is written.
+
+```yaml
+Type: System.Management.Automation.SwitchParameter
+DefaultValue: False
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: (All)
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []

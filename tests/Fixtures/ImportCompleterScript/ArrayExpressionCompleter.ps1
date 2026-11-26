@@ -1,4 +1,4 @@
-Register-ArgumentCompleter -CommandName @('Test-ImportedArrayOne', 'Test-ImportedArrayTwo') -ParameterName @('Name', 'Path') -ScriptBlock {
+Register-ArgumentCompleter -CommandName @('Test-ImportedArrayOne', 'Test-ImportedArrayTwo') -ParameterName 'Name' -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
 
     $null = $commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters

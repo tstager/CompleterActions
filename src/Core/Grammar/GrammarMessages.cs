@@ -39,6 +39,13 @@ internal static class GrammarMessages
 
     internal static string LiteralStringValuesHint(string parameterName) => $"Replace the -{parameterName} value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed.";
 
+    // Added in 3.1.0: -ParameterName binds a single string, so its hints offer no array.
+    internal static string LiteralParameterNameHint(string parameterName) => $"Replace the -{parameterName} value with one literal string; a value computed at import time cannot be analyzed.";
+
+    internal static string ParameterNameArrayMessage(string parameterName) => $"The script passes an array to -{parameterName}.";
+
+    internal static string ParameterNameArrayHint(string parameterName) => $"Give -{parameterName} one literal string; Register-ArgumentCompleter binds a single parameter name. Register each parameter with its own call.";
+
     internal static string BlankNameMessage(string parameterName) => $"The script uses an empty or blank name for -{parameterName}.";
 
     internal static string BlankNameHint(string parameterName) => $"Give every -{parameterName} value a real name; PowerShell refuses to bind an empty string, and Import-CompleterScript refuses a blank name.";

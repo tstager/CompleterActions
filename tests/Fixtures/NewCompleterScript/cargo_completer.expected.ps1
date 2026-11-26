@@ -1,5 +1,5 @@
 # cargo tab completion for PowerShell
-# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.
+# Help-seeded native completer: the tables were read from help text passed to New-CompleterScript.
 
 Set-StrictMode -Version 2.0
 
@@ -23,6 +23,25 @@ if (-not (Get-Variable -Name CargoCompletionCatalog -Scope Script -ErrorAction I
             @{ Name = 'install'; Description = 'Install a Rust binary' }
             @{ Name = 'uninstall'; Description = 'Uninstall a Rust binary' }
         )
+        Options = @(
+            @{ Name = '-V'; Description = 'Print version info and exit' }
+            @{ Name = '--version'; Description = 'Print version info and exit' }
+            @{ Name = '--list'; Description = 'List installed commands' }
+            @{ Name = '--explain'; Description = 'Provide a detailed explanation of a rustc error message' }
+            @{ Name = '-v'; Description = 'Use verbose output (-vv very verbose/build.rs output)' }
+            @{ Name = '--verbose'; Description = 'Use verbose output (-vv very verbose/build.rs output)' }
+            @{ Name = '-q'; Description = 'Do not print cargo log messages' }
+            @{ Name = '--quiet'; Description = 'Do not print cargo log messages' }
+            @{ Name = '--color'; Description = 'Coloring [possible values: auto, always, never]' }
+            @{ Name = '-C'; Description = 'Change to DIRECTORY before doing anything (nightly-only)' }
+            @{ Name = '--locked'; Description = 'Assert that `Cargo.lock` will remain unchanged' }
+            @{ Name = '--offline'; Description = 'Run without accessing the network' }
+            @{ Name = '--frozen'; Description = 'Equivalent to specifying both --locked and --offline' }
+            @{ Name = '--config'; Description = 'Override a configuration value' }
+            @{ Name = '-Z'; Description = 'Unstable (nightly-only) flags to Cargo, see ''cargo -Z help'' for' }
+            @{ Name = '-h'; Description = 'Print help' }
+            @{ Name = '--help'; Description = 'Print help' }
+        )
     }
 }
 
@@ -33,7 +52,16 @@ function Complete-Cargo {
         [int]$cursorPosition
     )
 
-    # Offer subcommands in the first argument position only; extend this function for options and values.
+    # Offer options in any position once the word starts with '-' or '/'.
+    if ($wordToComplete.StartsWith('-') -or $wordToComplete.StartsWith('/')) {
+        foreach ($option in $script:CargoCompletionCatalog.Options) {
+            if ($option.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {
+                [System.Management.Automation.CompletionResult]::new($option.Name, $option.Name, 'ParameterName', $option.Description)
+            }
+        }
+    }
+
+    # Offer subcommands in the first argument position only; extend this function for values.
     $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })
     if ($precedingElements.Count -gt 1) {
         return

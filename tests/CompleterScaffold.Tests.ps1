@@ -5,7 +5,7 @@ BeforeAll {
 
     $script:ManifestPath = Join-Path -Path $PSScriptRoot -ChildPath '..\CompleterActions.psd1'
 
-    # The section 2 skeleton block, character for character; <LINE2> and <SUBCOMMANDS> vary by case.
+    # The section 2 skeleton block, character for character; <LINE2>, <SUBCOMMANDS>, and <OPTIONS> vary by case.
     $script:CargoSkeletonTemplate = @'
 # cargo tab completion for PowerShell
 <LINE2>
@@ -15,6 +15,7 @@ Set-StrictMode -Version 2.0
 if (-not (Get-Variable -Name CargoCompletionCatalog -Scope Script -ErrorAction Ignore)) {
     $script:CargoCompletionCatalog = @{
 <SUBCOMMANDS>
+<OPTIONS>
     }
 }
 
@@ -25,7 +26,16 @@ function Complete-Cargo {
         [int]$cursorPosition
     )
 
-    # Offer subcommands in the first argument position only; extend this function for options and values.
+    # Offer options in any position once the word starts with '-' or '/'.
+    if ($wordToComplete.StartsWith('-') -or $wordToComplete.StartsWith('/')) {
+        foreach ($option in $script:CargoCompletionCatalog.Options) {
+            if ($option.Name.StartsWith($wordToComplete, [System.StringComparison]::OrdinalIgnoreCase)) {
+                [System.Management.Automation.CompletionResult]::new($option.Name, $option.Name, 'ParameterName', $option.Description)
+            }
+        }
+    }
+
+    # Offer subcommands in the first argument position only; extend this function for values.
     $precedingElements = @($commandAst.CommandElements | Where-Object { $_.Extent.EndOffset -lt $cursorPosition })
     if ($precedingElements.Count -gt 1) {
         return
@@ -48,6 +58,11 @@ Register-ArgumentCompleter -Native -CommandName 'cargo', 'cargo.exe' -ScriptBloc
     $script:CargoRows = @(
         [pscustomobject] @{ Name = 'build'; Description = 'Compile the current package' }
         [pscustomobject] @{ Name = 'check'; Description = "Analyze the current package and report errors, but don't build object files" }
+    )
+
+    $script:CargoOptionRows = @(
+        [pscustomobject] @{ Name = '-V'; Description = 'Print version info and exit' }
+        [pscustomobject] @{ Name = '--version'; Description = 'Print version info and exit' }
     )
 
     # U+0027, U+2018, U+2019, U+201A, and U+201B, the single-quote characters the tokenizer accepts.
@@ -192,37 +207,57 @@ Describe 'Completer script skeleton' {
         $lines[0] | Should -BeExactly '# rg.exe tab completion for PowerShell'
     }
 
-    It 'writes line 2 for <Case>' -TestCases @(
+    It 'writes line 2 and the tables for <Case>' -TestCases @(
         @{
-            Case       = 'probe'
-            SeedKind   = 'Probe'
-            Rows       = 'cargo'
-            Line2      = "# Help-seeded native completer: the subcommand table was read from 'cargo --help' when the script was generated."
+            Case     = 'a probe with subcommands'
+            SeedKind = 'Probe'
+            Rows     = 'subcommands'
+            Line2    = "# Help-seeded native completer: the tables were read from 'cargo --help' when the script was generated."
         }
         @{
-            Case       = 'help text'
-            SeedKind   = 'HelpText'
-            Rows       = 'cargo'
-            Line2      = '# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.'
+            Case     = 'a probe with options only'
+            SeedKind = 'Probe'
+            Rows     = 'options'
+            Line2    = "# Help-seeded native completer: the tables were read from 'cargo --help' when the script was generated."
         }
         @{
-            Case       = 'empty table'
-            SeedKind   = 'Probe'
-            Rows       = 'none'
-            Line2      = '# Native completer skeleton: add subcommands to the table and options to Complete-Cargo.'
+            Case     = 'help text with subcommands'
+            SeedKind = 'HelpText'
+            Rows     = 'subcommands'
+            Line2    = '# Help-seeded native completer: the tables were read from help text passed to New-CompleterScript.'
+        }
+        @{
+            Case     = 'help text with options only'
+            SeedKind = 'HelpText'
+            Rows     = 'options'
+            Line2    = '# Help-seeded native completer: the tables were read from help text passed to New-CompleterScript.'
+        }
+        @{
+            Case     = 'help text with both tables'
+            SeedKind = 'HelpText'
+            Rows     = 'both'
+            Line2    = '# Help-seeded native completer: the tables were read from help text passed to New-CompleterScript.'
+        }
+        @{
+            Case     = 'empty tables'
+            SeedKind = 'Probe'
+            Rows     = 'none'
+            Line2    = '# Native completer skeleton: add subcommands and options to the tables.'
         }
     ) {
-        $subcommand = @(if ($Rows -eq 'cargo') { $script:CargoRows })
-        $parameters = @{ SeedKind = $SeedKind; Subcommand = $subcommand }
+        $subcommand = @(if ($Rows -in 'subcommands', 'both') { $script:CargoRows })
+        $option = @(if ($Rows -in 'options', 'both') { $script:CargoOptionRows })
+        $parameters = @{ SeedKind = $SeedKind; Subcommand = $subcommand; Option = $option }
 
         $lines = @(InModuleScope -ModuleName 'CompleterActions' -Parameters $parameters -ScriptBlock {
-                param($SeedKind, $Subcommand)
+                param($SeedKind, $Subcommand, $Option)
 
                 $skeletonParameters = @{
                     Name       = 'cargo'
                     Stem       = ConvertTo-CompleterScriptStem -Name 'cargo'
                     Target     = @(ConvertTo-CompleterTargetName -CommandName 'cargo')
                     Subcommand = @($Subcommand)
+                    Option     = @($Option)
                     SeedKind   = $SeedKind
                 }
 
@@ -236,7 +271,7 @@ Describe 'Completer script skeleton' {
 
         $lines[1] | Should -BeExactly $Line2
 
-        $subcommandText = if ($Rows -eq 'cargo')
+        $subcommandText = if ($subcommand.Count -gt 0)
         {
             @(
                 '        Subcommands = @('
@@ -250,18 +285,45 @@ Describe 'Completer script skeleton' {
             '        Subcommands = @()'
         }
 
-        $expected = @($script:CargoSkeletonTemplate.Replace('<LINE2>', $Line2).Replace('<SUBCOMMANDS>', $subcommandText) -split '\r?\n')
+        $optionText = if ($option.Count -gt 0)
+        {
+            @(
+                '        Options = @('
+                "            @{ Name = '-V'; Description = 'Print version info and exit' }"
+                "            @{ Name = '--version'; Description = 'Print version info and exit' }"
+                '        )'
+            ) -join "`n"
+        }
+        else
+        {
+            '        Options = @()'
+        }
+
+        $expected = @($script:CargoSkeletonTemplate.Replace('<LINE2>', $Line2).Replace('<SUBCOMMANDS>', $subcommandText).Replace('<OPTIONS>', $optionText) -split '\r?\n')
         $lines.Count | Should -Be $expected.Count
         ($lines -join "`n") | Should -BeExactly ($expected -join "`n")
     }
 
-    It 'writes an empty table as Subcommands = @()' {
+    It 'refuses option rows without a seed kind' {
+        $thrown = {
+            InModuleScope -ModuleName 'CompleterActions' -Parameters @{ Option = $script:CargoOptionRows } -ScriptBlock {
+                param($Option)
+
+                Get-CompleterScriptSkeleton -Name 'cargo' -Stem 'Cargo' -Target 'cargo', 'cargo.exe' -Subcommand @() -Option $Option
+            }
+        } | Should -Throw -PassThru
+
+        $thrown.Exception.Message | Should -BeExactly 'A non-empty subcommand or option table needs -SeedKind HelpText, or -SeedKind Probe with -ProbeArgument.'
+    }
+
+    It 'writes empty tables as Subcommands = @() and Options = @()' {
         $lines = @(InModuleScope -ModuleName 'CompleterActions' -ScriptBlock {
                 Get-CompleterScriptSkeleton -Name 'rg' -Stem 'Rg' -Target 'rg', 'rg.exe' -Subcommand @() -SeedKind 'HelpText'
             })
 
         @($lines | Where-Object { $_ -ceq '        Subcommands = @()' }).Count | Should -Be 1
-        @($lines | Where-Object { $_ -clike '*Subcommands = @(' -or $_ -clike '*@{ Name = *' }).Count | Should -Be 0
+        @($lines | Where-Object { $_ -ceq '        Options = @()' }).Count | Should -Be 1
+        @($lines | Where-Object { $_ -clike '*Subcommands = @(' -or $_ -clike '*Options = @(' -or $_ -clike '*@{ Name = *' }).Count | Should -Be 0
     }
 
     It 'writes a skeleton that Get-CompleterScriptFinding accepts and Get-CompleterScriptTarget reads back for <Case>' -TestCases @(
@@ -452,9 +514,13 @@ Describe 'Completer script skeleton' {
 Describe 'New-CompleterScript' {
     BeforeAll {
         $script:CaptureFolder = Join-Path -Path $PSScriptRoot -ChildPath 'Fixtures\NewCompleterScript'
-        $script:PwshApplicationPath = (Get-Command -Name 'pwsh' -CommandType Application -ErrorAction Ignore | Select-Object -First 1).Source
-        $script:SkeletonLine2Format = '# Native completer skeleton: add subcommands to the table and options to Complete-{0}.'
-        $script:HelpTextLine2 = '# Help-seeded native completer: the subcommand table was read from help text passed to New-CompleterScript.'
+        # The pwsh running the suite. A test that hands the bare name pwsh to
+        # New-CompleterScript puts $PSHOME first on PATH in the process that
+        # resolves it, because the first pwsh on PATH can be an app execution
+        # alias, and a child pwsh puts the alias folder back at the front.
+        $script:PwshPath = Join-Path -Path $PSHOME -ChildPath ($IsWindows ? 'pwsh.exe' : 'pwsh')
+        $script:SkeletonLine2 = '# Native completer skeleton: add subcommands and options to the tables.'
+        $script:HelpTextLine2 = '# Help-seeded native completer: the tables were read from help text passed to New-CompleterScript.'
 
         # Copies cmd.exe and rewrites the UInt16 Subsystem field at e_lfanew + 92.
         function New-TestPatchedExe
@@ -591,6 +657,29 @@ Describe 'New-CompleterScript' {
             @(Get-Content -LiteralPath (Join-Path -Path $script:CaptureFolder -ChildPath "$Tool.names.txt") | Where-Object { $_.Length -gt 0 })
         }
 
+        function Get-TestExpectedOption
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $Tool
+            )
+
+            @(Get-Content -LiteralPath (Join-Path -Path $script:CaptureFolder -ChildPath "$Tool.options.txt") | Where-Object { $_.Length -gt 0 })
+        }
+
+        # Reads the catalog hashtable of a generated script without running it.
+        function Get-TestCatalog
+        {
+            param(
+                [Parameter(Mandatory)]
+                [string] $LiteralPath
+            )
+
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($LiteralPath, [ref] $null, [ref] $null)
+            $assignment = $ast.Find({ param($node) $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -clike '$script:*CompletionCatalog' }, $true)
+            $assignment.Right.Expression.SafeGetValue()
+        }
+
         function Remove-TestNativeRegistration
         {
             [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'This test helper only removes registrations the test made.')]
@@ -617,10 +706,14 @@ Describe 'New-CompleterScript' {
                 [string] $Target,
 
                 [Parameter()]
-                [string] $Fixture = 'none'
+                [string] $Fixture = 'none',
+
+                [Parameter()]
+                [switch] $Documentation
             )
 
-            @(& pwsh -NoProfile -NoLogo -NonInteractive -File $script:WhatIfChildPath -ManifestPath $script:ManifestPath -Case $Case -CommandName $CommandName -Target $Target -Fixture $Fixture 2>&1)
+            $documentationArgument = @(if ($Documentation) { '-Documentation' })
+            @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $script:WhatIfChildPath -ManifestPath $script:ManifestPath -Case $Case -CommandName $CommandName -Target $Target -Fixture $Fixture @documentationArgument 2>&1)
         }
 
         $script:WhatIfChildPath = Join-Path -Path $TestDrive -ChildPath 'new-completerscript-whatif.ps1'
@@ -630,9 +723,12 @@ param(
     [string] $Case,
     [string] $CommandName,
     [string] $Target,
-    [string] $Fixture
+    [string] $Fixture,
+    [switch] $Documentation
 )
 
+# A child pwsh puts the alias folder back at the front of PATH, so the pin is made here.
+$env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $env:PATH
 $ErrorActionPreference = 'Stop'
 Import-Module -Name $ManifestPath -Force
 
@@ -651,14 +747,15 @@ Import-Module -Name $ManifestPath -Force
 
 switch ($Case)
 {
-    'Default' { New-CompleterScript -CommandName $CommandName -Path $Target -WhatIf }
-    'HelpArgument' { New-CompleterScript -CommandName $CommandName -Path $Target -HelpArgument $Fixture -WhatIf }
-    'HelpText' { 'Commands:', '  build    Compile' | New-CompleterScript -CommandName $CommandName -Path $Target -WhatIf }
-    'NoProbe' { New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -WhatIf }
+    'Default' { New-CompleterScript -CommandName $CommandName -Path $Target -Documentation:$Documentation -WhatIf }
+    'HelpArgument' { New-CompleterScript -CommandName $CommandName -Path $Target -HelpArgument $Fixture -Documentation:$Documentation -WhatIf }
+    'HelpText' { 'Commands:', '  build    Compile' | New-CompleterScript -CommandName $CommandName -Path $Target -Documentation:$Documentation -WhatIf }
+    'NoProbe' { New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -Documentation:$Documentation -WhatIf }
 }
 
 'COUNT={0}' -f (& (Get-Module -Name 'CompleterActions') { $script:TestProbeCount })
 'EXISTS={0}' -f (Test-Path -LiteralPath $Target)
+'MDEXISTS={0}' -f (Test-Path -LiteralPath ([System.IO.Path]::ChangeExtension($Target, '.md')))
 '@
     }
 
@@ -675,7 +772,7 @@ switch ($Case)
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
-    It 'writes a conforming rg skeleton from the rg capture with an empty table, the skeleton line 2, and no warning' {
+    It 'seeds the option table of the option-only rg from the rg capture, with the help-text line 2 and no warning' {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
 
         $file = New-CompleterScript -CommandName 'rg' -Path $scriptPath -HelpText (Get-TestCapture -Tool 'rg') -PassThru -WarningVariable warnings -WarningAction SilentlyContinue
@@ -686,8 +783,13 @@ switch ($Case)
 
         $lines = @(Get-Content -LiteralPath $file.FullName)
         $lines[0] | Should -BeExactly '# rg tab completion for PowerShell'
-        $lines[1] | Should -BeExactly ($script:SkeletonLine2Format -f 'Rg')
+        $lines[1] | Should -BeExactly $script:HelpTextLine2
         @($lines | Where-Object { $_ -ceq '        Subcommands = @()' }).Count | Should -Be 1
+
+        $catalog = Get-TestCatalog -LiteralPath $file.FullName
+        @($catalog.Subcommands).Count | Should -Be 0
+        (@($catalog.Options | ForEach-Object { $_.Name }) -join "`n") | Should -BeExactly ((Get-TestExpectedOption -Tool 'rg') -join "`n")
+        @($catalog.Options | ForEach-Object { $_.Name }) | Should -Contain '--regexp'
         (@(Import-CompleterScript -LiteralPath $file.FullName).CommandName -join '|') | Should -BeExactly 'rg|rg.exe'
     }
 
@@ -701,7 +803,7 @@ switch ($Case)
         $actual | Should -BeExactly $expected
     }
 
-    It 'writes a conforming script for the <Tool> capture that imports and registers lazily with the same targets and writes no warning' -TestCases @(
+    It 'writes a conforming script for the <Tool> capture with exactly its expected subcommand and option names, that imports and registers lazily with the same targets and writes no warning' -TestCases @(
         @{ Tool = 'cargo' }
         @{ Tool = 'docker' }
         @{ Tool = 'gh' }
@@ -716,6 +818,7 @@ switch ($Case)
         @{ Tool = 'git' }
         @{ Tool = 'rg' }
         @{ Tool = 'schtasks' }
+        @{ Tool = 'du' }
     ) {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath "$($Tool)_completer.ps1"
         $expectedTargets = @($Tool, "$Tool.exe")
@@ -726,7 +829,11 @@ switch ($Case)
 
             $warnings | Should -BeNullOrEmpty
             Test-CompleterScript -LiteralPath $file.FullName | Should -BeNullOrEmpty
-            @(Get-Content -LiteralPath $file.FullName | Where-Object { $_ -clike '            @{ Name = *' }).Count | Should -Be @(Get-TestExpectedName -Tool $Tool).Count
+
+            $catalog = Get-TestCatalog -LiteralPath $file.FullName
+            (@($catalog.Subcommands | ForEach-Object { $_.Name }) -join "`n") | Should -BeExactly ((Get-TestExpectedName -Tool $Tool) -join "`n")
+            (@($catalog.Options | ForEach-Object { $_.Name }) -join "`n") | Should -BeExactly ((Get-TestExpectedOption -Tool $Tool) -join "`n")
+            @(Get-Content -LiteralPath $file.FullName | Where-Object { $_ -clike '            @{ Name = *' }).Count | Should -Be (@(Get-TestExpectedName -Tool $Tool).Count + @(Get-TestExpectedOption -Tool $Tool).Count)
 
             $imported = @(Import-CompleterScript -LiteralPath $file.FullName)
             $imported.Count | Should -Be $expectedTargets.Count
@@ -742,7 +849,7 @@ switch ($Case)
         }
     }
 
-    It 'offers build and bench for cargo b and no subcommand after cargo build' {
+    It 'offers build and bench for cargo b, --version for cargo --ver, and no subcommand after cargo build' {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'cargo_completer.ps1'
 
         try
@@ -752,8 +859,95 @@ switch ($Case)
 
             @(Test-CompleterRegistration -CommandName 'cargo' -Native -InputText 'cargo b').CompletionText | Should -Be @('build', 'bench')
 
+            $version = @(Test-CompleterRegistration -CommandName 'cargo' -Native -InputText 'cargo --ver' -TargetOnly)
+            $version.CompletionText | Should -Contain '--version'
+            @($version | Where-Object { $_.ResultType -ne [System.Management.Automation.CompletionResultType]::ParameterName }).Count | Should -Be 0
+
             $afterBuild = @(Test-CompleterRegistration -CommandName 'cargo' -Native -InputText 'cargo build ')
             @($afterBuild | Where-Object { $_.CompletionText -in (Get-TestExpectedName -Tool 'cargo') }).Count | Should -Be 0
+        }
+        finally
+        {
+            Remove-TestNativeRegistration -CommandName 'cargo', 'cargo.exe'
+        }
+    }
+
+    It 'offers rg options for <InputText> with ResultType ParameterName' -TestCases @(
+        @{ InputText = 'rg --reg' }
+        @{ InputText = 'rg foo --reg' }
+    ) {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+
+        try
+        {
+            $file = New-CompleterScript -CommandName 'rg' -Path $scriptPath -HelpText (Get-TestCapture -Tool 'rg') -PassThru
+            $null = Register-Completer -LiteralPath $file.FullName -Lazy
+
+            $completions = @(Test-CompleterRegistration -CommandName 'rg' -Native -InputText $InputText -TargetOnly)
+
+            $completions.CompletionText | Should -Contain '--regexp'
+            $completions.CompletionText | Should -Contain '--regex-size-limit'
+            @($completions | Where-Object { -not $_.CompletionText.StartsWith('--reg', [System.StringComparison]::OrdinalIgnoreCase) }).Count | Should -Be 0
+            @($completions | Where-Object { $_.ResultType -ne [System.Management.Automation.CompletionResultType]::ParameterName }).Count | Should -Be 0
+        }
+        finally
+        {
+            Remove-TestNativeRegistration -CommandName 'rg', 'rg.exe'
+        }
+    }
+
+    It 'offers <Expected> from the target for <Case>' -TestCases @(
+        @{ Case = 'an empty word'; InputText = 'catool '; Expected = 'build' }
+        @{ Case = 'a slash word that matches an option'; InputText = 'catool /x'; Expected = '/X' }
+        @{ Case = 'a slash word that matches no option'; InputText = 'catool /usr'; Expected = '' }
+        @{ Case = 'a dash word that matches no option'; InputText = 'catool --zz'; Expected = '' }
+        @{ Case = 'a dash word after the first argument'; InputText = 'catool build -'; Expected = '-a,--all' }
+    ) {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'catool_completer.ps1'
+        $helpText = @('Options:', '  -a, --all    Show all', '  /X           Extended', '', 'Commands:', '  build    Compile') -join "`n"
+
+        try
+        {
+            $file = New-CompleterScript -CommandName 'catool' -Path $scriptPath -HelpText $helpText -PassThru
+            $null = Register-Completer -LiteralPath $file.FullName -Lazy
+
+            (@((Get-TestCatalog -LiteralPath $file.FullName).Options | ForEach-Object { $_.Name }) -join ',') | Should -BeExactly '-a,--all,/X'
+            (@(Test-CompleterRegistration -CommandName 'catool' -Native -InputText $InputText -TargetOnly).CompletionText -join ',') | Should -BeExactly $Expected
+        }
+        finally
+        {
+            Remove-TestNativeRegistration -CommandName 'catool', 'catool.exe'
+        }
+    }
+
+    It 'offers nothing from the target for rg followed by a space' {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+
+        try
+        {
+            $file = New-CompleterScript -CommandName 'rg' -Path $scriptPath -HelpText (Get-TestCapture -Tool 'rg') -PassThru
+            $null = Register-Completer -LiteralPath $file.FullName -Lazy
+
+            @(Test-CompleterRegistration -CommandName 'rg' -Native -InputText 'rg ' -TargetOnly) | Should -BeNullOrEmpty
+        }
+        finally
+        {
+            Remove-TestNativeRegistration -CommandName 'rg', 'rg.exe'
+        }
+    }
+
+    It 'still passes Test-CompleterScript and completes cargo b with the script 3.0.1 generated' {
+        $oldScript = Join-Path -Path $script:CaptureFolder -ChildPath 'cargo_completer.3.0.1.ps1'
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'cargo_completer.ps1'
+        Copy-Item -LiteralPath $oldScript -Destination $scriptPath
+
+        try
+        {
+            (Get-TestCatalog -LiteralPath $scriptPath).ContainsKey('Options') | Should -BeFalse
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+            $null = Register-Completer -LiteralPath $scriptPath -Lazy
+
+            @(Test-CompleterRegistration -CommandName 'cargo' -Native -InputText 'cargo b' -TargetOnly).CompletionText | Should -Be @('build', 'bench')
         }
         finally
         {
@@ -856,17 +1050,20 @@ switch ($Case)
     }
 
     It 'writes a conforming pwsh script from a real probe' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
 
-        $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
-        $probeLinePattern = '^Probed ''{0} --help'': exit 0, \d+ characters, \d+ subcommands, \d+ ms\.$' -f [regex]::Escape($script:PwshApplicationPath)
+        $probeLinePattern = '^Probed ''{0} --help'': exit 0, \d+ characters, \d+ subcommands, \d+ options, \d+ ms\.$' -f [regex]::Escape($script:PwshPath)
         @($verbose | Where-Object { $_ -match $probeLinePattern }).Count | Should -Be 1
         Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
     }
@@ -886,13 +1083,6 @@ switch ($Case)
             @{ Outcome = 'held output' }
         ) {
             $script:ScaffoldDescendantId = $null
-            $usesPwsh = $Outcome -eq 'a timeout' -or $IsWindows
-            if ($usesPwsh -and $null -eq $script:PwshApplicationPath)
-            {
-                Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-                return
-            }
-
             $idPath = Join-Path -Path $script:CaseFolder -ChildPath 'descendant.txt'
             $savedPath = $env:PATH
 
@@ -901,6 +1091,7 @@ switch ($Case)
                 if ($Outcome -eq 'a timeout')
                 {
                     $commandName = 'pwsh'
+                    $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
                     $fixture = Join-Path -Path $script:CaseFolder -ChildPath 'sleep-help.ps1'
                     Set-Content -LiteralPath $fixture -Encoding utf8 -Value 'Start-Sleep -Seconds 60', 'exit 0'
                     & (Get-Module -Name 'CompleterActions') { $script:CompleterHelpProbeTimeoutSeconds = 0.05 }
@@ -911,6 +1102,7 @@ switch ($Case)
                 elseif ($IsWindows)
                 {
                     $commandName = 'pwsh'
+                    $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
                     $fixture = Join-Path -Path $script:CaseFolder -ChildPath 'held-help.ps1'
                     Set-Content -LiteralPath $fixture -Encoding utf8 -Value @(
                         '$descendant = Start-Process -NoNewWindow -FilePath ''ping.exe'' -ArgumentList ''-n'', ''15'', ''127.0.0.1'' -PassThru'
@@ -943,8 +1135,7 @@ switch ($Case)
             }
 
             @($warnings | ForEach-Object Message) | Should -Be @($expectedWarning)
-            $stem = & (Get-Module -Name 'CompleterActions') { param($Name) ConvertTo-CompleterScriptStem -Name $Name } $commandName
-            @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ($script:SkeletonLine2Format -f $stem)
+            @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly $script:SkeletonLine2
             Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
         }
     }
@@ -975,7 +1166,7 @@ switch ($Case)
         @(Get-TestProbeRun).Count | Should -Be 0
         @($warnings | ForEach-Object Message) | Should -Be @("'$applicationPath' was not run: it is a Windows GUI program. Run 'caguiscaffold --help' yourself and pass the text with -HelpText.")
         Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
-        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ($script:SkeletonLine2Format -f 'Caguiscaffold')
+        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly $script:SkeletonLine2
     }
 
     It 'never runs a .cmd fixture and leaves its marker absent' {
@@ -1047,17 +1238,10 @@ switch ($Case)
 
         @($warnings | ForEach-Object Message) | Should -Be @("The command '$name' was not found as an application, so the subcommand table is empty. Pass captured help with -HelpText, or fill the table by hand.")
         Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
-        $stem = & (Get-Module -Name 'CompleterActions') { param($Name) ConvertTo-CompleterScriptStem -Name $Name } $name
-        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ($script:SkeletonLine2Format -f $stem)
+        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly $script:SkeletonLine2
     }
 
     It 'runs nothing, writes nothing, and names the path and program under -WhatIf' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $markerPath = Join-Path -Path $script:CaseFolder -ChildPath 'marker.txt'
         $fixture = Join-Path -Path $script:CaseFolder -ChildPath 'marker-help.ps1'
         Set-Content -LiteralPath $fixture -Encoding utf8 -Value ("Set-Content -LiteralPath '{0}' -Value 'ran'" -f $markerPath)
@@ -1069,7 +1253,7 @@ switch ($Case)
         $output | Should -Contain 'COUNT=0'
         $output | Should -Contain 'EXISTS=False'
         Test-Path -LiteralPath $markerPath | Should -BeFalse
-        $whatIfLine = 'What if: Performing the operation "Create completer script, running ''{0} {1}'' to read its help" on target "{2}".' -f $script:PwshApplicationPath, $fixture, $target
+        $whatIfLine = 'What if: Performing the operation "Create completer script, running ''{0} {1}'' to read its help" on target "{2}".' -f $script:PwshPath, $fixture, $target
         @($output | Where-Object { $_ -ceq $whatIfLine }).Count | Should -Be 1
     }
 
@@ -1093,19 +1277,13 @@ switch ($Case)
             return
         }
 
-        if ($CommandName -eq 'pwsh' -and $null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $target = Join-Path -Path $script:CaseFolder -ChildPath "$($CommandName)_completer.ps1"
         $output = Invoke-TestWhatIfChild -Case $Child -CommandName $CommandName -Target $target -Fixture 'help'
 
         $LASTEXITCODE | Should -Be 0 -Because ($output -join [System.Environment]::NewLine)
         $output | Should -Contain 'COUNT=0'
         $output | Should -Contain 'EXISTS=False'
-        $action = if ($Action.StartsWith('running')) { 'Create completer script, ' + $Action.Replace('<pwsh>', $script:PwshApplicationPath) } else { 'Create completer script ' + $Action }
+        $action = if ($Action.StartsWith('running')) { 'Create completer script, ' + $Action.Replace('<pwsh>', $script:PwshPath) } else { 'Create completer script ' + $Action }
         $whatIfLine = 'What if: Performing the operation "{0}" on target "{1}".' -f $action, $target
         @($output | Where-Object { $_ -ceq $whatIfLine }).Count | Should -Be 1 -Because ($output -join [System.Environment]::NewLine)
     }
@@ -1124,7 +1302,16 @@ switch ($Case)
             }
         }
 
-        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -WhatIf } | Should -Throw -PassThru
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -WhatIf } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + ($script:AlreadyExistsFormat -f $scriptPath))
         (& (Get-Module -Name 'CompleterActions') { $script:TestResolveCount }) | Should -Be 0
@@ -1148,12 +1335,6 @@ switch ($Case)
     }
 
     It 'fails when the file appears during the probe and leaves no .tmp file' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
-        }
-
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
         $result = New-TestExitedResult -Text "Commands:`n  build    Compile the project`n"
         Install-TestRunnerShim -Fake ({
@@ -1163,7 +1344,16 @@ switch ($Case)
                 $result
             }.GetNewClosure())
 
-        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' } | Should -Throw -PassThru
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + ($script:AlreadyExistsFormat -f $scriptPath))
         @(Get-TestProbeRun).Count | Should -Be 1
@@ -1217,7 +1407,16 @@ switch ($Case)
                 $result
             }.GetNewClosure())
 
-        $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $HelpArgument } | Should -Throw -PassThru
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument $HelpArgument } | Should -Throw -PassThru
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $thrown.Exception.Message | Should -BeExactly 'Failed to create completer script. -HelpArgument must not contain a line break.'
         @(Get-TestProbeRun).Count | Should -Be 0
@@ -1255,7 +1454,7 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
             Set-Content -LiteralPath $scriptPath -Value 'existing content'
         }
 
-        $output = @(& pwsh -NoProfile -NoLogo -NonInteractive -File $childPath -ManifestPath $script:ManifestPath -CommandName $CommandName -Target $scriptPath -Action $Action 2>&1 | ForEach-Object { "$_" })
+        $output = @(& $script:PwshPath -NoProfile -NoLogo -NonInteractive -File $childPath -ManifestPath $script:ManifestPath -CommandName $CommandName -Target $scriptPath -Action $Action 2>&1 | ForEach-Object { "$_" })
 
         $errorLines = @($output | Where-Object { $_ -like 'ERROR=*' })
         $errorLines.Count | Should -Be 1 -Because ($output -join [System.Environment]::NewLine)
@@ -1328,7 +1527,7 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
             $script:TestSkeletonOriginal = ${function:Get-CompleterScriptSkeleton}
             function script:Get-CompleterScriptSkeleton
             {
-                param($Name, $Stem, $Target, $Subcommand, $SeedKind, $ProbeArgument)
+                param($Name, $Stem, $Target, $Subcommand, $Option, $SeedKind, $ProbeArgument)
 
                 $lines = [System.Collections.Generic.List[string]]::new()
                 $lines.AddRange([string[]] @(& $script:TestSkeletonOriginal @PSBoundParameters))
@@ -1344,15 +1543,33 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
         @(Get-ChildItem -LiteralPath $script:CaseFolder -Force).Count | Should -Be 0
     }
 
-    It 'writes the resolved-application, probe, and wrote verbose lines' {
-        if ($null -eq $script:PwshApplicationPath)
-        {
-            Set-ItResult -Skipped -Because 'pwsh is not an application on PATH'
-            return
+    It 'fails with the self-check text and leaves neither file when the composer emits a cast in the option table' {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+
+        & (Get-Module -Name 'CompleterActions') {
+            $script:TestSkeletonOriginal = ${function:Get-CompleterScriptSkeleton}
+            function script:Get-CompleterScriptSkeleton
+            {
+                param($Name, $Stem, $Target, $Subcommand, $Option, $SeedKind, $ProbeArgument)
+
+                $script:TestSkeletonLines = @(& $script:TestSkeletonOriginal @PSBoundParameters)
+                $optionsLine = [array]::IndexOf($script:TestSkeletonLines, '        Options = @(')
+                $script:TestSkeletonLines[$optionsLine + 1] = $script:TestSkeletonLines[$optionsLine + 1].Replace('@{ Name', '[ordered]@{ Name')
+                $script:TestSkeletonLines
+            }
         }
 
+        $thrown = { New-CompleterScript -CommandName 'rg' -Path $scriptPath -HelpText (Get-TestCapture -Tool 'rg') -Documentation } | Should -Throw -PassThru
+
+        $castLine = & (Get-Module -Name 'CompleterActions') { $script:TestSkeletonLines | Where-Object { $_.Contains('[ordered]@{ Name') } }
+        @($castLine).Count | Should -Be 1
+        $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + $script:SelfCheckPrefix + "The script contains unsupported top-level expression 'ConvertExpressionAst'.")
+        @(Get-ChildItem -LiteralPath $script:CaseFolder -Force).Count | Should -Be 0
+    }
+
+    It 'writes the resolved-application, probe, and wrote verbose lines with the subcommand and option counts' {
         $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
-        $helpText = "Commands:`n  build    Compile the project`n  test     Run the tests`n"
+        $helpText = "Options:`n  -h, --help     Print help`n  -V, --version  Print version`n  -q             Be quiet`n`nCommands:`n  build    Compile the project`n  test     Run the tests`n"
         $result = New-TestExitedResult -Text $helpText
         Install-TestRunnerShim -Fake ({
                 param($FilePath, $ArgumentList, $TimeoutSeconds)
@@ -1360,24 +1577,281 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
                 $result
             }.GetNewClosure())
 
-        $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -HelpArgument '--help' -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
 
         $verbose.Count | Should -Be 4 -Because ($verbose -join [System.Environment]::NewLine)
-        $verbose[0] | Should -BeExactly ("Resolved 'pwsh' to the application '{0}'." -f $script:PwshApplicationPath)
-        $verbose[1] | Should -BeExactly ('Performing the operation "Create completer script, running ''{0} --help'' to read its help" on target "{1}".' -f $script:PwshApplicationPath, $scriptPath)
-        $verbose[2] | Should -BeExactly ("Probed '{0} --help': exit 0, {1} characters, 2 subcommands, 12 ms." -f $script:PwshApplicationPath, $helpText.Length)
-        $verbose[3] | Should -BeExactly ("Wrote '{0}': 2 targets, 2 subcommands." -f $scriptPath)
-        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ("# Help-seeded native completer: the subcommand table was read from 'pwsh --help' when the script was generated.")
+        $verbose[0] | Should -BeExactly ("Resolved 'pwsh' to the application '{0}'." -f $script:PwshPath)
+        $verbose[1] | Should -BeExactly ('Performing the operation "Create completer script, running ''{0} --help'' to read its help" on target "{1}".' -f $script:PwshPath, $scriptPath)
+        $verbose[2] | Should -BeExactly ("Probed '{0} --help': exit 0, {1} characters, 2 subcommands, 5 options, 12 ms." -f $script:PwshPath, $helpText.Length)
+        $verbose[3] | Should -BeExactly ("Wrote '{0}': 2 targets, 2 subcommands, 5 options." -f $scriptPath)
+        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ("# Help-seeded native completer: the tables were read from 'pwsh --help' when the script was generated.")
+        (@((Get-TestCatalog -LiteralPath $scriptPath).Options | ForEach-Object { $_.Name }) -join ',') | Should -BeExactly '-h,--help,-V,--version,-q'
     }
 
-    It 'shows the three parameter sets of section 2' {
+    It 'seeds the tables and line 2 from a probe that yields options and no subcommand' {
+        $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
+        $result = New-TestExitedResult -Text "  -a, --all    Show all`n  -b, --brief  Be brief`n"
+        Install-TestRunnerShim -Fake ({
+                param($FilePath, $ArgumentList, $TimeoutSeconds)
+
+                $result
+            }.GetNewClosure())
+
+        $savedPath = $env:PATH
+        try
+        {
+            $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+            $verbose = @(New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Verbose 4>&1 | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+        }
+        finally
+        {
+            $env:PATH = $savedPath
+        }
+
+        (@(Get-TestProbeRun | ForEach-Object { $_.ArgumentList[0] }) -join ',') | Should -BeExactly '--help'
+        @($verbose | Where-Object { $_ -ceq ("Wrote '{0}': 2 targets, 0 subcommands, 4 options." -f $scriptPath) }).Count | Should -Be 1 -Because ($verbose -join [System.Environment]::NewLine)
+        @(Get-Content -LiteralPath $scriptPath)[1] | Should -BeExactly ("# Help-seeded native completer: the tables were read from 'pwsh --help' when the script was generated.")
+        Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+    }
+
+    It 'shows the three parameter sets of section 2 with -Documentation in each' {
         $syntax = @((Get-Command -Name 'New-CompleterScript' -Syntax) -split '\r?\n' | Where-Object { $_.Trim().Length -gt 0 } | ForEach-Object { $_.Trim() })
 
         $syntax | Should -Be @(
-            'New-CompleterScript [-CommandName] <string[]> [-Path] <string> [-HelpArgument <string>] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
-            'New-CompleterScript [-CommandName] <string[]> [-Path] <string> -HelpText <string[]> [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
-            'New-CompleterScript [-CommandName] <string[]> [-Path] <string> -NoProbe [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
+            'New-CompleterScript [-CommandName] <string[]> [-Path] <string> [-HelpArgument <string>] [-Documentation] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
+            'New-CompleterScript [-CommandName] <string[]> [-Path] <string> -HelpText <string[]> [-Documentation] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
+            'New-CompleterScript [-CommandName] <string[]> [-Path] <string> -NoProbe [-Documentation] [-Force] [-PassThru] [-WhatIf] [-Confirm] [<CommonParameters>]'
         )
+    }
+
+    Context 'Documentation' {
+        It 'writes the markdown file beside the script with the three section 3 lines for rg' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+
+            New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe -Documentation
+
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+            $lines = @(Get-Content -LiteralPath $markdownPath)
+            $lines | Should -Be @(
+                '# rg completer'
+                ''
+                '## What it completes'
+                ''
+                '`rg_completer.ps1` registers a native PowerShell completer for `rg` and `rg.exe`.'
+            )
+            @($lines | Where-Object { $_.Length -gt 0 }).Count | Should -Be 3
+        }
+
+        It 'names every target of a two-name call in registration order' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'fd_completer.ps1'
+
+            New-CompleterScript -CommandName 'fd', 'fdfind' -Path $scriptPath -NoProbe -Documentation
+
+            $lines = @(Get-Content -LiteralPath (Join-Path -Path $script:CaseFolder -ChildPath 'fd_completer.md'))
+            $lines[0] | Should -BeExactly '# fd completer'
+            $lines[4] | Should -BeExactly '`fd_completer.ps1` registers a native PowerShell completer for `fd`, `fd.exe`, `fdfind`, and `fdfind.exe`.'
+        }
+
+        It 'names a single target alone' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'npm_completer.ps1'
+
+            New-CompleterScript -CommandName 'npm.cmd' -Path $scriptPath -NoProbe -Documentation
+
+            @(Get-Content -LiteralPath (Join-Path -Path $script:CaseFolder -ChildPath 'npm_completer.md'))[4] | Should -BeExactly '`npm_completer.ps1` registers a native PowerShell completer for `npm.cmd`.'
+        }
+
+        It 'writes UTF-8 without a byte-order mark, platform newlines, and a final newline, identically twice' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+
+            New-CompleterScript -CommandName 'rg' -Path $scriptPath -HelpText (Get-TestCapture -Tool 'rg') -Documentation
+            $first = [System.IO.File]::ReadAllBytes($markdownPath)
+            New-CompleterScript -CommandName 'rg' -Path $scriptPath -HelpText (Get-TestCapture -Tool 'rg') -Documentation -Force
+            $second = [System.IO.File]::ReadAllBytes($markdownPath)
+
+            ($first.Length -ge 3 -and $first[0] -eq 0xEF -and $first[1] -eq 0xBB -and $first[2] -eq 0xBF) | Should -BeFalse
+            $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($first)
+            $expected = @(
+                '# rg completer'
+                ''
+                '## What it completes'
+                ''
+                '`rg_completer.ps1` registers a native PowerShell completer for `rg` and `rg.exe`.'
+            ) -join [System.Environment]::NewLine
+            $text | Should -BeExactly ($expected + [System.Environment]::NewLine)
+            [System.Convert]::ToBase64String($second) | Should -BeExactly ([System.Convert]::ToBase64String($first))
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Filter '*.tmp' -Force).Count | Should -Be 0
+        }
+
+        It 'fails before anything is resolved when the markdown file exists without -Force, and replaces both files with -Force' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'pwsh_completer.md'
+            [System.IO.File]::WriteAllText($markdownPath, 'existing markdown')
+
+            & (Get-Module -Name 'CompleterActions') {
+                $script:TestResolveCount = 0
+                function script:Resolve-CompleterHelpProbeApplication
+                {
+                    param($Name)
+
+                    $script:TestResolveCount++
+                }
+            }
+
+            $savedPath = $env:PATH
+            try
+            {
+                $env:PATH = $PSHOME + [System.IO.Path]::PathSeparator + $savedPath
+                $thrown = { New-CompleterScript -CommandName 'pwsh' -Path $scriptPath -Documentation } | Should -Throw -PassThru
+            }
+            finally
+            {
+                $env:PATH = $savedPath
+            }
+
+            $thrown.Exception.Message | Should -BeExactly ('Failed to create completer script. ' + ($script:AlreadyExistsFormat -f $markdownPath))
+            (& (Get-Module -Name 'CompleterActions') { $script:TestResolveCount }) | Should -Be 0
+            Test-Path -LiteralPath $scriptPath | Should -BeFalse
+            [System.IO.File]::ReadAllText($markdownPath) | Should -BeExactly 'existing markdown'
+
+            [System.IO.File]::WriteAllText($scriptPath, 'existing script')
+            New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe -Documentation -Force
+
+            @(Get-Content -LiteralPath $scriptPath)[0] | Should -BeExactly '# rg tab completion for PowerShell'
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+            @(Get-Content -LiteralPath $markdownPath)[0] | Should -BeExactly '# rg completer'
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Filter '*.tmp' -Force).Count | Should -Be 0
+        }
+
+        It 'fails before anything runs when a directory sits at the markdown path, <Case>, and writes neither file' -TestCases @(
+            @{ Case = 'without -Force'; Force = $false }
+            @{ Case = 'with -Force'; Force = $true }
+        ) {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+            $null = New-Item -ItemType Directory -Path $markdownPath
+
+            $thrown = { New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe -Documentation -Force:$Force } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -BeExactly ("Failed to create completer script. Documentation files must be file paths. '{0}' is a directory." -f $markdownPath)
+            Test-Path -LiteralPath $scriptPath | Should -BeFalse
+            Test-Path -LiteralPath $markdownPath -PathType Leaf | Should -BeFalse
+            Get-ChildItem -LiteralPath $markdownPath -Force | Should -BeNullOrEmpty
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Force | ForEach-Object Name) | Should -Be @('rg_completer.md')
+        }
+
+        It 'fails with the was-written text when the markdown move fails, and keeps the script' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+
+            InModuleScope -ModuleName 'CompleterActions' -ScriptBlock {
+                $script:TestMoveOriginal = ${function:Move-CompleterScriptFile}
+                $script:TestMoves = [System.Collections.Generic.List[string]]::new()
+                function script:Move-CompleterScriptFile
+                {
+                    param($LiteralPath, $Destination, [switch] $Force)
+
+                    $script:TestMoves.Add($Destination)
+                    if ($Destination.EndsWith('.md'))
+                    {
+                        throw 'the test made the markdown move fail'
+                    }
+
+                    & $script:TestMoveOriginal @PSBoundParameters
+                }
+            }
+
+            $thrown = { New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe -Documentation } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -BeExactly ("Failed to create completer script. The script '{0}' was written, but its documentation file '{1}' was not: the test made the markdown move fail" -f $scriptPath, $markdownPath)
+            (@(InModuleScope -ModuleName 'CompleterActions' -ScriptBlock { $script:TestMoves.ToArray() }) -join '|') | Should -BeExactly (@($scriptPath, $markdownPath) -join '|')
+            Test-Path -LiteralPath $scriptPath | Should -BeTrue
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+            Test-Path -LiteralPath $markdownPath | Should -BeFalse
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Filter '*.tmp' -Force).Count | Should -Be 0
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Force).Count | Should -Be 1
+        }
+
+        It 'neither opens nor changes an existing markdown file without the switch' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+            [System.IO.File]::WriteAllText($markdownPath, 'existing markdown')
+            $written = [datetime]::new(2020, 1, 1, 0, 0, 0, [System.DateTimeKind]::Utc)
+            [System.IO.File]::SetLastWriteTimeUtc($markdownPath, $written)
+
+            # An exclusive handle makes any open of the file by the command fail.
+            $handle = [System.IO.File]::Open($markdownPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+            try
+            {
+                New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe
+            }
+            finally
+            {
+                $handle.Dispose()
+            }
+
+            Test-CompleterScript -LiteralPath $scriptPath | Should -BeNullOrEmpty
+            [System.IO.File]::ReadAllText($markdownPath) | Should -BeExactly 'existing markdown'
+            [System.IO.File]::GetLastWriteTimeUtc($markdownPath) | Should -Be $written
+        }
+
+        It 'returns only the script FileInfo with -PassThru and writes the markdown verbose line after the script one' {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+
+            $output = @(New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe -Documentation -PassThru -Verbose 4>&1)
+
+            $files = @($output | Where-Object { $_ -isnot [System.Management.Automation.VerboseRecord] })
+            $files.Count | Should -Be 1
+            $files[0] | Should -BeOfType ([System.IO.FileInfo])
+            $files[0].FullName | Should -Be $scriptPath
+            Test-Path -LiteralPath $markdownPath | Should -BeTrue
+
+            $verbose = @($output | Where-Object { $_ -is [System.Management.Automation.VerboseRecord] } | ForEach-Object Message)
+            $verbose[-2] | Should -BeExactly ("Wrote '{0}': 2 targets, 0 subcommands, 0 options." -f $scriptPath)
+            $verbose[-1] | Should -BeExactly ("Wrote '{0}'." -f $markdownPath)
+        }
+
+        It 'writes neither file and names the documentation in the action under -WhatIf for <Case>' -TestCases @(
+            @{ Case = 'the default probe on Windows'; Platform = 'Windows'; Child = 'Default'; CommandName = 'pwsh'; Action = ", running '<pwsh> --help' and, if it is rejected, '/?' to read its help" }
+            @{ Case = 'the default probe on Linux and macOS'; Platform = 'Unix'; Child = 'Default'; CommandName = 'pwsh'; Action = ", running '<pwsh> --help' to read its help" }
+            @{ Case = '-HelpArgument'; Platform = 'Any'; Child = 'HelpArgument'; CommandName = 'pwsh'; Action = ", running '<pwsh> help' to read its help" }
+            @{ Case = 'the HelpText set'; Platform = 'Any'; Child = 'HelpText'; CommandName = 'fx'; Action = ' without running a program' }
+            @{ Case = 'the NoProbe set'; Platform = 'Any'; Child = 'NoProbe'; CommandName = 'fx'; Action = ' without running a program' }
+        ) {
+            if ($Platform -eq 'Windows' -and -not $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'the /? fallback runs on Windows only'
+                return
+            }
+
+            if ($Platform -eq 'Unix' -and $IsWindows)
+            {
+                Set-ItResult -Skipped -Because 'this case asserts the Linux and macOS text'
+                return
+            }
+
+            $target = Join-Path -Path $script:CaseFolder -ChildPath "$($CommandName)_completer.ps1"
+            $output = Invoke-TestWhatIfChild -Case $Child -CommandName $CommandName -Target $target -Fixture 'help' -Documentation
+
+            $LASTEXITCODE | Should -Be 0 -Because ($output -join [System.Environment]::NewLine)
+            $output | Should -Contain 'COUNT=0'
+            $output | Should -Contain 'EXISTS=False'
+            $output | Should -Contain 'MDEXISTS=False'
+            $whatIfLine = 'What if: Performing the operation "Create completer script and documentation{0}" on target "{1}".' -f $Action.Replace('<pwsh>', $script:PwshPath), $target
+            @($output | Where-Object { $_ -ceq $whatIfLine }).Count | Should -Be 1 -Because ($output -join [System.Environment]::NewLine)
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Force).Count | Should -Be 0
+        }
     }
 
     It 'resolves its help with the section 2 synopsis' {

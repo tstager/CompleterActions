@@ -71,7 +71,9 @@ Describe 'Test-CompleterScript' {
         @{ Name = 'ImportableNativeCompleter.ps1'; Folder = 'Fixtures' },
         @{ Name = 'ParameterCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
         @{ Name = 'MultiCommandCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
-        @{ Name = 'ArrayExpressionCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' }
+        @{ Name = 'ArrayExpressionCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
+        @{ Name = 'ScriptInfoStateCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' },
+        @{ Name = 'CapturedDefinitionsStateCompleter.ps1'; Folder = 'Fixtures\ImportCompleterScript' }
     ) {
         param(
             [string] $Name,
@@ -599,6 +601,146 @@ Describe 'Test-CompleterRegistration' {
         $before.Count | Should -BeGreaterThan 0
         $after | Should -Be $before
     }
+
+    # The fixtures of the FromTarget tests above, with the output each gave in 3.0.1.
+    $targetOnlyCases = @(
+        @{ Kind = 'a native completer that matches'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture '; Texts = @('alpha', 'beta'); FromTarget = @($true, $true) },
+        @{ Kind = 'a parameter completer that matches'; Target = @{ CommandName = 'Test-ImportedFixtureTool'; ParameterName = 'Name' }; InputText = 'Test-ImportedFixtureTool -Name imported'; Texts = @('imported-alpha'); FromTarget = @($true) },
+        @{ Kind = 'a completer that returns nothing while a file name matches'; Target = @{ CommandName = 'importfixture'; Native = $true }; InputText = 'importfixture fallback'; Texts = @(Join-Path -Path '.' -ChildPath 'fallback-marker.txt'); FromTarget = @($false) },
+        @{ Kind = 'a cursor on another parameter'; Target = @{ CommandName = 'Test-TwoParameterFixtureTool'; ParameterName = 'One' }; InputText = 'Test-TwoParameterFixtureTool -One x -Two '; Texts = @('two-only'); FromTarget = @($false) }
+    )
+
+    Context 'TargetOnly' {
+        BeforeAll {
+            # One line per match, with its type and every property in order, so two outputs compare as a whole.
+            function ConvertTo-TestCompletionMatchText
+            {
+                param(
+                    [Parameter()]
+                    [AllowEmptyCollection()]
+                    [object[]] $Match = @()
+                )
+
+                @(
+                    foreach ($item in $Match)
+                    {
+                        '{0}: {1}' -f $item.GetType().FullName, (@($item.PSObject.Properties | ForEach-Object { '{0}={1}' -f $_.Name, $_.Value }) -join '; ')
+                    }
+                ) -join "`n"
+            }
+
+            function Invoke-TestTargetOnlyCompletion
+            {
+                param(
+                    [Parameter(Mandatory)]
+                    [scriptblock] $Run
+                )
+
+                function global:Test-TwoParameterFixtureTool
+                {
+                    [CmdletBinding()]
+                    param(
+                        [string] $One,
+                        [string] $Two
+                    )
+                }
+
+                Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -ScriptBlock { 'one-only' }
+                Register-ArgumentCompleter -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'Two' -ScriptBlock { 'two-only' }
+
+                # A fresh folder holding one file, so the engine's file-name fallback has exactly one match.
+                $location = Join-Path -Path $TestDrive -ChildPath ([guid]::NewGuid().ToString('N'))
+                $null = New-Item -ItemType Directory -Path $location
+                Set-Content -LiteralPath (Join-Path -Path $location -ChildPath 'fallback-marker.txt') -Value 'marker' -Encoding utf8
+
+                Push-Location -LiteralPath $location
+
+                try
+                {
+                    & $Run
+                }
+                finally
+                {
+                    Pop-Location
+                }
+            }
+        }
+
+        It 'writes with -TargetOnly exactly the matches that Where-Object FromTarget keeps, for <Kind>' -TestCases $targetOnlyCases {
+            param($Target, $InputText, $FromTarget)
+
+            $result = Invoke-TestTargetOnlyCompletion -Run {
+                $all = @(Test-CompleterRegistration @Target -InputText $InputText)
+                $targetOnly = Test-CompleterRegistration @Target -InputText $InputText -TargetOnly -ErrorVariable commandErrors -ErrorAction Continue
+                $succeeded = $?
+
+                [pscustomobject] @{
+                    All        = $all
+                    TargetOnly = @($targetOnly)
+                    Succeeded  = $succeeded
+                    Errors     = @($commandErrors)
+                }
+            }
+
+            @($result.All.FromTarget) | Should -Be $FromTarget -Because 'the fixture gives the output it gave in 3.0.1'
+            ConvertTo-TestCompletionMatchText -Match $result.TargetOnly | Should -BeExactly (ConvertTo-TestCompletionMatchText -Match @($result.All | Where-Object FromTarget))
+            $result.TargetOnly.Count | Should -Be @($FromTarget | Where-Object { $_ }).Count
+            $result.Succeeded | Should -BeTrue
+            $result.Errors | Should -BeNullOrEmpty
+        }
+
+        It 'writes every match the engine returns without -TargetOnly or with -TargetOnly:$false, as 3.0.1 did, for <Kind>' -TestCases $targetOnlyCases {
+            param($Target, $InputText, $Texts, $FromTarget)
+
+            $result = Invoke-TestTargetOnlyCompletion -Run {
+                [pscustomobject] @{
+                    Omitted  = @(Test-CompleterRegistration @Target -InputText $InputText)
+                    Disabled = @(Test-CompleterRegistration @Target -InputText $InputText -TargetOnly:$false)
+                }
+            }
+
+            @($result.Omitted.CompletionText) | Should -Be $Texts
+            @($result.Omitted.FromTarget) | Should -Be $FromTarget
+            $result.Omitted.Count | Should -BeGreaterThan 0
+            ConvertTo-TestCompletionMatchText -Match $result.Disabled | Should -BeExactly (ConvertTo-TestCompletionMatchText -Match $result.Omitted)
+        }
+
+        It 'puts the runtime entry back when -TargetOnly drops every match' {
+            $result = Invoke-TestTargetOnlyCompletion -Run {
+                $original = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+                $output = @(Test-CompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One' -InputText 'Test-TwoParameterFixtureTool -One x -Two ' -TargetOnly)
+                $restored = & (Get-Module -Name 'CompleterActions') { (Find-RuntimeCompleterRegistration -CommandName 'Test-TwoParameterFixtureTool' -ParameterName 'One').ScriptBlock }
+
+                [pscustomobject] @{
+                    Output   = $output
+                    Restored = [object]::ReferenceEquals($original, $restored)
+                }
+            }
+
+            $result.Output | Should -BeNullOrEmpty
+            $result.Restored | Should -BeTrue
+        }
+
+        It 'declares -TargetOnly as an optional switch on every parameter set' {
+            $command = Get-Command -Name 'Test-CompleterRegistration' -Module 'CompleterActions'
+
+            $command.Parameters['TargetOnly'].ParameterType | Should -Be ([System.Management.Automation.SwitchParameter])
+
+            foreach ($set in $command.ParameterSets)
+            {
+                $parameter = @($set.Parameters | Where-Object { $_.Name -eq 'TargetOnly' })
+
+                $parameter.Count | Should -Be 1 -Because "the set $($set.Name) carries -TargetOnly"
+                $parameter[0].IsMandatory | Should -BeFalse
+                $parameter[0].Position | Should -BeLessThan 0
+                $parameter[0].ValueFromPipeline | Should -BeFalse
+                $parameter[0].ValueFromPipelineByPropertyName | Should -BeFalse
+            }
+
+            @($command.ParameterSets.Name | Sort-Object) | Should -Be @('CommandParameter', 'InputObject', 'Native')
+            $command.DefaultParameterSet | Should -Be 'CommandParameter'
+        }
+    }
 }
 
 Describe 'Test-CompleterScript literal target arrays' {
@@ -669,12 +811,153 @@ Describe 'Test-CompleterScript literal target arrays' {
         [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($markerPath)) | Should -Be ([System.Convert]::ToBase64String($markerBytes))
     }
 
+    It 'reports one finding at the argument for -ParameterName given <Name>' -TestCases @(
+        @{
+            Name         = 'an array literal'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName 'Name', 'Path' -ScriptBlock { 'ok' }"
+            Argument     = "'Name', 'Path'"
+            Construct    = 'ArrayLiteralAst'
+        },
+        @{
+            Name         = 'an array expression'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName @('Name', 'Path') -ScriptBlock { 'ok' }"
+            Argument     = "@('Name', 'Path')"
+            Construct    = 'ArrayExpressionAst'
+        },
+        @{
+            Name         = 'a single-element array expression'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName @('Name') -ScriptBlock { 'ok' }"
+            Argument     = "@('Name')"
+            Construct    = 'ArrayExpressionAst'
+        },
+        @{
+            Name         = 'a colon-bound array expression'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName:@('Name', 'Path') -ScriptBlock { 'ok' }"
+            Argument     = "@('Name', 'Path')"
+            Construct    = 'ArrayExpressionAst'
+        }
+    ) {
+        param(
+            [string] $Registration,
+            [string] $Argument,
+            [string] $Construct
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-array_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be $Construct
+        $findings[0].Line | Should -Be 1
+        $findings[0].Column | Should -Be ($Registration.IndexOf($Argument) + 1)
+        $findings[0].Message | Should -Be 'The script passes an array to -ParameterName.'
+        $findings[0].Hint | Should -Be 'Give -ParameterName one literal string; Register-ArgumentCompleter binds a single parameter name. Register each parameter with its own call.'
+    }
+
+    It 'reports nothing for <Name>' -TestCases @(
+        @{
+            Name         = 'one literal -ParameterName string'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName 'Name' -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'a -CommandName array literal beside one parameter name'
+            Registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool', 'Test-ArrayTargetToolTwo' -ParameterName 'Name' -ScriptBlock { 'ok' }"
+        },
+        @{
+            Name         = 'a native -CommandName array literal'
+            Registration = "Register-ArgumentCompleter -Native -CommandName 'arraytarget', 'arraytarget.exe' -ScriptBlock { 'ok' }"
+        }
+    ) {
+        param(
+            [string] $Registration
+        )
+
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-single_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $Registration -Encoding utf8
+
+        @(Test-CompleterScript -LiteralPath $scriptPath) | Should -BeNullOrEmpty
+    }
+
+    It 'reports both the array and the blank name for <Name>' -TestCases @(
+        @{
+            Name      = 'an array literal with an empty name'
+            Argument  = "'', 'Path'"
+            Construct = 'ArrayLiteralAst'
+            Blank     = "''"
+        },
+        @{
+            Name      = 'an array expression with a blank name'
+            Argument  = "@('  ', 'Path')"
+            Construct = 'ArrayExpressionAst'
+            Blank     = "'  '"
+        }
+    ) {
+        param(
+            [string] $Argument,
+            [string] $Construct,
+            [string] $Blank
+        )
+
+        $registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName $Argument -ScriptBlock { 'ok' }"
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-blank-array_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 2
+        $findings[0].Construct | Should -Be $Construct
+        $findings[0].Column | Should -Be ($registration.IndexOf($Argument) + 1)
+        $findings[0].Message | Should -Be 'The script passes an array to -ParameterName.'
+        $findings[1].Severity | Should -Be 'Error'
+        $findings[1].Construct | Should -Be 'StringConstantExpressionAst'
+        $findings[1].Column | Should -Be ($registration.IndexOf($Blank, $registration.IndexOf($Argument)) + 1)
+        $findings[1].Message | Should -Be 'The script uses an empty or blank name for -ParameterName.'
+    }
+
+    It 'gives a non-literal -ParameterName value only the literal-string finding, with the one-string hint (<Name>)' -TestCases @(
+        @{ Name = 'a variable'; Argument = '$name'; Construct = 'VariableExpressionAst' },
+        @{ Name = 'a parenthesized string'; Argument = "('Name')"; Construct = 'ParenExpressionAst' },
+        @{ Name = 'an array expression with a redirection'; Argument = "@('Name' >> 'never-written.txt')"; Construct = 'ArrayExpressionAst' }
+    ) {
+        param(
+            [string] $Argument,
+            [string] $Construct
+        )
+
+        $registration = "Register-ArgumentCompleter -CommandName 'Test-ArrayTargetTool' -ParameterName $Argument -ScriptBlock { 'ok' }"
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'parameter-name-dynamic_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value $registration -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Severity | Should -Be 'Error'
+        $findings[0].Construct | Should -Be $Construct
+        $findings[0].Column | Should -Be ($registration.IndexOf($Argument) + 1)
+        $findings[0].Message | Should -Be 'The script must use literal string values for -ParameterName.'
+        $findings[0].Hint | Should -Be 'Replace the -ParameterName value with one literal string; a value computed at import time cannot be analyzed.'
+    }
+
+    It 'keeps the array hint for a non-literal -CommandName value' {
+        $scriptPath = Join-Path -Path $TestDrive -ChildPath 'command-name-dynamic_completer.ps1'
+        Set-Content -LiteralPath $scriptPath -Value "Register-ArgumentCompleter -Native -CommandName `$tool -ScriptBlock { 'ok' }" -Encoding utf8
+
+        $findings = @(Test-CompleterScript -LiteralPath $scriptPath)
+
+        $findings.Count | Should -Be 1
+        $findings[0].Message | Should -Be 'The script must use literal string values for -CommandName.'
+        $findings[0].Hint | Should -Be "Replace the -CommandName value with a literal string or a literal @('name', 'name.exe') array; a value computed at import time cannot be analyzed."
+    }
+
     It 'still accepts single-element and multi-element literal target arrays' {
         $scriptPath = Join-Path -Path $TestDrive -ChildPath 'literal-arrays_completer.ps1'
         Set-Content -LiteralPath $scriptPath -Encoding utf8 -Value @(
             "Register-ArgumentCompleter -Native -CommandName @('arraytarget') -ScriptBlock { 'ok' }",
             "Register-ArgumentCompleter -Native -CommandName @('arraytarget', 'arraytarget.exe') -ScriptBlock { 'ok' }",
-            "Register-ArgumentCompleter -CommandName @('Test-ArrayTargetTool') -ParameterName @('Name', 'Path') -ScriptBlock { 'ok' }"
+            "Register-ArgumentCompleter -CommandName @('Test-ArrayTargetTool', 'Test-ArrayTargetToolTwo') -ParameterName 'Name' -ScriptBlock { 'ok' }"
         )
 
         @(Test-CompleterScript -LiteralPath $scriptPath) | Should -BeNullOrEmpty

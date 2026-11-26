@@ -784,9 +784,11 @@ remain importable through the strict tier without redesign. Run
   `-ScriptBlock` a value. PowerShell cannot bind a repeated parameter or one
   left without its value.
 - Keep target metadata literal:
-  - `-CommandName` and `-ParameterName` may be a single literal string
-  - a literal string array
-  - or a literal `@('name', 'name.exe')` array expression
+  - `-CommandName` may be a single literal string, a literal string array, or
+    a literal `@('name', 'name.exe')` array expression
+  - `-ParameterName` takes one literal string, because
+    `Register-ArgumentCompleter` binds a single parameter name; register each
+    parameter with its own call
   - and every name must be non-empty: an empty or blank name cannot be bound
     or imported
 - Keep `-ScriptBlock` literal.
@@ -1038,7 +1040,19 @@ set is then imported as `-LiteralPath` imports it, with two rules for packages.
 An entry whose script resolves outside the module folder is an invalid entry. A
 set with trusted entries writes one warning per name that counts them.
 Installing a completer set package and importing it by name is a decision to
-run its scripts: each one runs at its first tab, under its entry's trust tier.</maml:para>
+run its scripts: each one runs at its first tab, under its entry's trust tier.
+
+`-MinimumVersion` or `-RequiredVersion` selects the version instead, for one
+`-Name`, and the two cannot be used together. `-RequiredVersion` takes the
+version equal to it from the first root that holds it. `-MinimumVersion` takes
+the highest version equal to it or above from the first root that holds one,
+so a root whose versions are all lower is passed over and a newer copy in a
+later root is found. With either, an unversioned copy whose manifest's
+`ModuleVersion` reads as a version takes part beside the version folders, and
+the selected version is used even when its set is broken. When the module is
+installed but no root holds a matching version, the call fails and lists the
+installed versions, highest first. Without either parameter the version is
+chosen as described above.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -1130,6 +1144,22 @@ run its scripts: each one runs at its first tab, under its entry's trust tier.</
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>MinimumVersion</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">version</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Version</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>RequiredVersion</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">version</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Version</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>SkipInvalid</maml:name>
           <maml:description />
           <dev:type>
@@ -1190,6 +1220,23 @@ retries them without re-importing the set.</maml:para>
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>MinimumVersion</maml:name>
+        <maml:description>
+          <maml:para>Selects the highest installed version of the module, equal to or above this
+one, from the first `$env:PSModulePath` root that holds such a version; a root
+whose versions are all lower is passed over. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
+`-Name` and cannot be used with `-RequiredVersion`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Version</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Version</maml:name>
+        </dev:type>
+      </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Name</maml:name>
         <maml:description>
@@ -1210,6 +1257,23 @@ resolved. The parameter takes no pipeline input.</maml:para>
         <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         <dev:type>
           <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>RequiredVersion</maml:name>
+        <maml:description>
+          <maml:para>Selects the installed version of the module that equals this one, from the
+first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
+installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
+`-Name` and cannot be used with `-MinimumVersion`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Version</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Version</maml:name>
         </dev:type>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
@@ -1315,6 +1379,20 @@ needs, with no path.</maml:para>
         <dev:code />
         <dev:remarks />
       </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 5 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Import-CompleterSet -Name PS_Completers -MinimumVersion 1.3.0
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Registers the set of the highest installed `PS_Completers` that is 1.3.0 or
+later, so the profile line keeps working across upgrades and fails, naming the
+installed versions, when only an older copy is installed.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
     </command:examples>
     <command:relatedLinks>
       <maml:navigationLink>
@@ -1350,11 +1428,12 @@ needs, with no path.</maml:para>
     </command:details>
     <maml:description>
       <maml:para>Writes a native completer script for one or more command names: a guarded,
-literal-only table of subcommands, a `Complete-&lt;Stem&gt;` function that offers
-them in the first argument position, and one bare
-`Register-ArgumentCompleter` call that names every target. The file passes
-`Test-CompleterScript` and imports with `Import-CompleterScript` and
-`Register-Completer -Lazy` before the author edits it.
+literal-only catalog that holds a table of subcommands and a table of options,
+a `Complete-&lt;Stem&gt;` function that offers the options in any argument position
+and the subcommands in the first, and one bare `Register-ArgumentCompleter`
+call that names every target. The file passes `Test-CompleterScript` and
+imports with `Import-CompleterScript` and `Register-Completer -Lazy` before
+the author edits it.
 
 The first `-CommandName` value is the primary name: it names the functions and
 the state variable, and it is the one probed. Every name must be a bare command
@@ -1369,33 +1448,44 @@ gets `_` and eight hex digits of a hash of that name, so `ca-tool` gives
 `npm.cmd` gives `Complete-Npm_a04d41f6`, and scripts dot-sourced into one
 scope keep their own tables. A name of letters and digits, with or without
 `.exe`, keeps its plain stem: `cargo` and `cargo.exe` give `Complete-Cargo`,
-because `-CommandName cargo` registers `cargo.exe` too. The target
+because `-CommandName cargo` registers `cargo.exe` too. Command names that
+differ only by case, such as `Tool` and `tool`, share the stem `Tool`, and
+that is harmless: PowerShell's completer table and its function table both
+ignore case, so two such commands cannot have separate completers in one
+session whatever their stems. No generated name begins with
+`__CompleterActions`: names with that prefix are reserved for the state the
+import keeps in the scope a script runs in, so keep them out of the script's
+own additions too. The target
 list follows the `-CommandName` order, and a name that does not end in `.exe`,
 `.cmd`, `.bat`, `.ps1`, or `.com` is followed by the same name with `.exe`
 appended, so `-CommandName rg` registers `'rg', 'rg.exe'` and
 `-CommandName npm.cmd` registers `'npm.cmd'` alone. Names are de-duplicated
 case-insensitively, keeping the first spelling.
 
-The subcommand table is seeded in one of three ways:
+Both tables are seeded from the same help text, which arrives in one of three
+ways:
 
-- **Probe** (the default) runs the primary name's help and parses its commands
-  section. With `-HelpArgument` the program runs once with that argument.
-  Without it the probe passes `--help`; on Windows, when `--help` ran to
-  completion, gave no subcommand, and printed fewer than five non-blank lines,
-  which is what a tool that rejects `--help` prints, `/?` runs once and its
-  result is used. On Linux and macOS `/?` is never tried.
+- **Probe** (the default) runs the primary name's help and parses it. With
+  `-HelpArgument` the program runs once with that argument. Without it the
+  probe passes `--help`; on Windows, when `--help` ran to completion, gave no
+  subcommand and no option, and printed fewer than five non-blank lines, which
+  is what a tool that rejects `--help` prints, `/?` runs once and its result
+  is used. On Linux and macOS `/?` is never tried.
 - **HelpText** parses help text the author already captured, for a command the
   probe will not run. Lines are accumulated across pipeline input, joined, and
   parsed; nothing is run.
-- **NoProbe** runs nothing and writes an empty table.
+- **NoProbe** runs nothing and writes two empty tables.
+
+No switch turns option seeding off: the tables are data in the generated file,
+and an author who does not want a row deletes it.
 
 The probe runs only an application that `Get-Command` resolves, so a function,
 alias, cmdlet, or script of that name is never run. On Windows it runs only a
-`.exe` whose PE header marks a console program: a GUI program, a `.cmd` or
-`.bat` shim, and an app execution alias are not run, and a warning says why
-and suggests `-HelpText`. The program runs with the one argument, no shell,
-standard input closed, the temporary directory as its working directory, and
-`NO_COLOR=1` added to the environment. One 5-second limit covers the run. A
+`.exe` whose PE header marks a console program: a GUI program and a `.cmd` or
+`.bat` shim are not run, and a warning says why and suggests `-HelpText`. The
+program runs with the one argument, no shell, standard input closed, the
+temporary directory as its working directory, and `NO_COLOR=1` added to the
+environment. One 5-second limit covers the run. A
 program that has not exited by then is stopped, and a program that exits but
 leaves a process holding its output is not waited for; in both cases its
 output is not used and a warning says so. The exit code decides nothing: the
@@ -1405,13 +1495,45 @@ Latin-1 elsewhere), and terminal escape sequences, backspace overstrikes, and
 carriage-return progress lines are removed, for probe output and `-HelpText`
 alike.
 
-The parser looks for a section header such as `Commands:`, `CORE COMMANDS`, or
-`&lt;Commands&gt;`, then reads one entry per line: a name, a separator (a colon,
-two or more dashes, ` - `, two or more spaces, or a tab), and a description.
-Names are kept in help order without duplicates. Control, format, and line
-separator characters in a description become spaces, and an empty description
-becomes the name. Help without a commands section gives an empty table, which
-is not an error and not a warning.
+An app execution alias, such as `winget.exe` under `WindowsApps`, is a
+zero-byte file whose own header cannot be read. For such a file the probe
+reads the target program that the alias's reparse data names, and runs the
+alias when that target is a fully qualified path to an existing `.exe` whose
+header marks a console program. Every message names the alias path, because
+that is the program the shell would start, and `-Verbose` adds a line that
+names the target. An alias with no target, or whose target is missing, not a
+`.exe`, unreadable, or not a console program, is not run, and the warning
+names the target. The reparse data is never read on Linux or macOS.
+
+The subcommand parser looks for a section header such as `Commands:`,
+`CORE COMMANDS`, or `&lt;Commands&gt;`, then reads one entry per line: a name, a
+separator (a colon, two or more dashes, ` - `, two or more spaces, or a tab),
+and a description. Names are kept in help order without duplicates. Control,
+format, and line separator characters in a description become spaces, and an
+empty description becomes the name.
+
+The option parser reads the same text for option sections. A section starts
+at a heading of one to six words, such as `Options:`, `FLAGS`, or
+`&lt;Switches&gt;`, whose next non-blank line begins with an option name, or,
+without a heading, at two option lines at one indent, as GNU tools print
+them; a line under a commands header is never an option. Each row at the
+section's indent gives one option per name, in order, so
+`-e PATTERN, --regexp=PATTERN` gives `-e` and `--regexp`: an argument
+placeholder such as `&lt;ARG&gt;`, `=VALUE`, or `[=VALUE]` is dropped, and the
+description is the text after the names, or the next deeper line when the row
+has none. A name that appears twice is kept once. No option value is seeded,
+and options in a usage synopsis are not read. The rules are listed in full in
+`about_Import_Completers`.
+
+In the script the options table is written after the subcommand table, as
+`Options = @()` when it is empty. Once the word being completed starts with
+`-` or `/`, `Complete-&lt;Stem&gt;` offers the matching options in any argument
+position as `ParameterName` results; an empty word offers none, so file names
+still complete, and a word such as `/usr` that matches no option gets nothing
+from that branch. Line 2 says where the tables came from. Help that gives no
+row of either kind writes two empty tables, which is not an error and not a
+warning. A script written by an earlier version has no options table and keeps
+working unchanged.
 
 Before anything is resolved, probed, or written, every `-CommandName` value,
 `-HelpArgument`, and the `-Path` are checked: `-HelpArgument` must not contain
@@ -1429,9 +1551,18 @@ The file is UTF-8 without a byte-order mark, with the platform newline and a
 final newline, and it holds no date, version, or machine path, so the same
 input always gives the same bytes.
 
+With `-Documentation` the command also writes a markdown file beside the
+script, with the same base name and the extension `.md`: a `# &lt;name&gt; completer`
+title, a `## What it completes` heading, and one sentence that names the script
+and every target. Both files are written to temporary files, and the script
+passes its check before either is moved; the script is moved first.
+
 Every failure is a terminating error that begins
 `Failed to create completer script.`, and a failed call leaves nothing at the
-path.</maml:para>
+path, with one exception: with `-Documentation`, when the markdown file cannot
+be moved into place after the script was, the call fails with
+`The script '&lt;path&gt;' was written, but its documentation file '&lt;md path&gt;' was not: &lt;reason&gt;`,
+the script stays, and no temporary file remains.</maml:para>
     </maml:description>
     <command:syntax>
       <command:syntaxItem>
@@ -1458,6 +1589,13 @@ path.</maml:para>
           <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
           <dev:type>
             <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Documentation</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
@@ -1516,6 +1654,13 @@ path.</maml:para>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Documentation</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>Force</maml:name>
           <maml:description />
           <dev:type>
@@ -1564,6 +1709,13 @@ path.</maml:para>
         </command:parameter>
         <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>NoProbe</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Documentation</maml:name>
           <maml:description />
           <dev:type>
             <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -1621,9 +1773,27 @@ functions and state, and it is the one probed.</maml:para>
         </dev:type>
       </command:parameter>
       <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Documentation</maml:name>
+        <maml:description>
+          <maml:para>Also writes a markdown file beside the script, with the same folder and base
+name and the extension `.md`: a `# &lt;name&gt; completer` title, a
+`## What it completes` heading, and one sentence that names the script and
+every target. It is UTF-8 without a byte-order mark, with the platform newline
+and a final newline. An existing `.md` file fails the call before anything
+runs unless `-Force` is given, and a directory at the `.md` path fails it with
+or without `-Force`. Both files are written to temporary files first
+and moved only after the script passes its check, the script first; if the
+markdown file cannot be moved, the call fails and says the script was written.
+`-PassThru` still returns only the script.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Force</maml:name>
         <maml:description>
-          <maml:para>Overwrites an existing file.</maml:para>
+          <maml:para>Overwrites an existing file, and with `-Documentation` the markdown file too.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -1656,7 +1826,7 @@ input, joined with LF, cleaned, and parsed; nothing is run.
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>NoProbe</maml:name>
         <maml:description>
-          <maml:para>Runs nothing and writes an empty subcommand table.</maml:para>
+          <maml:para>Runs nothing and writes empty subcommand and option tables.</maml:para>
         </maml:description>
         <dev:type>
           <maml:name>System.Management.Automation.SwitchParameter</maml:name>
@@ -1725,8 +1895,8 @@ descendant whose parent has exited is no longer in the process tree the probe
 stops, so it can outlive the probe. `-NoProbe` and `-HelpText` avoid all of
 them.
 
-A partial table passes `Test-CompleterScript`, so compare a seeded table with
-the tool's help before relying on it. The generated script is a start: once
+A partial table passes `Test-CompleterScript`, so compare the seeded tables
+with the tool's help before relying on them. The generated script is a start: once
 the author edits it, keeping it conforming is the author's responsibility, and
 `Test-CompleterScript` checks it again. The strict grammar is described in
 `about_Import_Completers`.</maml:para>
@@ -1767,6 +1937,19 @@ New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -F
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Writes an empty skeleton without running anything, replacing an existing file.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 4 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+New-CompleterScript -CommandName rg -Path .\rg_completer\rg_completer.ps1 -Documentation
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Writes the rg script and `rg_completer.md` beside it, whose sentence names
+`rg_completer.ps1` and its targets `rg` and `rg.exe`.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -2877,7 +3060,8 @@ came from somewhere else: another completer, because the input or the cursor
 position completes a different parameter or command, or the engine's own
 fallback completion, such as file names, which the engine offers when the
 target's completer returns nothing. Assert on the matches whose `FromTarget`
-is `$true` to verify the registration itself.
+is `$true` to verify the registration itself; `-TargetOnly` writes only those,
+as `Where-Object FromTarget` would select them.
 
 One input text invokes one completer, so each call tests exactly one target.
 The target parameters accept the same shapes as `Get-Completer` so
@@ -2931,6 +3115,13 @@ with any `Pending` registration of the same script, becomes `Active`, or
             <maml:name>System.Int32</maml:name>
           </dev:type>
         </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>TargetOnly</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
       </command:syntaxItem>
       <command:syntaxItem>
         <maml:name>Test-CompleterRegistration</maml:name>
@@ -2956,6 +3147,13 @@ with any `Pending` registration of the same script, becomes `Active`, or
           <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
           <dev:type>
             <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>TargetOnly</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
       </command:syntaxItem>
@@ -2990,6 +3188,13 @@ with any `Pending` registration of the same script, becomes `Active`, or
           <command:parameterValue required="true" variableLength="false">int</command:parameterValue>
           <dev:type>
             <maml:name>System.Int32</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>TargetOnly</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
           </dev:type>
         </command:parameter>
       </command:syntaxItem>
@@ -3069,6 +3274,17 @@ parameter completer.</maml:para>
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>TargetOnly</maml:name>
+        <maml:description>
+          <maml:para>Returns only the matches whose `FromTarget` is `$true`, the ones the target's
+own completer produced. When the target's completer produced none, nothing is
+returned. Without it, every match the engine returns is written.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
     </command:parameters>
     <command:inputTypes>
       <command:inputType>
@@ -3145,14 +3361,14 @@ completing an argument for its parameter.</maml:para>
         <maml:title>--------- EXAMPLE 3 ---------</maml:title>
         <maml:introduction>
           <maml:para>```PowerShell
-$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' |
-    Where-Object FromTarget
+$matches = Test-CompleterRegistration -CommandName git -Native -InputText 'git che' -TargetOnly
 $matches.CompletionText | Should -Contain 'checkout'
 ```</maml:para>
           <maml:para>&#x80;</maml:para>
           <maml:para>Asserts inside a Pester test on the matches the git completer produced
 itself, so a match the engine supplied without it cannot satisfy the
-assertion.</maml:para>
+assertion. `-TargetOnly` is equivalent to piping the matches to
+`Where-Object FromTarget`.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -3407,8 +3623,11 @@ holds a `.psd1` of at most 128 KB that reads as data and whose
 before it is published. When more than one `.psd1` there declares the set, the
 first in ordinal order of file name is the manifest. A `.psd1` that is not data
 or is larger than 128 KB declares nothing, and a folder that cannot be listed
-holds no manifest. A set that no manifest declares gets no `PackageLayout`
-finding. A package set is checked for four things, reported in this order:
+holds no manifest. A `.psd1` there whose `PrivateData.CompleterSet` is not a
+valid file path gets one `PackageLayout` `Error` at line 1, column 1 of the
+set, whether or not a manifest declares the set; apart from those, a set that
+no manifest declares gets no `PackageLayout` finding. A package set is checked
+for four things, reported in this order:
 
 - `Error`, one per entry in set order, at the entry's `Path`: the `Path` is
   fully qualified, or resolves outside the module folder, so an installed copy
@@ -3432,7 +3651,10 @@ exactly as `Import-CompleterSet -Name` finds it: the first `$env:PSModulePath`
 root that has the module wins, and within it the highest version. The manifest
 is read as data, so nothing in the package runs, and a manifest larger than
 128 KB fails the call before it is parsed. Each name is taken literally, and a
-name that does not resolve fails the call.
+name that does not resolve fails the call. `-MinimumVersion` or
+`-RequiredVersion` selects the version for one `-Name` exactly as they select
+it for `Import-CompleterSet`, so a profile that pins a version can test the
+copy it pins by the same words.
 
 Every `-Path`, `-LiteralPath`, or `-Name` value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
@@ -3502,6 +3724,22 @@ parentheses about two minutes.</maml:para>
           </dev:type>
         </command:parameter>
         <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>MinimumVersion</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">version</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Version</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>RequiredVersion</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">version</command:parameterValue>
+          <dev:type>
+            <maml:name>System.Version</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
           <maml:name>Filter</maml:name>
           <maml:description />
           <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
@@ -3533,6 +3771,23 @@ recursive under the set file's directory. The default is `*_completer.ps1`.</mam
           <maml:name>System.String[]</maml:name>
         </dev:type>
       </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>MinimumVersion</maml:name>
+        <maml:description>
+          <maml:para>Selects the highest installed version of the module, equal to or above this
+one, from the first `$env:PSModulePath` root that holds such a version; a root
+whose versions are all lower is passed over. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
+`-Name` and cannot be used with `-RequiredVersion`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Version</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Version</maml:name>
+        </dev:type>
+      </command:parameter>
       <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
         <maml:name>Name</maml:name>
         <maml:description>
@@ -3553,6 +3808,23 @@ resolved. The parameter takes no pipeline input.</maml:para>
         <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
         <dev:type>
           <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>RequiredVersion</maml:name>
+        <maml:description>
+          <maml:para>Selects the installed version of the module that equals this one, from the
+first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
+installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
+`-Name` and cannot be used with `-MinimumVersion`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.Version</command:parameterValue>
+        <dev:type>
+          <maml:name>System.Version</maml:name>
         </dev:type>
       </command:parameter>
     </command:parameters>
@@ -3620,6 +3892,19 @@ Test-CompleterSet -Name PS_Completers
           <maml:para>&#x80;</maml:para>
           <maml:para>Checks the installed `PS_Completers` package's set against its scripts and the
 package layout, by the same name the profile's `Import-CompleterSet` line uses.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 4 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterSet -Name PS_Completers -RequiredVersion 1.3.1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Checks the installed 1.3.1 copy of `PS_Completers`, even when a later version
+is installed, and fails, naming the installed versions, when 1.3.1 is not.</maml:para>
         </maml:introduction>
         <dev:code />
         <dev:remarks />
@@ -3955,6 +4240,359 @@ targets.</maml:para>
       </maml:navigationLink>
       <maml:navigationLink>
         <maml:linkText>Reset-Completer</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+    </command:relatedLinks>
+  </command:command>
+  <command:command>
+    <command:details>
+      <command:name>Update-CompleterSet</command:name>
+      <maml:description>
+        <maml:para>Rewrites the Hash of each completer set entry whose script has changed, leaving the rest of the set file as it is.</maml:para>
+      </maml:description>
+      <command:verb>Update</command:verb>
+      <command:noun>CompleterSet</command:noun>
+    </command:details>
+    <maml:description>
+      <maml:para>Reads each completer set once, verifies every entry the way
+`Test-CompleterSet` does, and replaces the `Hash` value of each entry whose
+script has changed since the set was written, or whose `Hash` is not
+`SHA256:` followed by 64 hexadecimal digits, with the script's current hash,
+written as `Export-CompleterSet` writes it: a single-quoted `SHA256:` followed
+by 64 upper-case hexadecimal digits. Nothing else in the file changes. An
+entry whose `Hash` equals its script's, ignoring letter case, is not touched.
+The command never adds an entry or a `Hash`; regenerate the set with
+`Export-CompleterSet` for that.
+
+An entry is updated only when it has a `Hash` value, its script can be read,
+and `Test-CompleterSet` reports no `Error` for it: no `MissingScript`,
+`InvalidEntry`, `UnreadableTargets`, `TargetMismatch`, or `DuplicateTarget`. A
+matching `Hash` makes `Import-CompleterSet` take a strict entry's `Targets`
+without comparing them with the script, so rehashing an entry whose targets
+also changed would make the import register stale targets unchecked. Such an
+entry is left as it is, with a warning that names its first `Error`, whether
+or not its `Hash` differs, and the set needs `Export-CompleterSet`. An entry
+that is not trusted, whose `Hash` differs, and whose script no longer passes
+the strict grammar is left as it is too, with a warning that names the first
+grammar `Error` as `Test-CompleterScript` words it, because a matching `Hash`
+would let the import skip the grammar and move the failure to the first tab.
+A trusted entry is updated, with a warning, because its script is never parsed, so its
+`Targets` cannot be checked; import ignores a trusted entry's `Hash`, which
+only feeds `Test-CompleterSet`. One warning per set counts the entries without
+a `Hash`, and one warning names each script under the set's folder that
+matches `-Filter` and that no entry lists.
+
+The file is read once as bytes and decoded as `Import-CompleterSet` decodes
+it, as UTF-8 unless a byte-order mark names another encoding. Each new value
+is spliced into the text where the old value was parsed, last entry first, so
+no line outside a replaced value is split or joined: a file with LF line
+endings keeps them, and a `Hash` that shares its line with other keys keeps
+them. A double-quoted or here-string `Hash` becomes the single-quoted form, on
+one line. The result is encoded with the same encoding and byte-order mark and
+written through a temporary file beside the set and a replacing move, so a
+reader sees the old set or the new one. A set reached through a symbolic link
+is written at the link's final target, and the link is kept. Nothing is
+written when the set's text does not give back its bytes in its encoding, such as a set with an invalid
+UTF-8 byte, when the new text does not read back as the same entries, paths,
+and targets, or when it would be larger than the 128 KB (131072-byte) limit
+that `Import-CompleterSet` reads. A set with nothing to update is not written,
+and its timestamp does not change.
+
+Every set is resolved as it arrives and updated once, in the end block, so a
+piped `Test-CompleterSet` has finished reading before anything is written, and
+a set named by many findings is still read and written once. A set that
+cannot be read stops the call with a terminating error after the sets before
+it were updated. With `-WhatIf` nothing is written, and the warnings are still
+written.</maml:para>
+    </maml:description>
+    <command:syntax>
+      <command:syntaxItem>
+        <maml:name>Update-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
+          <maml:name>Path</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Filter</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Update-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="named" aliases="PSPath">
+          <maml:name>LiteralPath</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string[]</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Filter</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+      <command:syntaxItem>
+        <maml:name>Update-CompleterSet</maml:name>
+        <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="named" aliases="none">
+          <maml:name>InputObject</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">CompleterScriptFinding[]</command:parameterValue>
+          <dev:type>
+            <maml:name>CompleterActions.CompleterScriptFinding[]</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Filter</maml:name>
+          <maml:description />
+          <command:parameterValue required="true" variableLength="false">string</command:parameterValue>
+          <dev:type>
+            <maml:name>System.String</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>PassThru</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>WhatIf</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+        <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="named" aliases="none">
+          <maml:name>Confirm</maml:name>
+          <maml:description />
+          <dev:type>
+            <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+          </dev:type>
+        </command:parameter>
+      </command:syntaxItem>
+    </command:syntax>
+    <command:parameters>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="cf">
+        <maml:name>Confirm</maml:name>
+        <maml:description>
+          <maml:para>Prompts you for confirmation before running the cmdlet.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="true" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>Filter</maml:name>
+        <maml:description>
+          <maml:para>The file-name pattern of the scan for scripts that no entry lists. The scan is
+recursive under the set file's directory. The default is `*_completer.ps1`.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByValue)" position="Named" aliases="none">
+        <maml:name>InputObject</maml:name>
+        <maml:description>
+          <maml:para>The `CompleterActions.CompleterScriptFinding` records `Test-CompleterSet`
+returns, from the pipeline or by name. Only each finding's `Path`, the set
+file, is used, taken literally, and each set is updated once however many
+findings name it. A finding names the set to update, not the entries: every
+entry of that set is verified again. Given positionally, a finding binds to
+`-Path` as text.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">CompleterActions.CompleterScriptFinding[]</command:parameterValue>
+        <dev:type>
+          <maml:name>CompleterActions.CompleterScriptFinding[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="false" pipelineInput="true (ByPropertyName)" position="Named" aliases="PSPath">
+        <maml:name>LiteralPath</maml:name>
+        <maml:description>
+          <maml:para>The literal path to a completer set file. Wildcards are not expanded.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="none">
+        <maml:name>PassThru</maml:name>
+        <maml:description>
+          <maml:para>Returns the `System.IO.FileInfo` of each set that was written.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="true" variableLength="false" globbing="true" pipelineInput="true (ByValue, ByPropertyName)" position="0" aliases="FullName">
+        <maml:name>Path</maml:name>
+        <maml:description>
+          <maml:para>The path to a completer set file. Wildcards are supported.</maml:para>
+        </maml:description>
+        <command:parameterValue required="true" variableLength="true">System.String[]</command:parameterValue>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+      </command:parameter>
+      <command:parameter required="false" variableLength="false" globbing="false" pipelineInput="false" position="Named" aliases="wi">
+        <maml:name>WhatIf</maml:name>
+        <maml:description>
+          <maml:para>Runs the command in a mode that only reports what would happen without performing the actions.</maml:para>
+        </maml:description>
+        <dev:type>
+          <maml:name>System.Management.Automation.SwitchParameter</maml:name>
+        </dev:type>
+      </command:parameter>
+    </command:parameters>
+    <command:inputTypes>
+      <command:inputType>
+        <dev:type>
+          <maml:name>System.String[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>A set file path, or `Get-ChildItem` output bound through `FullName`.</maml:para>
+        </maml:description>
+      </command:inputType>
+      <command:inputType>
+        <dev:type>
+          <maml:name>CompleterActions.CompleterScriptFinding[]</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>The findings `Test-CompleterSet` writes, each naming its set file in `Path`.</maml:para>
+        </maml:description>
+      </command:inputType>
+    </command:inputTypes>
+    <command:returnValues>
+      <command:returnValue>
+        <dev:type>
+          <maml:name>System.IO.FileInfo</maml:name>
+        </dev:type>
+        <maml:description>
+          <maml:para>With `-PassThru`, returns each set file that was written; otherwise the
+command returns nothing.</maml:para>
+        </maml:description>
+      </command:returnValue>
+    </command:returnValues>
+    <maml:alertSet>
+      <maml:alert>
+        <maml:para>The set file schema and its `Hash` key are described in `about_Completer_Sets`.
+The command never registers a completer, never hooks PSReadLine key handlers,
+replaces `TabExpansion2`, or changes PSReadLine options.</maml:para>
+      </maml:alert>
+    </maml:alertSet>
+    <command:examples>
+      <command:example>
+        <maml:title>--------- EXAMPLE 1 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Update-CompleterSet -Path ~\Completers\completers.psd1
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Rewrites the `Hash` of every entry whose script changed since the set was
+written, and warns about each entry it leaves for `Export-CompleterSet`.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 2 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Test-CompleterSet -Path ~\Completers\completers.psd1 | Update-CompleterSet
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Updates the set the drift report names, once, after the report has read it.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+      <command:example>
+        <maml:title>--------- EXAMPLE 3 ---------</maml:title>
+        <maml:introduction>
+          <maml:para>```PowerShell
+Update-CompleterSet -Path ~\Completers\completers.psd1 -WhatIf
+```</maml:para>
+          <maml:para>&#x80;</maml:para>
+          <maml:para>Reports how many `Hash` values would be rewritten, and writes the same
+warnings, without changing the file.</maml:para>
+        </maml:introduction>
+        <dev:code />
+        <dev:remarks />
+      </command:example>
+    </command:examples>
+    <command:relatedLinks>
+      <maml:navigationLink>
+        <maml:linkText>Online Version</maml:linkText>
+        <maml:uri>https://github.com/tstager/CompleterActions/blob/main/src/docs/CompleterActions/Update-CompleterSet.md</maml:uri>
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Test-CompleterSet</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Export-CompleterSet</maml:linkText>
+        <maml:uri />
+      </maml:navigationLink>
+      <maml:navigationLink>
+        <maml:linkText>Import-CompleterSet</maml:linkText>
         <maml:uri />
       </maml:navigationLink>
     </command:relatedLinks>

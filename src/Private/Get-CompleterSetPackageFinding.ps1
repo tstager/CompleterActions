@@ -3,9 +3,16 @@
 Checks a package set against the package layout and returns its PackageLayout findings.
 
 .DESCRIPTION
-Runs the four package-layout checks for a completer set whose module
-manifest Get-CompleterSetPackage found, in this order:
+Reports the declaration problems Get-CompleterSetPackage recorded, then runs
+the four package-layout checks for a completer set whose module manifest it
+found, in this order:
 
+- Error, per declaration problem in the order recorded: a manifest in the
+  folder above the set declares a completer set path that is not a valid file
+  path. The message names the manifest by its full path, made printable by
+  ConvertTo-CompleterPrintableText, and gives the reason. The finding points
+  at line 1, column 1 of the set. These rows are written even when no
+  manifest declares the set, and then they are the only rows.
 - Error, per entry in set order: the entry's Path is fully qualified, or it
   resolves outside the module folder. The folder is compared with a trailing
   separator, case-insensitively on Windows and macOS and case-sensitively on
@@ -63,13 +70,26 @@ function Get-CompleterSetPackageFinding
     )
 
     $setPath = $SetDefinition.Path
+    # The parse of the whole set starts at line 1, column 1.
+    $extentOne = $SetDefinition.Ast.Extent
+
+    foreach ($declarationProblem in $Package.DeclarationProblems)
+    {
+        $printableManifestPath = ConvertTo-CompleterPrintableText -Value $declarationProblem.ManifestPath
+        New-CompleterScriptFinding -Path $setPath -Extent $extentOne -Construct 'PackageLayout' -Message "The module manifest '$printableManifestPath' declares a completer set path that is not a valid file path: $(([string] $declarationProblem.Reason).TrimEnd('.'))." -Hint "Make PrivateData.CompleterSet in '$printableManifestPath' the path of its set file relative to the manifest's folder, such as 'completers/completers.psd1'."
+    }
+
+    # Without a manifest that declares the set there is no package to check.
+    if ($null -eq $Package.ManifestPath)
+    {
+        return
+    }
+
     $moduleBase = $Package.ModuleBase
     $manifestPath = $Package.ManifestPath
     $pathComparison = if ($IsWindows -or $IsMacOS) { [System.StringComparison]::OrdinalIgnoreCase } else { [System.StringComparison]::Ordinal }
     $moduleBasePrefix = $moduleBase.TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
     $extents = Get-CompleterSetEntryExtent -Ast $SetDefinition.Ast
-    # The parse of the whole set starts at line 1, column 1.
-    $extentOne = $SetDefinition.Ast.Extent
 
     foreach ($setEntry in $Entry)
     {

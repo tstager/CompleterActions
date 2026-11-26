@@ -38,14 +38,15 @@
 | `Export-CompleterSet` | Writes a completer set file (`.psd1`) from registrations that came from scripts, with each script's trust tier and targets |
 | `Get-Completer` | Lists completer registrations known to the module or discovered from the current runtime, filtered by `-State` and sorted by type, command, and parameter |
 | `Import-CompleterScript` | Converts standalone completer scripts into objects that can be piped to `Register-Completer -InputObject`; strict grammar by default, `-Trusted` to run the script as-is |
-| `Import-CompleterSet` | Validates every entry of a completer set up front, then registers the whole set lazily; `-SkipInvalid` warns and registers the rest |
-| `New-CompleterScript` | Writes a completer script skeleton for a native command, with a subcommand table read from its help, that passes `Test-CompleterScript` as written |
+| `Import-CompleterSet` | Validates every entry of a completer set up front, then registers the whole set lazily; `-SkipInvalid` warns and registers the rest; `-Name` imports an installed completer set package, and `-MinimumVersion` or `-RequiredVersion` pins its version |
+| `New-CompleterScript` | Writes a completer script skeleton for a native command, with subcommand and option tables read from its help, that passes `Test-CompleterScript` as written; `-Documentation` writes a markdown file beside it |
 | `Register-Completer` | Registers a managed completer and records it in module state; `-Path -Lazy` registers a completer script that loads on its first tab press |
 | `Reset-Completer` | Returns a Failed or Active script-backed completer to Pending so its script loads again on the next tab press |
-| `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches |
+| `Test-CompleterRegistration` | Runs tab completion for an input against a registered target and returns the completion matches; `-TargetOnly` keeps only the ones the target's own completer produced |
 | `Test-CompleterScript` | Checks completer scripts against the strict import grammar and returns findings with line, column, construct, and a fix hint |
 | `Test-CompleterSet` | Reports drift between a completer set file and the scripts on disk as findings; empty when the set matches |
 | `Unregister-Completer` | Removes completer registrations from runtime and, when applicable, from module state |
+| `Update-CompleterSet` | Rewrites the `Hash` of each completer set entry whose script changed, leaving the rest of the set file as it is; refuses an entry that needs `Export-CompleterSet` |
 
 3.0 removed the 1.x names `Get-CompleterRegistration`, `Register-CompleterRegistration`, and `Unregister-CompleterRegistration`, which 2.x kept as deprecated aliases of the renamed commands; calling one now fails with `CommandNotFoundException`. `about_CompleterActions_Migration` maps each old name to its replacement.
 
@@ -88,7 +89,7 @@ Runtime registration discovery and unmanaged-registration removal depend on Powe
 
 ## Typical flow
 
-1. Scaffold a completer: for a new script, `New-CompleterScript -CommandName <tool> -Path .\<tool>_completer.ps1` writes a skeleton whose subcommand table is read from the tool's help.
+1. Scaffold a completer: for a new script, `New-CompleterScript -CommandName <tool> -Path .\<tool>_completer.ps1` writes a skeleton whose subcommand and option tables are read from the tool's help.
 2. Check an existing completer script with `Test-CompleterScript`, or decide to import it with `-Trusted`.
 3. Register a completer directly, or import the script into managed input objects.
 4. Verify the registration with `Test-CompleterRegistration` and inspect it with `Get-Completer`.
@@ -390,10 +391,14 @@ A failed release can be rerun. `Publish_build` publishes nothing when the PowerS
   - `Get-Completer`
   - `Import-CompleterScript`
   - `Import-CompleterSet`
+  - `New-CompleterScript`
   - `Register-Completer`
+  - `Reset-Completer`
   - `Test-CompleterRegistration`
   - `Test-CompleterScript`
+  - `Test-CompleterSet`
   - `Unregister-Completer`
+  - `Update-CompleterSet`
 - `src\Private` contains the runtime and state helpers that resolve targets, manage the module registration table, and inspect or remove runtime registrations. The strict import grammar is reached through `Test-CompleterScriptAst`, a thin wrapper over the compiled walk that returns `CompleterActions.CompleterScriptFinding` records that both `Test-CompleterScript` and `Import-CompleterScript` consume. Completer sets are read by `Import-CompleterSetDefinition` and validated entry by entry in `Resolve-CompleterSetEntry` (with `Get-CompleterScriptTarget` deriving strict-tier targets from the AST) against one `Get-CompleterRegistrationSnapshot` of the session; `Register-Completer` and `Import-CompleterSet` both resolve conflicts through `Resolve-CompleterRegistrationConflict` and write through `Add-CompleterRegistration`, which writes a batch as one transaction: a whole set for `Import-CompleterSet`, one target at a time for `Register-Completer`.
 - `tools\Measure-CompleterStartup.ps1` is the startup benchmark: eager import versus `Import-CompleterSet`, each sampled in fresh `pwsh -NoProfile` processes.
 

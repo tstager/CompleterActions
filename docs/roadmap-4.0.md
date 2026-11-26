@@ -1,13 +1,13 @@
 # CompleterActions 4.0 Roadmap
 
 Drafted: 2026-10-12
-Baseline: 3.0.0, release commit `abac592`, tag v3.0.0
+Baseline: 3.0.1, release commit `820d224`, tag v3.0.1 (drafted against 3.0.0, `abac592`)
 Live page: https://claude.ai/artifact/RbFmmJC6uMjo19eZqVTtzy
-Status (2026-10-12): proposed. No decisions locked. Milestones 1 and 2 start on a trigger; milestone 3 is gated on a shipped engine with the completer cmdlets and has no date.
+Status (2026-11-25): milestone 1 started by the owner, with its trigger waived once; its spec and plan are `docs/roadmap-4.0/milestone-1-spec.md` and `milestone-1-plan.md`. Decisions 2 and 3 are locked; decisions 1, 4, 5, and 6 are still proposed. Milestone 2 starts on its trigger; milestone 3 is gated on a shipped engine with the completer cmdlets and has no date.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
-| 1 Authoring, second pass | 3.1.0-preview1, then 3.1.0 | Proposed, additive; starts when the next batch of completers is written by hand or PS_Completers takes a contributor |
+| 1 Authoring, second pass | 3.1.0-preview1, then 3.1.0 | Started 2026-11-25, additive, with six defect fixes folded in; trigger waived |
 | 2 Diagnostics and native generators | 3.2.0-preview1, then 3.2.0 | Proposed, additive; starts when a completer misbehaves without an obvious cause, or the next tools to add ship their own `completion powershell` |
 | 3 Engine floor and the end of reflection | 4.0.0-rc1, then 4.0.0 | Proposed, breaking; gated on a stable engine exporting `Get-ArgumentCompleter` and `Unregister-ArgumentCompleter`, and on 7.4 leaving support (2026-11-10) |
 
@@ -15,7 +15,7 @@ Three milestones from the 3.0.0 baseline. The first two are additive and ship on
 
 ## Where 3.0 leaves us
 
-Checked against the repository and the owner's machine on 2026-10-12.
+Checked against the repository and the owner's machine on 2026-10-12, at 3.0.0. Two rows have moved since: 3.0.1 shipped the fixes of two reviews, and the suite is 529 `It` blocks across 13 files at `b0aa0be`.
 
 | Area | State |
 | --- | --- |
@@ -34,12 +34,15 @@ Public commands: 11. Private helpers: 59. Source: about 8,500 lines of PowerShel
 
 Milestone 2 of the 3.0 roadmap shipped the scaffold and installable sets with three deferrals written into its spec. Each was deferred as a non-breaking addition, so this milestone closes them, together with the one maintenance gap the hash scheme left open.
 
-Trigger: the owner writes the next batch of completers by hand, or PS_Completers takes a contributor. Not scheduled on its own.
+Trigger: the owner writes the next batch of completers by hand, or PS_Completers takes a contributor. Not scheduled on its own. The owner waived the trigger on 2026-11-25 and started the milestone; the rulings of that day had already put two more items into it.
 
-- **Option seeding in New-CompleterScript** (feature). The scaffold reads option lines from the same help probe that feeds the subcommand table and seeds a literal option table for them: `-x, --long <ARG>`, `--long=VALUE`, and `/X` layouts. Option-only tools such as rg and du stop getting an empty table. The milestone 2 spec deferred this with "revisit with real use"; its help-probe corpus is the test fixture.
-- **New-CompleterScript -Documentation** (feature). Writes the companion markdown beside the script with the one heading the PS_Completers corpus already shares, "What it completes", and nothing else. Off by default.
-- **Version selection for Import-CompleterSet -Name** (feature). `-MinimumVersion` and `-RequiredVersion`, with the same first-root-then-highest-version rule when neither is given. A pinned profile stops needing `-LiteralPath`.
-- **Update-CompleterSet** (feature). Rehashes the entries `Test-CompleterSet` reports as changed and rewrites only those `Hash` lines, leaving the rest of the file byte-identical. Today the fix for drift is a full `Export-CompleterSet`. Open question: should it also add entries for unlisted scripts, or only report them? Recommendation: report only; adding an entry is an authoring decision.
+- **Option seeding in New-CompleterScript** (feature). The scaffold reads option lines from the same help probe that feeds the subcommand table and seeds a literal option table for them: `-x, --long <ARG>`, `--long=VALUE`, and `/X` layouts. GNU-style help with no option heading is read too. Option-only tools such as rg and du stop getting an empty table, and the generated script offers options in any argument position. The milestone 2 spec deferred this with "revisit with real use"; its help-probe corpus is the test fixture.
+- **New-CompleterScript -Documentation** (feature). Writes the companion markdown beside the script: the title line, the heading "What it completes", which the PS_Completers corpus shares, and one sentence naming the script and its targets. Off by default.
+- **Version selection for -Name** (feature). `-MinimumVersion` and `-RequiredVersion` on `Import-CompleterSet -Name` and `Test-CompleterSet -Name`, with the same first-root-then-highest-version rule when neither is given. A pinned profile stops needing `-LiteralPath`.
+- **Update-CompleterSet** (feature). Rehashes the entries `Test-CompleterSet` reports as changed and rewrites only those `Hash` values, leaving the rest of the file byte-identical. It also repairs a malformed `Hash`, warns for each trusted entry it rehashes, and leaves an entry whose targets changed to `Export-CompleterSet`, because a matching `Hash` makes import skip the target check. Today the fix for drift is a full `Export-CompleterSet`. It only reports scripts the set does not list and never adds an entry (owner decision, 2026-11-25).
+- **Test-CompleterRegistration -TargetOnly** (feature). Returns only the matches the target's own completer produced. From the 2026-11-18 review, finding 5; whether it becomes the default is a 4.0 question.
+- **App execution aliases in the help probe** (feature). On Windows the probe reads an alias's target, checks the target's subsystem, and runs the alias, so Store-installed tools such as winget are probed.
+- **Folded fixes** (fix). Review findings 7, 9, and 11, the capture variable names, the tests that find `pwsh` by name, and the help note on stems that differ only by case ship here, not as a 3.0.2. Pushes to main that change only `docs/**` or `CHANGELOG.md` start no CI run.
 
 Exit criteria:
 
@@ -47,7 +50,10 @@ Exit criteria:
 New-CompleterScript -CommandName rg -Path .\rg_completer.ps1 -PassThru | Test-CompleterScript   # empty, and the script carries an option table
 Import-CompleterSet -Name PS_Completers -MinimumVersion 1.1.3                                # resolves the installed 1.1.3 or newer; errors below it
 Test-CompleterSet .\completers.psd1 | Update-CompleterSet; Test-CompleterSet .\completers.psd1   # second call empty; git diff shows only Hash lines
+New-CompleterScript -CommandName winget -Path .\winget_completer.ps1 -Verbose                   # on a machine where winget is an app execution alias: a probe line with exit 0
 ```
+
+Notes on the criteria as written. Every PS_Completers version published so far is above 1.1.3, so the "errors below it" half of the second line is shown with a version above the installed one (spec check 2). The second call of the third line is empty only when the drift was in hashes alone, because an entry whose targets changed is refused.
 
 ## Milestone 2: Diagnostics and native generators (3.2.0, additive)
 
@@ -85,7 +91,7 @@ Exit criteria:
 ```powershell
 Get-Command Get-ArgumentCompleter, Unregister-ArgumentCompleter   # both engine cmdlets, no module in the Source column
 Select-String -Path src\Core\Engine\*.cs -Pattern 'GetField|BindingFlags'   # no matches
-Get-Command -Module CompleterActions | Measure-Object   # 11 from 3.0 plus whatever 3.1 and 3.2 added; nothing removed
+Get-Command -Module CompleterActions | Measure-Object   # 11 from 3.0, Update-CompleterSet from 3.1, plus whatever 3.2 added; nothing removed
 Find-PSResource CompleterActions -Repository PSGallery -Prerelease   # 4.0.0-rc1 listed; 4.0.0 stable only after the soak
 ```
 
@@ -98,13 +104,13 @@ Find-PSResource CompleterActions -Repository PSGallery -Prerelease   # 4.0.0-rc1
 | Trusted-by-default entries in PS_Completers to skip the hash check | out of scope | A set-file decision in the PS_Completers repository, not a module change. The opt-in unverified import in milestone 2 covers the same cost from the module side |
 | Removing the empty `src/Classes` and `src/DSCResources` folders | any release | Housekeeping; bundle into the next branch that touches the build script |
 
-## Proposed decisions
+## Decisions
 
-None are locked. Each is written the way the 2.0 and 3.0 decisions were, so accepting them is one sentence from the owner and reopening one later needs a reason worth a changelog entry.
+Decisions 2 and 3 were locked by the owner on 2026-11-25. Decisions 1, 4, 5, and 6 are proposed. Each is written the way the 2.0 and 3.0 decisions were, so accepting one is one sentence from the owner and reopening one later needs a reason worth a changelog entry.
 
 1. **4.0 waits for its trigger and has no date.** The major exists to remove reflection. Cutting it before a stable engine has the cmdlets would mean shipping a floor nobody can run, and cutting it before 7.4 leaves support would drop a supported LTS. Affects: milestone 3 and every release between now and then.
-2. **Additive work ships on 3.x minors, preview before stable.** Carries 3.0 decision 7. Milestones 1 and 2 go to PSGallery as preview1 first and soak in the owner's profile and the PS_Completers CI. Affects: milestones 1 and 2, release recipe and changelog headings.
-3. **Milestones 1 and 2 start on a trigger, not a date.** Each item was deferred with "revisit with real use". A roadmap item without a user is a cost without a benefit; each milestone names what has to happen for it to start. Affects: milestones 1 and 2.
+2. **Additive work ships on 3.x minors, preview before stable.** Locked 2026-11-25. Carries 3.0 decision 7. Milestones 1 and 2 go to PSGallery as preview1 first and soak in the owner's profile and the PS_Completers CI. Affects: milestones 1 and 2, release recipe and changelog headings.
+3. **Milestones 1 and 2 start on a trigger, not a date.** Locked 2026-11-25, with milestone 1's trigger waived once the same day. Each item was deferred with "revisit with real use". A roadmap item without a user is a cost without a benefit; each milestone names what has to happen for it to start. Affects: milestones 1 and 2.
 4. **The verified import stays the default.** 3.0 decisions 1 and 8 put the hash in the set file and the grammar at import. Any cheaper import is a per-call opt-in that changes nothing for a profile that does not ask for it. Affects: milestone 2, Import-CompleterSet.
 5. **Generator-produced completers register in the trusted tier.** The strict grammar exists for hand-written scripts in a set. A script a tool emits for itself is the tool's contract, and holding it to the grammar would reject most of them for no gain. Affects: milestone 2, Register-Completer.
 6. **4.0.0 ships as a release candidate before it ships as stable.** Carried from 3.0 decision 6 and 2.0 decision 6 without change. Affects: milestone 3, release order.

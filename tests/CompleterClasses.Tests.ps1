@@ -141,6 +141,7 @@ Describe 'Completer public types' {
         @{ Command = 'Test-CompleterScript'; TypeName = 'CompleterActions.CompleterScriptFinding' }
         @{ Command = 'Test-CompleterSet'; TypeName = 'CompleterActions.CompleterScriptFinding' }
         @{ Command = 'Unregister-Completer'; TypeName = 'CompleterActions.CompleterRegistration' }
+        @{ Command = 'Update-CompleterSet'; TypeName = 'System.IO.FileInfo' }
     ) {
         @((Get-Command -Name $Command -Module 'CompleterActions').OutputType.Name) | Should -Be @($TypeName)
     }

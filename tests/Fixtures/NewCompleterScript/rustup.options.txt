@@ -1,0 +1,8 @@
+-v
+--verbose
+-q
+--quiet
+-h
+--help
+-V
+--version

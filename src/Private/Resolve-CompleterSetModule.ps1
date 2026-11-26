@@ -17,15 +17,42 @@ within it the highest version wins, and the unversioned layout is used only
 when the root has no versioned candidate. The chosen module is never replaced
 by a lower version, even when its set declaration is broken.
 
+With -MinimumVersion or -RequiredVersion every manifest of each root walked is
+read, and the unversioned layout is a candidate beside the version folders
+when its ModuleVersion parses as a version. A version folder or unversioned
+layout whose manifest cannot be read or parsed is left out of the candidates
+instead of failing the call. -RequiredVersion takes the
+candidate equal to the value from the first root that holds one.
+-MinimumVersion takes, from the first root that holds a candidate equal to or
+above the value, the highest such candidate; a root whose candidates are all
+lower is passed over. Versions compare as System.Version values, so 1.2.0 and
+1.2.0.0 differ, and a prerelease label takes no part. On a tie a version
+folder wins over the unversioned layout. When no root holds a match but some
+root holds a candidate, the error names the wanted version and lists every
+candidate's version from every root, highest first, without repeats; when no
+root holds a candidate, the error is the one without a version parameter.
+
 Manifests are read by Import-CompleterDataFile, as data only, so nothing in
 the package runs, and under the set file limit, so a manifest larger than
 128 KB is refused before it is parsed. PrivateData.CompleterSet must name
 a .psd1 file in a folder directly below ModuleBase, with / or \ as the
-separator, and the file must exist. A failure throws the bare reason; the
-caller adds its own prefix.
+separator, and the file must exist. A declaration that is not a valid file
+path, because it holds a null character or is longer than the platform allows,
+fails with the invalid-declaration text, the value shown through
+ConvertTo-CompleterPrintableText; the error for a set file that does not exist
+shows its path the same way. A failure throws the bare reason; the caller adds
+its own prefix.
 
 .PARAMETER Name
 The module name, taken literally.
+
+.PARAMETER MinimumVersion
+Selects the highest candidate equal to or above this version, from the first
+root that holds one.
+
+.PARAMETER RequiredVersion
+Selects the candidate equal to this version, from the first root that holds
+one.
 
 .OUTPUTS
 System.Management.Automation.PSCustomObject
@@ -37,12 +64,18 @@ SetPath (the full path of the set file).
 #>
 function Resolve-CompleterSetModule
 {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Highest')]
     [OutputType([pscustomobject])]
     param(
         [Parameter(Mandatory)]
         [ValidateNotNullOrEmpty()]
-        [string] $Name
+        [string] $Name,
+
+        [Parameter(Mandatory, ParameterSetName = 'MinimumVersion')]
+        [version] $MinimumVersion,
+
+        [Parameter(Mandatory, ParameterSetName = 'RequiredVersion')]
+        [version] $RequiredVersion
     )
 
     $sortOrdinal = {
@@ -87,6 +120,27 @@ function Resolve-CompleterSetModule
         $manifestFile.Data
     }
 
+    # A version folder is a candidate when its manifest's ModuleVersion equals the folder's version.
+    $readVersionFolder = {
+        param([pscustomobject] $VersionFolder)
+
+        $moduleName = [System.IO.Path]::GetFileName($VersionFolder.ModuleFolder)
+        $manifestPath = & $findManifest $VersionFolder.Folder $moduleName
+
+        if ($null -ne $manifestPath)
+        {
+            $manifest = & $readManifest $manifestPath
+            $manifestVersion = $null
+
+            if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion) -and $manifestVersion -eq $VersionFolder.FolderVersion)
+            {
+                @{ Name = $moduleName; ModuleBase = $VersionFolder.Folder; ManifestPath = $manifestPath; Manifest = $manifest }
+            }
+        }
+    }
+
+    $selectVersion = $PSCmdlet.ParameterSetName -ne 'Highest'
+    $candidateVersions = [System.Collections.Generic.SortedSet[version]]::new()
     $chosen = $null
 
     foreach ($root in ([string] $env:PSModulePath).Split([System.IO.Path]::PathSeparator))
@@ -129,22 +183,84 @@ function Resolve-CompleterSetModule
             }
         )
 
-        foreach ($versionFolder in @($versionFolders | Sort-Object -Property @{ Expression = 'FolderVersion'; Descending = $true }, @{ Expression = 'Order'; Descending = $false }))
-        {
-            $moduleName = [System.IO.Path]::GetFileName($versionFolder.ModuleFolder)
-            $manifestPath = & $findManifest $versionFolder.Folder $moduleName
+        $versionFolders = @($versionFolders | Sort-Object -Property @{ Expression = 'FolderVersion'; Descending = $true }, @{ Expression = 'Order'; Descending = $false })
 
-            if ($null -eq $manifestPath)
+        if ($selectVersion)
+        {
+            # Version folders come first, so on a tie a version folder wins over the unversioned layout.
+            # A copy whose manifest cannot be read or parsed is left out instead of failing the call.
+            $candidates = @(
+                foreach ($versionFolder in $versionFolders)
+                {
+                    try
+                    {
+                        $candidate = & $readVersionFolder $versionFolder
+                    }
+                    catch
+                    {
+                        continue
+                    }
+
+                    if ($null -ne $candidate)
+                    {
+                        @{ Version = $versionFolder.FolderVersion; Module = $candidate }
+                    }
+                }
+
+                foreach ($moduleFolder in $moduleFolders)
+                {
+                    $moduleName = [System.IO.Path]::GetFileName($moduleFolder)
+                    $manifestPath = & $findManifest $moduleFolder $moduleName
+
+                    if ($null -ne $manifestPath)
+                    {
+                        try
+                        {
+                            $manifest = & $readManifest $manifestPath
+                        }
+                        catch
+                        {
+                            continue
+                        }
+
+                        $manifestVersion = $null
+
+                        if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion))
+                        {
+                            @{ Version = $manifestVersion; Module = @{ Name = $moduleName; ModuleBase = $moduleFolder; ManifestPath = $manifestPath; Manifest = $manifest } }
+                        }
+                    }
+                }
+            )
+
+            $selected = $null
+
+            foreach ($candidate in $candidates)
             {
-                continue
+                $null = $candidateVersions.Add($candidate.Version)
+                $isMatch = if ($PSCmdlet.ParameterSetName -eq 'RequiredVersion') { $candidate.Version -eq $RequiredVersion } else { $candidate.Version -ge $MinimumVersion }
+
+                if ($isMatch -and ($null -eq $selected -or $candidate.Version -gt $selected.Version))
+                {
+                    $selected = $candidate
+                }
             }
 
-            $manifest = & $readManifest $manifestPath
-            $manifestVersion = $null
-
-            if ([version]::TryParse([string] $manifest['ModuleVersion'], [ref] $manifestVersion) -and $manifestVersion -eq $versionFolder.FolderVersion)
+            if ($null -ne $selected)
             {
-                $chosen = @{ Name = $moduleName; ModuleBase = $versionFolder.Folder; ManifestPath = $manifestPath; Manifest = $manifest }
+                $chosen = $selected.Module
+                break
+            }
+
+            continue
+        }
+
+        foreach ($versionFolder in $versionFolders)
+        {
+            $chosen = & $readVersionFolder $versionFolder
+
+            if ($null -ne $chosen)
+            {
                 break
             }
         }
@@ -173,6 +289,13 @@ function Resolve-CompleterSetModule
 
     if ($null -eq $chosen)
     {
+        if ($candidateVersions.Count -gt 0)
+        {
+            $wanted = if ($PSCmdlet.ParameterSetName -eq 'RequiredVersion') { "version $RequiredVersion" } else { "version $MinimumVersion or later" }
+            $installed = @($candidateVersions.Reverse()) -join ', '
+            throw "No installed module named '$Name' with $wanted was found in `$env:PSModulePath. Installed versions: $installed."
+        }
+
         throw "No installed module named '$Name' was found in `$env:PSModulePath. Install it with Install-PSResource $Name."
     }
 
@@ -211,14 +334,23 @@ function Resolve-CompleterSetModule
 
     if (-not $isValidDeclaration)
     {
-        throw "The module '$moduleName' $version declares the completer set '$declaredSet', which must be a .psd1 file in a folder directly below '$moduleBase'."
+        throw "The module '$moduleName' $version declares the completer set '$(ConvertTo-CompleterPrintableText -Value ([string] $declaredSet))', which must be a .psd1 file in a folder directly below '$moduleBase'."
     }
 
-    $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+    try
+    {
+        $setPath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($moduleBase, $segments[0], $segments[1]))
+    }
+    catch [System.IO.PathTooLongException], [System.ArgumentException]
+    {
+        # A null character, or a path longer than the platform allows, names no
+        # file. The value can hold control characters, so it is made printable.
+        throw "The module '$moduleName' $version declares the completer set '$(ConvertTo-CompleterPrintableText -Value $declaredSet)', which must be a .psd1 file in a folder directly below '$moduleBase'."
+    }
 
     if (-not [System.IO.File]::Exists($setPath))
     {
-        throw "The completer set '$setPath' declared by the module '$moduleName' $version does not exist."
+        throw "The completer set '$(ConvertTo-CompleterPrintableText -Value $setPath)' declared by the module '$moduleName' $version does not exist."
     }
 
     [pscustomobject] [ordered] @{

@@ -6,7 +6,8 @@ SYNOPSIS
     Import-CompleterSet validates and registers a set, the hash and the fast
     path, the Pending and Failed lifecycle of lazily loaded completers, the
     module's PSReadLine neutrality promise, drift checks with
-    Test-CompleterSet, and completer sets distributed as modules.
+    Test-CompleterSet, drift repair with Update-CompleterSet, and completer
+    sets distributed as modules.
 
 LONG DESCRIPTION
 
@@ -17,7 +18,7 @@ LONG DESCRIPTION
 
         Import-CompleterSet -Path ~\Completers\completers.psd1
 
-    Three commands work with sets:
+    Four commands work with sets:
 
     - `Export-CompleterSet` writes a set from registration records, either
       the managed registrations that came from scripts or records piped in
@@ -28,6 +29,8 @@ LONG DESCRIPTION
     - `Test-CompleterSet` reports drift between a set and the scripts on
       disk, and for a set in a module package, problems with the package
       layout. It returns nothing when the set is current.
+    - `Update-CompleterSet` rewrites the `Hash` of each entry whose script
+      changed, and leaves the rest of the set file as it is.
 
     A set never contains code. It is a PowerShell data file (`.psd1`) that
     the commands read as data only, with the evaluator
@@ -328,7 +331,9 @@ THE HASH AND THE FAST PATH
     edited form. The worst a wrong `Hash` can do is leave a `Failed` record.
 
     Regenerate the set with `Export-CompleterSet` after every script edit,
-    so its hashes stay current.
+    or rewrite only its stale hashes with `Update-CompleterSet`, so its
+    hashes stay current. FIXING DRIFT WITH UPDATE-COMPLETERSET says which
+    of the two an edit needs.
 
 LAZY LOADING, PENDING, AND FAILED
 
@@ -493,8 +498,11 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
       `@{ ModuleName = 'CompleterActions'; ModuleVersion = '2.2.0' }` to
       `RequiredModules`.
 
-    A set that no manifest declares gets no `PackageLayout` finding, and a
-    `RootModule` in the manifest is not one.
+    A `.psd1` in the module folder whose `PrivateData.CompleterSet` is not a
+    valid file path gets one `PackageLayout` Error at line 1 of the set,
+    whether or not a manifest declares the set. Apart from those, a set that
+    no manifest declares gets no `PackageLayout` finding, and a `RootModule`
+    in the manifest is not one.
 
     A set that matches its folder returns nothing: no finding, no warning,
     no error, and `$?` is `$true`. That makes the command a gate that
@@ -537,6 +545,88 @@ CHECKING FOR DRIFT WITH TEST-COMPLETERSET
     Steps 2 and 3 can share a commit, but step 3 must never come first:
     `MissingHash` is a finding, so an empty-output gate fails on a set
     without hashes.
+
+FIXING DRIFT WITH UPDATE-COMPLETERSET
+
+    Most drift after an edit is a stale `Hash`: a script's text changed and
+    nothing else did. `Update-CompleterSet` repairs that in place. It
+    rewrites the `Hash` of each entry whose script changed and leaves every
+    other byte of the set file as it is:
+
+        Test-CompleterSet -Path ~\Completers\completers.psd1 |
+            Update-CompleterSet
+
+    The findings piped in name the sets to update, not the entries. Each
+    set is read once more and every entry of it is verified again, the way
+    `Test-CompleterSet` verifies it, because a finding's position comes
+    from an earlier read. A set is read and written at most once, however
+    many findings name it, and nothing is written until the pipe before it
+    has finished. A set that matches its folder pipes nothing and is not
+    read at all. `-Path` and `-LiteralPath` name a set directly.
+
+    What is updated
+
+    An entry is updated when all of these hold:
+
+    - it has a `Hash` value, stale or malformed, which `Test-CompleterSet`
+      reports as `HashMismatch` or `InvalidHash`;
+    - its script can be read, so its current hash is known;
+    - it has no finding that `Test-CompleterSet` reports as an `Error`: no
+      `MissingScript`, `InvalidEntry`, `UnreadableTargets`,
+      `TargetMismatch`, or `DuplicateTarget`;
+    - it is trusted, or its script passes the strict grammar.
+
+    The new value is the script's current hash, written as
+    `Export-CompleterSet` writes it: a single-quoted `SHA256:` followed by
+    64 uppercase hexadecimal digits. An entry whose `Hash` already equals
+    its script's, in any letter case, is not touched. A trusted entry is
+    updated too, with a warning, because its script is never parsed, so its
+    `Targets` cannot be checked against it; import ignores a trusted
+    entry's `Hash`, which only feeds `Test-CompleterSet`.
+
+    What is refused, and why
+
+    The third condition is the reason for the command's care. A matching
+    `Hash` makes `Import-CompleterSet` register a strict entry's declared
+    `Targets` without comparing them with the script, as THE HASH AND THE
+    FAST PATH describes. Rehashing an entry whose targets also changed
+    would make the next import register the stale `Targets` unchecked. Such
+    an entry is left as it is, whether or not its `Hash` differs, with a
+    warning that names its first `Error`:
+
+        WARNING: Entry 4 ('git_completer/git_completer.ps1') of '<set>' was not updated: <problem> Regenerate the set with Export-CompleterSet.
+
+    An entry that is not trusted and whose `Hash` is stale or malformed is
+    refused the same way when its script no longer passes the strict
+    grammar, with the first grammar `Error` as `Test-CompleterScript` words
+    it as the problem: rehashing it would let the import skip the grammar
+    and move the failure to the first tab.
+
+    The command never adds anything to a set. One warning per set counts
+    the entries without a `Hash`, and one warning names each script under
+    the set's folder that matches `-Filter` and that no entry lists.
+
+    The file keeps its encoding, its byte-order mark, its line endings, its
+    comments, and its layout. Each new value is spliced in where the old
+    one was parsed, and a double-quoted or here-string `Hash` becomes the
+    single-quoted form on one line. Nothing is written when the file's text
+    does not give back its bytes in its encoding, such as a file with an
+    invalid UTF-8 byte, when the new text does not read back as the same
+    entries, paths, and targets, or when it would pass the 128 KB limit.
+    The write goes through a temporary file beside the set and a replacing
+    move, and a set with nothing to update is not written at all, so its
+    timestamp does not change. `-WhatIf` writes nothing and still warns,
+    and `-PassThru` returns each set file that was written.
+
+    When to regenerate instead
+
+    `Update-CompleterSet` is for the case where only the scripts' text
+    changed. Use `Export-CompleterSet` when more did: a script gained,
+    lost, or renamed a target, a script was added, moved, or deleted, two
+    entries list one target, or an entry has no `Hash`. Each warning that
+    ends with `Export-CompleterSet` names such a case, and
+    `Test-CompleterSet` keeps reporting an entry the command left alone
+    until the set is regenerated.
 
 COMPLETER SETS AS MODULES
 
@@ -655,6 +745,32 @@ COMPLETER SETS AS MODULES
     6. `PrivateData.CompleterSet` must name a `.psd1` in a folder directly
        below the module folder. A value with `..`, a rooted path, and a
        file directly in the module folder are rejected.
+
+    `-MinimumVersion` and `-RequiredVersion` change steps 3 and 4, for one
+    name at a time and never together, so a profile can pin the version it
+    imports and test the copy it pins by the same words:
+
+        Import-CompleterSet -Name PS_Completers -MinimumVersion 1.3.0
+        Test-CompleterSet -Name PS_Completers -RequiredVersion 1.3.1
+
+    With either one, the unversioned layout is a candidate beside the
+    version folders whenever its manifest's `ModuleVersion` reads as a
+    version, as it is for `Import-Module`. `-RequiredVersion` takes the
+    candidate equal to it from the first folder that holds one.
+    `-MinimumVersion` takes, in the first folder that holds any candidate
+    equal to it or higher, the highest such candidate, so a folder whose
+    candidates are all lower is passed over and a newer copy in a later
+    folder is found. Versions compare exactly, so `1.2.0` and `1.2.0.0`
+    differ: write the version as its folder is named. A prerelease label
+    takes no part, because a prerelease is installed in the folder of its
+    version, so `-RequiredVersion 2.0.0` selects `2.0.0-preview1`, and the
+    verbose line shows the label. A copy whose manifest cannot be read is
+    passed over and is not listed in the error below. The selected version
+    is used even when it is broken, as in step 4. When the module is
+    installed but no folder holds a match, the call fails and lists every
+    installed version, highest first:
+
+        Failed to import completer set. No installed module named 'PS_Completers' with version 2.0.0 or later was found in $env:PSModulePath. Installed versions: 1.3.1, 1.3.0, 1.2.0.
 
     The set is then imported as `-LiteralPath` imports it, with the same
     validation, records, warnings, and transaction, and with `ScriptPath`
@@ -775,6 +891,13 @@ WORKFLOW
 
         Test-CompleterSet -Path ~\Completers\completers.psd1
 
+    When only a script's text changed, not its targets, the set can be
+    repaired in place instead, as FIXING DRIFT WITH UPDATE-COMPLETERSET
+    describes:
+
+        Test-CompleterSet -Path ~\Completers\completers.psd1 |
+            Update-CompleterSet
+
 EXAMPLE 1
 
     Import a set and inspect what it registered:
@@ -822,6 +945,7 @@ SEE ALSO
     Get-Help Import-CompleterSet -Full
     Get-Help Export-CompleterSet -Full
     Get-Help Test-CompleterSet -Full
+    Get-Help Update-CompleterSet -Full
     Get-Help Register-Completer -Full
     Get-Help Reset-Completer -Full
     Get-Help Get-Completer -Full

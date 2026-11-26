@@ -34,8 +34,8 @@ Import-CompleterSet -LiteralPath <string[]> [-SkipInvalid] [-Force] [-WhatIf] [-
 ### Name
 
 ```PowerShell
-Import-CompleterSet -Name <string[]> [-SkipInvalid] [-Force] [-WhatIf] [-Confirm]
- [<CommonParameters>]
+Import-CompleterSet -Name <string[]> [-MinimumVersion <version>] [-RequiredVersion <version>]
+ [-SkipInvalid] [-Force] [-WhatIf] [-Confirm] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -117,6 +117,18 @@ set with trusted entries writes one warning per name that counts them.
 Installing a completer set package and importing it by name is a decision to
 run its scripts: each one runs at its first tab, under its entry's trust tier.
 
+`-MinimumVersion` or `-RequiredVersion` selects the version instead, for one
+`-Name`, and the two cannot be used together. `-RequiredVersion` takes the
+version equal to it from the first root that holds it. `-MinimumVersion` takes
+the highest version equal to it or above from the first root that holds one,
+so a root whose versions are all lower is passed over and a newer copy in a
+later root is found. With either, an unversioned copy whose manifest's
+`ModuleVersion` reads as a version takes part beside the version folders, and
+the selected version is used even when its set is broken. When the module is
+installed but no root holds a matching version, the call fails and lists the
+installed versions, highest first. Without either parameter the version is
+chosen as described above.
+
 ## EXAMPLES
 
 ### EXAMPLE 1
@@ -155,6 +167,16 @@ Import-CompleterSet -Name PS_Completers
 Registers every completer script in the set of the installed `PS_Completers`
 package. After `Install-PSResource PS_Completers` this is the one line a profile
 needs, with no path.
+
+### EXAMPLE 5
+
+```PowerShell
+Import-CompleterSet -Name PS_Completers -MinimumVersion 1.3.0
+```
+
+Registers the set of the highest installed `PS_Completers` that is 1.3.0 or
+later, so the profile line keeps working across upgrades and fails, naming the
+installed versions, when only an older copy is installed.
 
 ## PARAMETERS
 
@@ -225,6 +247,34 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -MinimumVersion
+
+Selects the highest installed version of the module, equal to or above this
+one, from the first `$env:PSModulePath` root that holds such a version; a root
+whose versions are all lower is passed over. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
+`-Name` and cannot be used with `-RequiredVersion`.
+
+```yaml
+Type: System.Version
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: Name
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -Name
 
 The names of installed completer set modules. Each name is taken literally: a
@@ -264,6 +314,34 @@ ParameterSets:
   IsRequired: true
   ValueFromPipeline: true
   ValueFromPipelineByPropertyName: true
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -RequiredVersion
+
+Selects the installed version of the module that equals this one, from the
+first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
+installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
+`-Name` and cannot be used with `-MinimumVersion`.
+
+```yaml
+Type: System.Version
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: Name
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []

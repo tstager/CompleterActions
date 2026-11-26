@@ -32,7 +32,8 @@ Test-CompleterSet -LiteralPath <string[]> [-Filter <string>] [<CommonParameters>
 ### Name
 
 ```PowerShell
-Test-CompleterSet -Name <string[]> [-Filter <string>] [<CommonParameters>]
+Test-CompleterSet -Name <string[]> [-MinimumVersion <version>] [-RequiredVersion <version>]
+ [-Filter <string>] [<CommonParameters>]
 ```
 
 ## DESCRIPTION
@@ -97,8 +98,11 @@ holds a `.psd1` of at most 128 KB that reads as data and whose
 before it is published. When more than one `.psd1` there declares the set, the
 first in ordinal order of file name is the manifest. A `.psd1` that is not data
 or is larger than 128 KB declares nothing, and a folder that cannot be listed
-holds no manifest. A set that no manifest declares gets no `PackageLayout`
-finding. A package set is checked for four things, reported in this order:
+holds no manifest. A `.psd1` there whose `PrivateData.CompleterSet` is not a
+valid file path gets one `PackageLayout` `Error` at line 1, column 1 of the
+set, whether or not a manifest declares the set; apart from those, a set that
+no manifest declares gets no `PackageLayout` finding. A package set is checked
+for four things, reported in this order:
 
 - `Error`, one per entry in set order, at the entry's `Path`: the `Path` is
   fully qualified, or resolves outside the module folder, so an installed copy
@@ -122,7 +126,10 @@ exactly as `Import-CompleterSet -Name` finds it: the first `$env:PSModulePath`
 root that has the module wins, and within it the highest version. The manifest
 is read as data, so nothing in the package runs, and a manifest larger than
 128 KB fails the call before it is parsed. Each name is taken literally, and a
-name that does not resolve fails the call.
+name that does not resolve fails the call. `-MinimumVersion` or
+`-RequiredVersion` selects the version for one `-Name` exactly as they select
+it for `Import-CompleterSet`, so a profile that pins a version can test the
+copy it pins by the same words.
 
 Every `-Path`, `-LiteralPath`, or `-Name` value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
@@ -170,6 +177,15 @@ Test-CompleterSet -Name PS_Completers
 Checks the installed `PS_Completers` package's set against its scripts and the
 package layout, by the same name the profile's `Import-CompleterSet` line uses.
 
+### EXAMPLE 4
+
+```PowerShell
+Test-CompleterSet -Name PS_Completers -RequiredVersion 1.3.1
+```
+
+Checks the installed 1.3.1 copy of `PS_Completers`, even when a later version
+is installed, and fails, naming the installed versions, when 1.3.1 is not.
+
 ## PARAMETERS
 
 ### -Filter
@@ -216,6 +232,34 @@ AcceptedValues: []
 HelpMessage: ''
 ```
 
+### -MinimumVersion
+
+Selects the highest installed version of the module, equal to or above this
+one, from the first `$env:PSModulePath` root that holds such a version; a root
+whose versions are all lower is passed over. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part. It applies to one
+`-Name` and cannot be used with `-RequiredVersion`.
+
+```yaml
+Type: System.Version
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: Name
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
 ### -Name
 
 The names of installed completer set modules. Each name is taken literally: a
@@ -255,6 +299,34 @@ ParameterSets:
   IsRequired: true
   ValueFromPipeline: true
   ValueFromPipelineByPropertyName: true
+  ValueFromRemainingArguments: false
+DontShow: false
+AcceptedValues: []
+HelpMessage: ''
+```
+
+### -RequiredVersion
+
+Selects the installed version of the module that equals this one, from the
+first `$env:PSModulePath` root that holds it. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: `1.2.0`
+and `1.2.0.0` differ. A prerelease label takes no part: `2.0.0-preview1` is
+installed in the folder `2.0.0` and is selected by `2.0.0`. It applies to one
+`-Name` and cannot be used with `-MinimumVersion`.
+
+```yaml
+Type: System.Version
+DefaultValue: ''
+SupportsWildcards: false
+Aliases: []
+ParameterSets:
+- Name: Name
+  Position: Named
+  IsRequired: false
+  ValueFromPipeline: false
+  ValueFromPipelineByPropertyName: false
   ValueFromRemainingArguments: false
 DontShow: false
 AcceptedValues: []

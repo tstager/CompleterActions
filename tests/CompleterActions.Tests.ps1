@@ -305,7 +305,7 @@ Describe 'Completer registration public API' {
         }
     }
 
-    It 'gives New-CompleterScript the section 2 synopsis and three examples' {
+    It 'gives New-CompleterScript the section 2 synopsis and four examples' {
         $help = Invoke-TestBuildHelp -Script {
             $help = Get-Help -Name 'New-CompleterScript' -Examples -ErrorAction Stop
 
@@ -316,7 +316,7 @@ Describe 'Completer registration public API' {
         }
 
         $help.Synopsis | Should -BeExactly 'Writes a completer script skeleton for a native command that passes Test-CompleterScript as written.'
-        $help.Examples | Should -Be 3
+        $help.Examples | Should -Be 4
     }
 
     It 'resolves help for Import-CompleterSet -Name' {
@@ -331,6 +331,87 @@ Describe 'Completer registration public API' {
 
         $help.Name | Should -BeExactly 'Name'
         $help.Description | Should -Not -BeNullOrEmpty
+    }
+
+    It 'gives Update-CompleterSet the section 5 synopsis and three examples' {
+        $help = Invoke-TestBuildHelp -Script {
+            [pscustomobject] @{
+                Synopsis = [string] (Get-Help -Name 'Update-CompleterSet' -ErrorAction Stop).Synopsis
+                Examples = @((Get-Help -Name 'Update-CompleterSet' -Examples -ErrorAction Stop).examples.example).Count
+            }
+        }
+
+        $help.Synopsis | Should -BeExactly 'Rewrites the Hash of each completer set entry whose script has changed, leaving the rest of the set file as it is.'
+        $help.Examples | Should -Be 3
+    }
+
+    It 'resolves help for each parameter 3.1.0 adds' {
+        $parameters = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($pair in @(
+                        @('New-CompleterScript', 'Documentation'),
+                        @('Import-CompleterSet', 'MinimumVersion'),
+                        @('Import-CompleterSet', 'RequiredVersion'),
+                        @('Test-CompleterSet', 'MinimumVersion'),
+                        @('Test-CompleterSet', 'RequiredVersion'),
+                        @('Test-CompleterRegistration', 'TargetOnly')
+                    ))
+                {
+                    $parameter = Get-Help -Name $pair[0] -Parameter $pair[1] -ErrorAction Stop
+                    $description = (@($parameter.description | ForEach-Object Text) -join ' ').Trim()
+
+                    '{0} -{1}: {2}' -f $pair[0], [string] $parameter.name, ($description.Length -gt 0)
+                }
+            }
+        )
+
+        $parameters | Should -Be @(
+            'New-CompleterScript -Documentation: True'
+            'Import-CompleterSet -MinimumVersion: True'
+            'Import-CompleterSet -RequiredVersion: True'
+            'Test-CompleterSet -MinimumVersion: True'
+            'Test-CompleterSet -RequiredVersion: True'
+            'Test-CompleterRegistration -TargetOnly: True'
+        )
+    }
+
+    It 'resolves Get-Help with examples for all twelve commands from the build' {
+        $commands = @(
+            Invoke-TestBuildHelp -Script {
+                foreach ($command in Get-Command -Module 'CompleterActions' -CommandType Function | Sort-Object -Property Name)
+                {
+                    '{0}: {1}' -f $command.Name, (@((Get-Help -Name $command.Name -Full -ErrorAction Stop).examples.example).Count -gt 0)
+                }
+            }
+        )
+
+        $commands.Count | Should -Be 12
+        $commands | Should -Contain 'Update-CompleterSet: True'
+        @($commands | Where-Object { $_ -notlike '*: True' }) | Should -BeNullOrEmpty
+    }
+
+    It 'has <Text> in <Topic>' -TestCases @(
+        @{ Topic = 'about_Completer_Sets'; Text = 'FIXING DRIFT WITH UPDATE-COMPLETERSET' }
+        @{ Topic = 'about_Completer_Sets'; Text = 'Import-CompleterSet -Name PS_Completers -MinimumVersion 1.3.0' }
+        @{ Topic = 'about_Import_Completers'; Text = 'Names that begin with __CompleterActions are reserved for the module' }
+        @{ Topic = 'about_Import_Completers'; Text = "Command names that differ only by case, such as Tool and tool, share the stem Tool, and that is harmless: PowerShell's completer table and its function table both ignore case, so two such commands cannot have separate completers in one session whatever their stems." }
+    ) {
+        param($Topic, $Text)
+
+        $topicText = @(
+            Invoke-TestBuildHelp -Script ([scriptblock]::Create("Get-Help -Name '$Topic' -ErrorAction Stop | Out-String -Width 4096"))
+        ) -join "`n"
+
+        ($topicText -replace '`', '' -replace '\s+', ' ') | Should -Match ([regex]::Escape($Text))
+    }
+
+    It 'puts FIXING DRIFT WITH UPDATE-COMPLETERSET right after CHECKING FOR DRIFT WITH TEST-COMPLETERSET' {
+        $topicPath = [System.IO.Path]::Combine($PSScriptRoot, '..', 'build', 'CompleterActions', 'en-US', 'about_Completer_Sets.help.txt')
+        $headings = @(Get-Content -LiteralPath $topicPath | Where-Object { $_ -match '^\S' })
+        $index = [System.Array]::IndexOf($headings, 'CHECKING FOR DRIFT WITH TEST-COMPLETERSET')
+
+        $index | Should -BeGreaterOrEqual 0
+        $headings[$index + 1] | Should -BeExactly 'FIXING DRIFT WITH UPDATE-COMPLETERSET'
     }
 
     It 'treats repeated registration with the same script block as idempotent' {
@@ -1728,7 +1809,7 @@ Describe 'Removed surface' {
         Remove-Module -Name 'CompleterActions' -Force -ErrorAction SilentlyContinue
     }
 
-    It 'exports exactly the eleven functions and no alias' {
+    It 'exports exactly the twelve functions and no alias' {
         $expected = @(
             'Export-CompleterSet',
             'Get-Completer',
@@ -1740,7 +1821,8 @@ Describe 'Removed surface' {
             'Test-CompleterRegistration',
             'Test-CompleterScript',
             'Test-CompleterSet',
-            'Unregister-Completer'
+            'Unregister-Completer',
+            'Update-CompleterSet'
         )
         $manifestData = Import-PowerShellDataFile -Path $script:RemovedSurfaceManifestPath
         $commands = @(Get-Command -Module 'CompleterActions')
@@ -1748,7 +1830,7 @@ Describe 'Removed surface' {
         @($manifestData.FunctionsToExport) | Should -Be $expected
         $manifestData.ContainsKey('AliasesToExport') | Should -BeTrue
         @($manifestData.AliasesToExport).Count | Should -Be 0
-        $commands.Count | Should -Be 11
+        $commands.Count | Should -Be 12
         @($commands | Where-Object CommandType -ne 'Function') | Should -BeNullOrEmpty
         @($commands.Name | Sort-Object) | Should -Be @($manifestData.FunctionsToExport)
     }

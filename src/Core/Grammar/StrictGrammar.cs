@@ -141,10 +141,22 @@ public static class StrictGrammar
                 _ => null,
             };
 
+            bool isParameterName = NameEquals(parameterName, "ParameterName");
+
             if (elements is null || !elements.All(element => element is StringConstantExpressionAst))
             {
-                AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), GrammarMessages.LiteralStringValuesHint(parameterName));
+                string hint = isParameterName ? GrammarMessages.LiteralParameterNameHint(parameterName) : GrammarMessages.LiteralStringValuesHint(parameterName);
+                AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.LiteralStringValuesMessage(parameterName), hint);
                 return;
+            }
+
+            // Register-ArgumentCompleter declares -ParameterName as one string, so a literal array
+            // of any length fails to bind when the script is dot-sourced by itself, even though the
+            // capture function accepts one. An array the check above refused gets no second finding;
+            // a blank name inside an array still gets its own finding below.
+            if (isParameterName && argumentAst is not StringConstantExpressionAst)
+            {
+                AddFinding(argumentAst.Extent, argumentAst.GetType().Name, GrammarMessages.ParameterNameArrayMessage(parameterName), GrammarMessages.ParameterNameArrayHint(parameterName));
             }
 
             // PowerShell refuses to bind an empty name, and the importer refuses a blank one.

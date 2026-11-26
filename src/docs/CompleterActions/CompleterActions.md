@@ -61,3 +61,7 @@ Reports drift between a completer set file and the scripts on disk.
 ### [Unregister-Completer](Unregister-Completer.md)
 
 Removes completer registrations from runtime and, when applicable, module state.
+
+### [Update-CompleterSet](Update-CompleterSet.md)
+
+Rewrites the Hash of each completer set entry whose script has changed, leaving the rest of the set file as it is.

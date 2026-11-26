@@ -61,9 +61,12 @@ a .psd1 of at most 128 KB that reads as data and whose PrivateData.CompleterSet
 resolves to the set file, as in a staged package before it is published. When
 more than one .psd1 there declares the set, the first in ordinal order of file
 name is the manifest. A .psd1 that is not data or is larger than 128 KB
-declares nothing, and a folder that cannot be listed holds no manifest. A set
-that no manifest declares gets no PackageLayout finding. A package set is
-checked for four things, reported in this order:
+declares nothing, and a folder that cannot be listed holds no manifest. A
+.psd1 there whose PrivateData.CompleterSet is not a valid file path gets one
+PackageLayout Error at line 1, column 1 of the set, whether or not a manifest
+declares the set; apart from those, a set that no manifest declares gets no
+PackageLayout finding. A package set is checked for four things, reported in
+this order:
 
 - Error, one per entry in set order, at the entry's Path: the Path is fully
   qualified, or resolves outside the module folder, so an installed copy of
@@ -87,7 +90,10 @@ exactly as Import-CompleterSet -Name finds it: the first $env:PSModulePath
 root that has the module wins, and within it the highest version. The
 manifest is read as data, so nothing in the package runs, and a manifest
 larger than 128 KB fails the call before it is parsed. Each name is taken
-literally, and a name that does not resolve fails the call.
+literally, and a name that does not resolve fails the call. -MinimumVersion or
+-RequiredVersion selects the version for one -Name exactly as they select it
+for Import-CompleterSet, so a profile that pins a version can test the copy it
+pins by the same words.
 
 Every -Path, -LiteralPath, or -Name value is resolved before any set is
 tested. The sets are then tested in the order given, and each set's findings
@@ -117,6 +123,26 @@ The names of installed completer set modules. Each name is taken literally: a
 name containing *, ?, [, or ] fails the call before any name is resolved. The
 parameter takes no pipeline input.
 
+.PARAMETER MinimumVersion
+Selects the highest installed version of the module, equal to or above this
+one, from the first $env:PSModulePath root that holds such a version; a root
+whose versions are all lower is passed over. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: 1.2.0
+and 1.2.0.0 differ. A prerelease label takes no part. It applies to one -Name
+and cannot be used with -RequiredVersion.
+
+.PARAMETER RequiredVersion
+Selects the installed version of the module that equals this one, from the
+first $env:PSModulePath root that holds it. An unversioned copy, a manifest
+directly in the module folder, takes part beside the version folders, and a
+copy whose manifest cannot be read is passed over. Write the version as its
+folder is named, because versions compare exactly: 1.2.0
+and 1.2.0.0 differ. A prerelease label takes no part: 2.0.0-preview1 is
+installed in the folder 2.0.0 and is selected by 2.0.0. It applies to one
+-Name and cannot be used with -MinimumVersion.
+
 .PARAMETER Filter
 The file-name pattern of the scan for scripts that no entry lists. The scan
 is recursive under the set file's directory. The default is *_completer.ps1.
@@ -143,6 +169,12 @@ PS> Test-CompleterSet -Name PS_Completers
 
 Checks the installed PS_Completers package's set against its scripts and the
 package layout, by the same name the profile's Import-CompleterSet line uses.
+
+.EXAMPLE
+PS> Test-CompleterSet -Name PS_Completers -RequiredVersion 1.3.1
+
+Checks the installed 1.3.1 copy of PS_Completers, even when a later version is
+installed, and fails, naming the installed versions, when 1.3.1 is not.
 #>
 function Test-CompleterSet
 {
@@ -163,6 +195,14 @@ function Test-CompleterSet
         [ValidateNotNullOrEmpty()]
         [string[]] $Name,
 
+        [Parameter(ParameterSetName = 'Name')]
+        [ValidateNotNull()]
+        [version] $MinimumVersion,
+
+        [Parameter(ParameterSetName = 'Name')]
+        [ValidateNotNull()]
+        [version] $RequiredVersion,
+
         [Parameter()]
         [ValidateNotNullOrEmpty()]
         [string] $Filter = '*_completer.ps1'
@@ -175,6 +215,26 @@ function Test-CompleterSet
             $sets = @(
                 if ($PSCmdlet.ParameterSetName -eq 'Name')
                 {
+                    $versionParameters = @{}
+
+                    foreach ($versionParameterName in 'MinimumVersion', 'RequiredVersion')
+                    {
+                        if ($PSBoundParameters.ContainsKey($versionParameterName))
+                        {
+                            $versionParameters[$versionParameterName] = $PSBoundParameters[$versionParameterName]
+                        }
+                    }
+
+                    if ($versionParameters.Count -eq 2)
+                    {
+                        throw '-MinimumVersion and -RequiredVersion cannot be used together.'
+                    }
+
+                    if ($versionParameters.Count -eq 1 -and $Name.Count -gt 1)
+                    {
+                        throw "-MinimumVersion and -RequiredVersion apply to one module name, but $($Name.Count) names were given."
+                    }
+
                     foreach ($nameItem in $Name)
                     {
                         if ($nameItem -match '[*?\[\]]')
@@ -185,7 +245,7 @@ function Test-CompleterSet
 
                     foreach ($nameItem in $Name)
                     {
-                        $setModule = Resolve-CompleterSetModule -Name $nameItem
+                        $setModule = Resolve-CompleterSetModule -Name $nameItem @versionParameters
                         @{ SetPath = $setModule.SetPath; Module = $setModule }
                     }
                 }

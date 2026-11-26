@@ -4,8 +4,9 @@ Writes a completer script skeleton for a native command that passes Test-Complet
 
 .DESCRIPTION
 Writes a native completer script for one or more command names: a guarded,
-literal-only table of subcommands, a Complete-<Stem> function that offers them
-in the first argument position, and one bare Register-ArgumentCompleter call
+literal-only catalog that holds a table of subcommands and a table of options,
+a Complete-<Stem> function that offers the options in any argument position
+and the subcommands in the first, and one bare Register-ArgumentCompleter call
 that names every target. The file passes Test-CompleterScript and imports with
 Import-CompleterScript and Register-Completer -Lazy before the author edits it.
 
@@ -13,24 +14,39 @@ The first -CommandName value is the primary name: it names the functions and
 the state variable, and it is the one probed. Every name must be a bare command
 name. The target list follows the -CommandName order, and a name that does not
 end in .exe, .cmd, .bat, .ps1, or .com is followed by the same name with .exe
-appended, so -CommandName rg registers 'rg' and 'rg.exe'.
+appended, so -CommandName rg registers 'rg' and 'rg.exe'. Command names that
+differ only by case, such as Tool and tool, share the stem Tool, and that is
+harmless: PowerShell's completer table and its function table both ignore
+case, so two such commands cannot have separate completers in one session
+whatever their stems. No generated name begins with __CompleterActions: names
+with that prefix are reserved for the state the import keeps in the scope a
+script runs in, so keep them out of the script's own additions too.
 
-The subcommand table is seeded in one of three ways. By default the command
-runs the primary name's help and parses its commands section. -HelpText parses
-help text the author already captured and runs nothing. -NoProbe runs nothing
-and writes an empty table.
+Both tables are seeded from the same help text. By default the command runs
+the primary name's help and parses it. -HelpText parses help text the author
+already captured and runs nothing. -NoProbe runs nothing and writes two empty
+tables. The subcommand table comes from a commands section; the option table
+comes from option sections, under a heading such as Options: or FLAGS, or
+without one, as GNU tools print them, one row per option name, with argument
+placeholders dropped and no value seeded. Once the word being completed starts
+with - or /, the generated function offers the matching options in any
+argument position. No switch turns option seeding off.
 
 The probe runs only an application that Get-Command resolves; a function,
 alias, cmdlet, or script of that name is never run. On Windows it runs only
-a .exe whose PE header marks a console program, so GUI programs, shims such as
-npm.cmd, and app execution aliases are refused with a warning. The program
-runs with the help argument alone, standard input closed, the temporary
-directory as its working directory, and NO_COLOR set, under a 5-second limit.
-Without -HelpArgument the probe passes --help; on Windows, when --help ran to
-completion, gave no subcommand, and printed fewer than five non-blank lines,
-/? runs once and its result is used. A run that does not exit in time, or that
-leaves a process holding its output, is stopped and its output is not used.
--WhatIf and -Confirm name the program before anything runs.
+a .exe whose PE header marks a console program, so GUI programs and shims such
+as npm.cmd are refused with a warning. An app execution alias, whose own
+header cannot be read, runs when the target its reparse data names is an
+existing console .exe; messages name the alias path, and an alias whose
+target is not such a program is refused with a warning that names the target.
+The program runs with the help argument alone, standard input closed, the
+temporary directory as its working directory, and NO_COLOR set, under a
+5-second limit. Without -HelpArgument the probe passes --help; on Windows,
+when --help ran to completion, gave no subcommand and no option, and printed
+fewer than five non-blank lines, /? runs once and its result is used. A run
+that does not exit in time, or that leaves a process holding its output, is
+stopped and its output is not used. -WhatIf and -Confirm name the program
+before anything runs.
 
 Before anything is resolved, probed, or written, every -CommandName value,
 -HelpArgument, and the -Path are checked: a name must keep a letter or digit
@@ -41,10 +57,16 @@ script is written to a temporary file beside the target, checked with the
 strict grammar Test-CompleterScript applies, and moved into place only when it
 conforms and registers exactly the target list; otherwise nothing is written.
 The file is UTF-8 without a byte-order mark, with the platform newline and a
-final newline.
+final newline. With -Documentation a markdown file is written beside it, and
+the script passes its check before either file is moved; the script is moved
+first.
 
 Every failure is a terminating error that begins 'Failed to create completer
-script.', and a failed call leaves nothing at the path.
+script.', and a failed call leaves nothing at the path, with one exception:
+with -Documentation, when the markdown file cannot be moved into place after
+the script was, the call fails with "The script '<path>' was written, but its
+documentation file '<md path>' was not: <reason>", the script stays, and no
+temporary file remains.
 
 .PARAMETER CommandName
 The native command names. The first is the primary name: it names the
@@ -65,10 +87,22 @@ input, joined with LF, cleaned, and parsed; nothing is run.
 winget --help | New-CompleterScript winget .\winget_completer.ps1 binds here.
 
 .PARAMETER NoProbe
-Runs nothing and writes an empty subcommand table.
+Runs nothing and writes empty subcommand and option tables.
+
+.PARAMETER Documentation
+Also writes a markdown file beside the script, with the same folder and base
+name and the extension .md: a '# <name> completer' title, a
+'## What it completes' heading, and one sentence that names the script and
+every target. It is UTF-8 without a byte-order mark, with the platform newline
+and a final newline. An existing .md file fails the call before anything runs
+unless -Force is given, and a directory at the .md path fails it with or
+without -Force. Both files are written to temporary files first and
+moved only after the script passes its check, the script first; if the
+markdown file cannot be moved, the call fails and says the script was written.
+-PassThru still returns only the script.
 
 .PARAMETER Force
-Overwrites an existing file.
+Overwrites an existing file, and with -Documentation the markdown file too.
 
 .PARAMETER PassThru
 Returns the written file as System.IO.FileInfo, so it pipes into
@@ -99,6 +133,12 @@ run.
 PS> New-CompleterScript -CommandName mytool -Path .\mytool_completer.ps1 -NoProbe -Force
 
 Writes an empty skeleton without running anything, replacing an existing file.
+
+.EXAMPLE
+PS> New-CompleterScript -CommandName rg -Path .\rg_completer\rg_completer.ps1 -Documentation
+
+Writes the rg script and rg_completer.md beside it, whose sentence names
+rg_completer.ps1 and its targets rg and rg.exe.
 #>
 function New-CompleterScript
 {
@@ -121,6 +161,9 @@ function New-CompleterScript
 
         [Parameter(Mandatory, ParameterSetName = 'NoProbe')]
         [switch] $NoProbe,
+
+        [Parameter()]
+        [switch] $Documentation,
 
         [Parameter()]
         [switch] $Force,
@@ -164,6 +207,23 @@ function New-CompleterScript
             {
                 throw "The file '$outputPath' already exists. Use -Force to overwrite it."
             }
+
+            $documentationPath = $null
+
+            if ($Documentation)
+            {
+                $documentationPath = [System.IO.Path]::ChangeExtension($outputPath, '.md')
+
+                if (Test-Path -LiteralPath $documentationPath -PathType Container)
+                {
+                    throw "Documentation files must be file paths. '$documentationPath' is a directory."
+                }
+
+                if (-not $Force -and (Test-Path -LiteralPath $documentationPath))
+                {
+                    throw "The file '$documentationPath' already exists. Use -Force to overwrite it."
+                }
+            }
         }
         catch
         {
@@ -193,7 +253,8 @@ function New-CompleterScript
         {
             $primaryName = $CommandName[0]
             $application = $null
-            $action = 'Create completer script without running a program'
+            $actionSubject = if ($Documentation) { 'Create completer script and documentation' } else { 'Create completer script' }
+            $action = "$actionSubject without running a program"
 
             if ($PSCmdlet.ParameterSetName -eq 'Probe')
             {
@@ -203,17 +264,22 @@ function New-CompleterScript
                 {
                     Write-Verbose -Message "Resolved '$primaryName' to the application '$($application.Path)'."
 
+                    if ($null -ne $application.AliasTarget)
+                    {
+                        Write-Verbose -Message "'$($application.Path)' is an app execution alias for '$($application.AliasTarget)'."
+                    }
+
                     if ($PSBoundParameters.ContainsKey('HelpArgument'))
                     {
-                        $action = "Create completer script, running '$($application.Path) $HelpArgument' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) $HelpArgument' to read its help"
                     }
                     elseif ($IsWindows)
                     {
-                        $action = "Create completer script, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) --help' and, if it is rejected, '/?' to read its help"
                     }
                     else
                     {
-                        $action = "Create completer script, running '$($application.Path) --help' to read its help"
+                        $action = "$actionSubject, running '$($application.Path) --help' to read its help"
                     }
                 }
                 else
@@ -231,6 +297,7 @@ function New-CompleterScript
             $ConfirmPreference = 'None'
 
             $subcommands = @()
+            $options = @()
             $skeletonParameters = @{}
 
             switch ($PSCmdlet.ParameterSetName)
@@ -260,8 +327,9 @@ function New-CompleterScript
                     }
 
                     $subcommands = @($probe.Subcommands)
+                    $options = @($probe.Options)
 
-                    if ($subcommands.Count -gt 0)
+                    if ($subcommands.Count -gt 0 -or $options.Count -gt 0)
                     {
                         $skeletonParameters['SeedKind'] = 'Probe'
                         $skeletonParameters['ProbeArgument'] = $probe.Argument
@@ -270,16 +338,36 @@ function New-CompleterScript
 
                 'HelpText'
                 {
-                    $subcommands = @(ConvertFrom-CompleterHelpText -Text (ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")))
+                    $cleanText = ConvertTo-CompleterCleanHelpText -Text ($helpLines -join "`n")
+                    $subcommands = @(ConvertFrom-CompleterHelpText -Text $cleanText)
+                    $options = @(ConvertFrom-CompleterHelpOption -Text $cleanText)
                     $skeletonParameters['SeedKind'] = 'HelpText'
                 }
             }
 
-            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands @skeletonParameters
+            $lines = Get-CompleterScriptSkeleton -Name $primaryName -Stem (ConvertTo-CompleterScriptStem -Name $primaryName) -Target $targetNames -Subcommand $subcommands -Option $options @skeletonParameters
 
-            $file = Save-CompleterScriptFile -Line $lines -LiteralPath $outputPath -ExpectedTarget $targetNames -Force:$Force -Verbose:$false
+            $saveParameters = @{
+                Line           = $lines
+                LiteralPath    = $outputPath
+                ExpectedTarget = $targetNames
+                Force          = $Force
+            }
 
-            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands."
+            if ($Documentation)
+            {
+                $saveParameters['DocumentationLine'] = @(Get-CompleterScriptDocumentation -Name $primaryName -ScriptName ([System.IO.Path]::GetFileName($outputPath)) -Target $targetNames)
+                $saveParameters['DocumentationLiteralPath'] = $documentationPath
+            }
+
+            $file = Save-CompleterScriptFile @saveParameters -Verbose:$false
+
+            Write-Verbose -Message "Wrote '$($file.FullName)': $($targetNames.Count) targets, $($subcommands.Count) subcommands, $($options.Count) options."
+
+            if ($Documentation)
+            {
+                Write-Verbose -Message "Wrote '$([System.IO.Path]::ChangeExtension($file.FullName, '.md'))'."
+            }
 
             if ($PassThru)
             {

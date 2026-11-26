@@ -1,0 +1,15 @@
+-v
+--version
+--info
+-?
+--help
+--wait
+--logs
+--open-logs
+--verbose
+--verbose-logs
+--nowarn
+--ignore-warnings
+--disable-interactivity
+--proxy
+--no-proxy
