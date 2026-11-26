@@ -3,11 +3,11 @@
 Drafted: 2026-10-12
 Baseline: 3.0.1, release commit `820d224`, tag v3.0.1 (drafted against 3.0.0, `abac592`)
 Live page: https://claude.ai/artifact/RbFmmJC6uMjo19eZqVTtzy
-Status (2026-11-25): milestone 1 started by the owner, with its trigger waived once; its spec and plan are `docs/roadmap-4.0/milestone-1-spec.md` and `milestone-1-plan.md`. Decisions 2 and 3 are locked; decisions 1, 4, 5, and 6 are still proposed. Milestone 2 starts on its trigger; milestone 3 is gated on a shipped engine with the completer cmdlets and has no date.
+Status (2026-11-25): milestone 1 shipped as a preview, v3.1.0-preview1, on PSGallery; stable 3.1.0 follows once the preview has soaked without a defect. The owner started the milestone the same day, with its trigger waived once; its spec and plan are `docs/roadmap-4.0/milestone-1-spec.md` and `milestone-1-plan.md`. Decisions 2 and 3 are locked; decisions 1, 4, 5, and 6 are still proposed. Milestone 2 starts on its trigger; milestone 3 is gated on a shipped engine with the completer cmdlets and has no date.
 
 | Milestone | Version | Status |
 | --- | --- | --- |
-| 1 Authoring, second pass | 3.1.0-preview1, then 3.1.0 | Started 2026-11-25, additive, with six defect fixes folded in; trigger waived |
+| 1 Authoring, second pass | 3.1.0-preview1, then 3.1.0 | Preview shipped 2026-11-25 as v3.1.0-preview1; additive, with six defect fixes folded in; stable 3.1.0 after the soak |
 | 2 Diagnostics and native generators | 3.2.0-preview1, then 3.2.0 | Proposed, additive; starts when a completer misbehaves without an obvious cause, or the next tools to add ship their own `completion powershell` |
 | 3 Engine floor and the end of reflection | 4.0.0-rc1, then 4.0.0 | Proposed, breaking; gated on a stable engine exporting `Get-ArgumentCompleter` and `Unregister-ArgumentCompleter`, and on 7.4 leaving support (2026-11-10) |
 
@@ -34,7 +34,7 @@ Public commands: 11. Private helpers: 59. Source: about 8,500 lines of PowerShel
 
 Milestone 2 of the 3.0 roadmap shipped the scaffold and installable sets with three deferrals written into its spec. Each was deferred as a non-breaking addition, so this milestone closes them, together with the one maintenance gap the hash scheme left open.
 
-Trigger: the owner writes the next batch of completers by hand, or PS_Completers takes a contributor. Not scheduled on its own. The owner waived the trigger on 2026-11-25 and started the milestone; the rulings of that day had already put two more items into it.
+Trigger: the owner writes the next batch of completers by hand, or PS_Completers takes a contributor. Not scheduled on its own. The owner waived the trigger on 2026-11-25 and started the milestone; the rulings of that day had already put two more items into it. It was implemented, merged (pull request 17), and released as v3.1.0-preview1 the same day.
 
 - **Option seeding in New-CompleterScript** (feature). The scaffold reads option lines from the same help probe that feeds the subcommand table and seeds a literal option table for them: `-x, --long <ARG>`, `--long=VALUE`, and `/X` layouts. GNU-style help with no option heading is read too. Option-only tools such as rg and du stop getting an empty table, and the generated script offers options in any argument position. The milestone 2 spec deferred this with "revisit with real use"; its help-probe corpus is the test fixture.
 - **New-CompleterScript -Documentation** (feature). Writes the companion markdown beside the script: the title line, the heading "What it completes", which the PS_Completers corpus shares, and one sentence naming the script and its targets. Off by default.
