@@ -887,6 +887,11 @@ function New-CompleterScript
             {
                 $documentationPath = [System.IO.Path]::ChangeExtension($outputPath, '.md')
 
+                if (Test-Path -LiteralPath $documentationPath -PathType Container)
+                {
+                    throw "Documentation files must be file paths. '$documentationPath' is a directory."
+                }
+
                 if (-not $Force -and (Test-Path -LiteralPath $documentationPath))
                 {
                     throw "The file '$documentationPath' already exists. Use -Force to overwrite it."

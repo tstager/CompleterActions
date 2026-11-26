@@ -271,7 +271,8 @@ name and the extension `.md`: a `# <name> completer` title, a
 `## What it completes` heading, and one sentence that names the script and
 every target. It is UTF-8 without a byte-order mark, with the platform newline
 and a final newline. An existing `.md` file fails the call before anything
-runs unless `-Force` is given. Both files are written to temporary files first
+runs unless `-Force` is given, and a directory at the `.md` path fails it with
+or without `-Force`. Both files are written to temporary files first
 and moved only after the script passes its check, the script first; if the
 markdown file cannot be moved, the call fails and says the script was written.
 `-PassThru` still returns only the script.

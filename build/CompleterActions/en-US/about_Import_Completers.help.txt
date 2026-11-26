@@ -620,8 +620,10 @@ SCAFFOLDING A COMPLETER WITH NEW-COMPLETERSCRIPT
     without a byte-order mark, with the platform's newline and a final
     newline, and the same input gives the same bytes. An existing `.md`
     file fails the call before anything runs unless `-Force` is given,
-    which replaces both files. `-WhatIf` and `-Confirm` describe the action
-    as `Create completer script and documentation`, and `-PassThru` still
+    which replaces both files. A directory at the `.md` path fails the call
+    before anything runs, with or without `-Force`. `-WhatIf` and
+    `-Confirm` describe the action as
+    `Create completer script and documentation`, and `-PassThru` still
     returns only the script. Without `-Documentation` no `.md` file is
     read, written, or checked for.
 

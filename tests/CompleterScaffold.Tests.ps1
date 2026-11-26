@@ -1724,6 +1724,23 @@ New-CompleterScript -CommandName $CommandName -Path $Target -NoProbe -PassThru -
             @(Get-ChildItem -LiteralPath $script:CaseFolder -Filter '*.tmp' -Force).Count | Should -Be 0
         }
 
+        It 'fails before anything runs when a directory sits at the markdown path, <Case>, and writes neither file' -TestCases @(
+            @{ Case = 'without -Force'; Force = $false }
+            @{ Case = 'with -Force'; Force = $true }
+        ) {
+            $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
+            $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'
+            $null = New-Item -ItemType Directory -Path $markdownPath
+
+            $thrown = { New-CompleterScript -CommandName 'rg' -Path $scriptPath -NoProbe -Documentation -Force:$Force } | Should -Throw -PassThru
+
+            $thrown.Exception.Message | Should -BeExactly ("Failed to create completer script. Documentation files must be file paths. '{0}' is a directory." -f $markdownPath)
+            Test-Path -LiteralPath $scriptPath | Should -BeFalse
+            Test-Path -LiteralPath $markdownPath -PathType Leaf | Should -BeFalse
+            Get-ChildItem -LiteralPath $markdownPath -Force | Should -BeNullOrEmpty
+            @(Get-ChildItem -LiteralPath $script:CaseFolder -Force | ForEach-Object Name) | Should -Be @('rg_completer.md')
+        }
+
         It 'fails with the was-written text when the markdown move fails, and keeps the script' {
             $scriptPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.ps1'
             $markdownPath = Join-Path -Path $script:CaseFolder -ChildPath 'rg_completer.md'

@@ -38,8 +38,9 @@ happens to input that 3.0.1 accepted; they are listed under Changed.
   beside the script, with the same base name and the extension `.md`: a
   `# <name> completer` title, a `## What it completes` heading, and one
   sentence that names the script and every target. An existing `.md` file
-  fails the call unless `-Force` is given, and the script is moved into
-  place before the markdown file.
+  fails the call unless `-Force` is given, a directory at that path fails
+  it with or without `-Force`, and the script is moved into place before
+  the markdown file.
 - **Version selection for `-Name`.** `Import-CompleterSet -Name` and
   `Test-CompleterSet -Name` take `-MinimumVersion` or `-RequiredVersion`,
   for one name, to select an installed completer set package by version,
