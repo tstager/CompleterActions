@@ -23,13 +23,13 @@ happens to input that 3.0.1 accepted; they are listed under Changed.
   that `Test-CompleterSet` reports with an `Error`, such as a
   `TargetMismatch` or a `DuplicateTarget`, is left as it is with a warning,
   because a matching `Hash` would make import register its stale `Targets`
-  unchecked. So is an untrusted entry whose script no longer passes the
-  strict grammar, with the first grammar `Error` in its warning, because a
-  matching `Hash` would let import skip the grammar and move the failure to
-  the first tab; a trusted entry is updated with a warning. It never adds an
-  entry or a `Hash`, warns about entries without one and about scripts the
-  set does not list, supports `-WhatIf`, and returns the written files with
-  `-PassThru`.
+  unchecked. So is an untrusted entry with a stale `Hash` whose script no
+  longer passes the strict grammar, with the first grammar `Error` in its
+  warning, because a matching `Hash` would let import skip the grammar and
+  move the failure to the first tab; a trusted entry is updated with a
+  warning. It never adds an entry or a `Hash`, warns about entries without
+  one and about scripts the set does not list, supports `-WhatIf`, and
+  returns the written files with `-PassThru`.
 - **Option tables in `New-CompleterScript`.** The help text that seeds the
   subcommand table now seeds an option table too, from the probe,
   `-HelpText`, or pipeline input. Option sections are found under a heading

@@ -504,6 +504,18 @@ Describe 'Update-CompleterSet' {
             @(Get-Completer -State Active, Pending, Failed, Stale | Where-Object { $_.Key -like '*caupdate*' }) | Should -BeNullOrEmpty
         }
 
+        It 'does not check the grammar of an entry whose Hash already matches its script, so it writes no warning and does not write the file' {
+            Add-Content -LiteralPath $script:AlphaPath -Value '$caUpdateState = 1' -Encoding utf8
+            Edit-TestEntryValue -Path $script:SetPath -Entry 1 -Key 'Hash' -Value "'$(Get-TestScriptHash -LiteralPath $script:AlphaPath)'"
+            Test-CompleterSet -LiteralPath $script:SetPath | Should -BeNullOrEmpty
+            $state = Get-TestFileState -Path $script:SetPath
+
+            Update-CompleterSet -LiteralPath $script:SetPath -WarningVariable updateWarnings -WarningAction SilentlyContinue
+
+            $updateWarnings | Should -BeNullOrEmpty
+            Get-TestCurrentFileState -Path $script:SetPath | Should -BeExactly $state
+        }
+
         It 'rewrites the Hash of a trusted entry whose script gained a top-level assignment, because a trusted script is not checked against the grammar' {
             Edit-TestEntryValue -Path $script:SetPath -Entry 1 -Key 'Trusted' -Value '$true'
             $before = [System.IO.File]::ReadAllText($script:SetPath)

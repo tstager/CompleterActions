@@ -1626,6 +1626,28 @@ Describe 'Version selection for -Name' {
         Get-TestPackageRegistration | Should -BeNullOrEmpty
     }
 
+    It 'fails with the not-found text unchanged when the only copy has a manifest that does not parse, for <Case>' -TestCases @(
+        @{ Case = 'a 2.0.0 folder and -RequiredVersion 2.0.0'; Broken = 'VersionFolder'; Version = @{ RequiredVersion = '2.0.0' } }
+        @{ Case = 'a 2.0.0 folder and -MinimumVersion 1.0.0'; Broken = 'VersionFolder'; Version = @{ MinimumVersion = '1.0.0' } }
+        @{ Case = 'an unversioned manifest and -MinimumVersion 1.0.0'; Broken = 'Unversioned'; Version = @{ MinimumVersion = '1.0.0' } }
+    ) {
+        param($Case, $Broken, $Version)
+
+        # Section 4: an unreadable copy is no candidate, and with no candidate in any root the text is today's.
+        $null = $Case
+        $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
+        $brokenFolder = if ($Broken -eq 'VersionFolder') { [System.IO.Path]::Combine($root, 'CaFixtureSet', '2.0.0') } else { [System.IO.Path]::Combine($root, 'CaFixtureSet') }
+        $null = New-Item -Path $brokenFolder -ItemType Directory -Force
+        [System.IO.File]::WriteAllText((Join-Path -Path $brokenFolder -ChildPath 'CaFixtureSet.psd1'), "@{ ModuleVersion = '2.0.0'")
+        $expected = "No installed module named 'CaFixtureSet' was found in `$env:PSModulePath. Install it with Install-PSResource CaFixtureSet."
+
+        $failure = Get-TestVersionFailure -ModulePath (Join-TestModulePath -Root $root) -Name 'CaFixtureSet' -Version $Version
+
+        $failure.Import | Should -BeExactly "Failed to import completer set. $expected"
+        $failure.Test | Should -BeExactly "Failed to test completer set. $expected"
+        Get-TestPackageRegistration | Should -BeNullOrEmpty
+    }
+
     It 'still fails with the reader''s text without a version parameter when the highest version''s manifest does not parse' {
         $root = Join-Path -Path $script:PackageRoot -ChildPath 'modules'
         $null = New-TestCompleterSetPackage -Root $root -Name 'CaFixtureSet' -Version '1.0.0'

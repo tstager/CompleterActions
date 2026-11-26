@@ -573,7 +573,8 @@ FIXING DRIFT WITH UPDATE-COMPLETERSET
     - its script can be read, so its current hash is known;
     - it has no finding that `Test-CompleterSet` reports as an `Error`: no
       `MissingScript`, `InvalidEntry`, `UnreadableTargets`,
-      `TargetMismatch`, or `DuplicateTarget`.
+      `TargetMismatch`, or `DuplicateTarget`;
+    - it is trusted, or its script passes the strict grammar.
 
     The new value is the script's current hash, written as
     `Export-CompleterSet` writes it: a single-quoted `SHA256:` followed by
@@ -595,10 +596,11 @@ FIXING DRIFT WITH UPDATE-COMPLETERSET
 
         WARNING: Entry 4 ('git_completer/git_completer.ps1') of '<set>' was not updated: <problem> Regenerate the set with Export-CompleterSet.
 
-    An entry that is not trusted is refused the same way when its script
-    no longer passes the strict grammar, with the first grammar `Error` as
-    `Test-CompleterScript` words it as the problem: rehashing it would let
-    the import skip the grammar and move the failure to the first tab.
+    An entry that is not trusted and whose `Hash` is stale or malformed is
+    refused the same way when its script no longer passes the strict
+    grammar, with the first grammar `Error` as `Test-CompleterScript` words
+    it as the problem: rehashing it would let the import skip the grammar
+    and move the failure to the first tab.
 
     The command never adds anything to a set. One warning per set counts
     the entries without a `Hash`, and one warning names each script under
